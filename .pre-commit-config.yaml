@@ -97,7 +97,8 @@ repos:
 
       - id: pip-audit
         name: pip-audit security check (pre-push)
-        entry: uv run pip-audit
+        # Ignore pip CVE-2026-1703 (meta-dependency we can't control)
+        entry: uv run pip-audit --ignore-vuln CVE-2026-1703
         language: system
         pass_filenames: false
         stages: [pre-push]
