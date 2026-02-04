@@ -22,6 +22,7 @@ dependencies = [
     "faster-whisper>=1.1.0",
     "pyloudnorm>=0.1.1",
     "pydub>=0.25.1",
+    "soundfile>=0.12.1",
 
     # AI Providers
     "google-genai>=1.0.0",
