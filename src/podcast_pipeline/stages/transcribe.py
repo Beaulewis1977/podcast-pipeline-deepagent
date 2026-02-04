@@ -58,6 +58,20 @@ class TranscribeStage(Stage):
             - output/transcripts/transcript.srt
             - output/transcripts/transcript.vtt
         """
+        track_count = self._get_audio_track_count(job_dir)
+        if track_count > 1:
+            self.logger.info("multi_track_detected", tracks=track_count)
+            return self.transcribe_multi_track(job, job_dir)
+
+        if track_count > 0:
+            self.logger.info("single_track_detected", tracks=track_count)
+        else:
+            self.logger.info("audio_track_count_unknown", defaulting="single_track")
+
+        return self._run_single_track(job, job_dir)
+
+    def _run_single_track(self, job: Job, job_dir: Path) -> StageResult:
+        """Execute single-track transcription."""
         audio_path = job_dir / "intermediate" / "audio.wav"
 
         if not audio_path.exists():
@@ -187,6 +201,34 @@ class TranscribeStage(Stage):
                 error=str(e),
                 outputs=outputs,
             )
+
+    def _find_input_video(self, job_dir: Path) -> Path | None:
+        """Locate the raw input video for the job."""
+        input_dir = job_dir / "input"
+        for ext in [".mp4", ".mov", ".mkv", ".avi", ".webm"]:
+            candidate = input_dir / f"raw{ext}"
+            if candidate.exists():
+                return candidate
+        return None
+
+    def _get_audio_track_count(self, job_dir: Path) -> int:
+        """Get audio track count from metadata or fallback detection."""
+        metadata_path = job_dir / "intermediate" / "metadata.json"
+        if metadata_path.exists():
+            try:
+                metadata = json.loads(metadata_path.read_text())
+                if "audio_track_count" in metadata:
+                    return int(metadata["audio_track_count"])
+                streams = metadata.get("streams", [])
+                return sum(1 for stream in streams if stream.get("codec_type") == "audio")
+            except Exception as e:
+                self.logger.warning("metadata_track_parse_failed", error=str(e))
+
+        video_path = self._find_input_video(job_dir)
+        if not video_path:
+            return 0
+
+        return len(self._detect_audio_tracks(video_path))
 
     def _detect_fillers(self, segments: list[Segment]) -> list[FillerCut]:
         """Detect filler words in transcript."""
@@ -326,14 +368,8 @@ class TranscribeStage(Stage):
             Stage result
         """
         # Find input video
-        input_dir = job_dir / "input"
-        video_path = None
-        for ext in [".mp4", ".mov", ".mkv", ".avi", ".webm"]:
-            p = input_dir / f"raw{ext}"
-            if p.exists():
-                video_path = p
-                break
-        
+        video_path = self._find_input_video(job_dir)
+
         if not video_path:
             return StageResult(
                 success=False,
@@ -342,11 +378,11 @@ class TranscribeStage(Stage):
         
         # Detect audio tracks
         tracks = self._detect_audio_tracks(video_path)
-        
+
         if len(tracks) <= 1:
             # Single track - use standard transcription
             self.logger.info("single_track_detected", falling_back="standard")
-            return self.run(job, job_dir)
+            return self._run_single_track(job, job_dir)
         
         # Create directories
         analysis_dir = job_dir / "analysis"
