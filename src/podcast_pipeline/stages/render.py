@@ -1,0 +1,489 @@
+"""Render stage: Export final content for all platforms."""
+
+import json
+import subprocess
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+
+from podcast_pipeline.config import Config, PlatformSpec
+from podcast_pipeline.models.job import Job
+from podcast_pipeline.stages.base import Stage, StageResult
+from podcast_pipeline.stages.review import ReviewDecisions
+from podcast_pipeline.utils.ffmpeg import FFmpegError, run_ffmpeg, get_video_info
+from podcast_pipeline.utils.logging import get_logger
+
+logger = get_logger(__name__)
+
+
+class RenderStage(Stage):
+    """Render final exports for all platforms."""
+
+    name = "render"
+
+    def __init__(self, config: Config):
+        super().__init__(config)
+
+    def run(self, job: Job, job_dir: Path) -> StageResult:
+        """Execute render stage.
+
+        Creates platform-specific exports based on review decisions.
+        """
+        # Check review is complete
+        review_path = job_dir / "review" / "review_state.json"
+        if not review_path.exists():
+            return StageResult(
+                success=False,
+                error="Review not complete. Run review stage first.",
+            )
+
+        decisions = ReviewDecisions.model_validate_json(review_path.read_text())
+        if not decisions.review_complete:
+            return StageResult(
+                success=False,
+                error="Review not marked as complete. Approve the review first.",
+            )
+
+        # Get input video
+        input_video = self._find_input_video(job_dir)
+        if not input_video:
+            return StageResult(
+                success=False,
+                error="Input video not found",
+            )
+
+        # Get video info for aspect ratio calculations
+        video_info = get_video_info(input_video)
+
+        outputs: list[str] = []
+        errors: list[str] = []
+
+        # Export for each selected platform
+        for platform in decisions.export_platforms:
+            self.logger.info("rendering_platform", platform=platform)
+
+            try:
+                spec = self._get_platform_spec(platform)
+                if spec is None:
+                    self.logger.warning("unknown_platform", platform=platform)
+                    continue
+
+                out = self._render_platform(
+                    job_dir, input_video, platform, spec, decisions, video_info
+                )
+                outputs.extend(out)
+
+            except FFmpegError as e:
+                error_msg = f"{platform}: FFmpeg error - {e}"
+                errors.append(error_msg)
+                self.logger.error("render_failed", platform=platform, error=str(e))
+            except Exception as e:
+                error_msg = f"{platform}: {e}"
+                errors.append(error_msg)
+                self.logger.exception("render_failed", platform=platform)
+
+        # Generate marketing copy document
+        try:
+            marketing_out = self._generate_marketing_doc(job_dir)
+            if marketing_out:
+                outputs.append(marketing_out)
+        except Exception as e:
+            self.logger.warning("marketing_doc_failed", error=str(e))
+
+        self.logger.info("render_complete", outputs=outputs, errors=errors)
+
+        if errors and not outputs:
+            return StageResult(
+                success=False,
+                error="; ".join(errors),
+                outputs=outputs,
+            )
+
+        return StageResult(
+            success=True,
+            outputs=outputs,
+            data={"errors": errors} if errors else {},
+        )
+
+    def _get_platform_spec(self, platform: str) -> PlatformSpec | None:
+        """Get platform spec by name."""
+        return getattr(self.config.platforms, platform, None)
+
+    def _find_input_video(self, job_dir: Path) -> Path | None:
+        """Find the input video file."""
+        input_dir = job_dir / "input"
+        for ext in [".mp4", ".mov", ".mkv", ".avi", ".webm"]:
+            path = input_dir / f"raw{ext}"
+            if path.exists():
+                return path
+        return None
+
+    def _render_platform(
+        self,
+        job_dir: Path,
+        input_video: Path,
+        platform: str,
+        spec: PlatformSpec,
+        decisions: ReviewDecisions,
+        video_info: dict[str, Any],
+    ) -> list[str]:
+        """Render export for a specific platform."""
+        output_dir = job_dir / "output" / platform
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Audio-only platforms
+        if spec.audio_only:
+            return self._render_audio_only(output_dir, input_video, platform, spec)
+
+        # Video platforms
+        return self._render_video(
+            output_dir, input_video, platform, spec, decisions, video_info
+        )
+
+    def _render_audio_only(
+        self,
+        output_dir: Path,
+        input_video: Path,
+        platform: str,
+        spec: PlatformSpec,
+    ) -> list[str]:
+        """Render audio-only export (Spotify, Apple Podcasts)."""
+        ext = {"mp3": "mp3", "m4a": "m4a", "aac": "m4a"}.get(spec.container, "mp3")
+        output_file = output_dir / f"audio.{ext}"
+
+        args = [
+            "-i", str(input_video),
+            "-vn",  # No video
+            "-c:a", spec.audio_codec,
+            "-b:a", spec.audio_bitrate,
+            "-ar", str(self.config.audio.sample_rate),
+            "-ac", str(spec.audio_channels),
+            str(output_file),
+        ]
+
+        run_ffmpeg(args)
+
+        # Normalize loudness
+        self._normalize_loudness(output_file, spec.loudness_lufs)
+
+        self.logger.info(f"{platform}_rendered", output=str(output_file))
+        return [str(output_file.relative_to(output_dir.parent.parent))]
+
+    def _render_video(
+        self,
+        output_dir: Path,
+        input_video: Path,
+        platform: str,
+        spec: PlatformSpec,
+        decisions: ReviewDecisions,
+        video_info: dict[str, Any],
+    ) -> list[str]:
+        """Render video export with aspect ratio conversion."""
+        output_file = output_dir / f"final.{spec.container}"
+
+        # Get source dimensions
+        src_width = video_info.get("width", 1920)
+        src_height = video_info.get("height", 1080)
+        src_duration = video_info.get("duration", 0)
+
+        # Calculate target dimensions
+        target_width = spec.width or src_width
+        target_height = spec.height or src_height
+
+        # Build video filters
+        vf_filters = self._build_video_filters(
+            src_width, src_height, target_width, target_height, spec
+        )
+
+        # Build audio filters
+        af_filters = []
+        
+        # Handle duration limits
+        duration_args = []
+        if spec.max_duration and src_duration > spec.max_duration:
+            duration_args = ["-t", str(spec.max_duration)]
+            self.logger.info(
+                "truncating_video",
+                platform=platform,
+                original=src_duration,
+                max=spec.max_duration,
+            )
+
+        # Build FFmpeg command
+        args = ["-i", str(input_video)]
+
+        # Duration limit
+        args.extend(duration_args)
+
+        # Video filters
+        if vf_filters:
+            args.extend(["-vf", ",".join(vf_filters)])
+
+        # Audio filters
+        if af_filters:
+            args.extend(["-af", ",".join(af_filters)])
+
+        # Video encoding
+        args.extend([
+            "-c:v", spec.video_codec,
+            "-preset", spec.preset,
+            "-b:v", spec.video_bitrate,
+            "-pix_fmt", spec.pix_fmt,
+        ])
+
+        # FPS if specified
+        if spec.fps:
+            args.extend(["-r", str(spec.fps)])
+
+        # Audio encoding
+        args.extend([
+            "-c:a", spec.audio_codec,
+            "-b:a", spec.audio_bitrate,
+            "-ac", str(spec.audio_channels),
+        ])
+
+        # Container-specific options
+        if spec.container == "mp4":
+            args.extend(["-movflags", "+faststart"])
+
+        args.append(str(output_file))
+
+        run_ffmpeg(args)
+
+        # Normalize audio loudness
+        self._normalize_loudness(output_file, spec.loudness_lufs)
+
+        self.logger.info(f"{platform}_rendered", output=str(output_file))
+        return [str(output_file.relative_to(output_dir.parent.parent))]
+
+    def _build_video_filters(
+        self,
+        src_width: int,
+        src_height: int,
+        target_width: int,
+        target_height: int,
+        spec: PlatformSpec,
+    ) -> list[str]:
+        """Build FFmpeg video filter chain for aspect ratio conversion."""
+        filters = []
+
+        src_ratio = src_width / src_height
+        target_ratio = target_width / target_height
+
+        # Determine if we need to crop or letterbox
+        if abs(src_ratio - target_ratio) < 0.01:
+            # Same aspect ratio, just scale
+            filters.append(f"scale={target_width}:{target_height}")
+        elif src_ratio > target_ratio:
+            # Source is wider - crop sides or letterbox top/bottom
+            if spec.crop_mode in ["center", "smart"]:
+                # Crop to fit
+                new_width = int(src_height * target_ratio)
+                x_offset = (src_width - new_width) // 2
+                filters.append(f"crop={new_width}:{src_height}:{x_offset}:0")
+                filters.append(f"scale={target_width}:{target_height}")
+            else:
+                # Letterbox (add black bars top/bottom)
+                filters.append(f"scale={target_width}:-2")
+                filters.append(
+                    f"pad={target_width}:{target_height}:(ow-iw)/2:(oh-ih)/2:black"
+                )
+        else:
+            # Source is taller - crop top/bottom or letterbox sides
+            if spec.crop_mode in ["center", "smart"]:
+                # Crop to fit
+                new_height = int(src_width / target_ratio)
+                if spec.crop_mode == "center":
+                    y_offset = (src_height - new_height) // 2
+                elif spec.crop_mode == "top":
+                    y_offset = 0
+                else:  # bottom
+                    y_offset = src_height - new_height
+                filters.append(f"crop={src_width}:{new_height}:0:{y_offset}")
+                filters.append(f"scale={target_width}:{target_height}")
+            else:
+                # Letterbox (add black bars on sides)
+                filters.append(f"scale=-2:{target_height}")
+                filters.append(
+                    f"pad={target_width}:{target_height}:(ow-iw)/2:(oh-ih)/2:black"
+                )
+
+        return filters
+
+    def _build_cuts_filter(self, job_dir: Path, decisions: ReviewDecisions) -> str:
+        """Build FFmpeg filter string for applying cuts."""
+        # For MVP, we skip complex cut filtering and just render the full video
+        # Full implementation would build trim filters based on approved cuts
+        return ""
+
+    def _normalize_loudness(self, audio_file: Path, target_lufs: float) -> None:
+        """Normalize audio to target LUFS using pyloudnorm."""
+        try:
+            import pyloudnorm as pyln
+            import soundfile as sf
+
+            # For video files, we need to extract audio first
+            is_video = audio_file.suffix.lower() in [".mp4", ".mov", ".mkv", ".webm"]
+            
+            if is_video:
+                # Extract audio to temp file
+                temp_audio = audio_file.with_suffix(".temp.wav")
+                run_ffmpeg([
+                    "-i", str(audio_file),
+                    "-vn",
+                    "-acodec", "pcm_s16le",
+                    "-ar", "44100",
+                    str(temp_audio),
+                ])
+                audio_to_process = temp_audio
+            else:
+                audio_to_process = audio_file
+
+            # Read audio
+            data, rate = sf.read(str(audio_to_process))
+
+            # Handle mono audio
+            if len(data.shape) == 1:
+                data = data.reshape(-1, 1)
+
+            # Measure loudness
+            meter = pyln.Meter(rate)
+            loudness = meter.integrated_loudness(data)
+
+            self.logger.debug(
+                "loudness_measured",
+                file=str(audio_file),
+                current=loudness,
+                target=target_lufs,
+            )
+
+            # Skip if already close enough or if loudness is -inf (silent)
+            if loudness == float("-inf") or abs(loudness - target_lufs) < 0.5:
+                if is_video and temp_audio.exists():
+                    temp_audio.unlink()
+                return
+
+            # Normalize
+            normalized = pyln.normalize.loudness(data, loudness, target_lufs)
+
+            if is_video:
+                # Write normalized audio
+                sf.write(str(temp_audio), normalized, rate)
+                
+                # Mux back into video
+                temp_video = audio_file.with_suffix(".temp.mp4")
+                run_ffmpeg([
+                    "-i", str(audio_file),
+                    "-i", str(temp_audio),
+                    "-c:v", "copy",
+                    "-map", "0:v:0",
+                    "-map", "1:a:0",
+                    "-shortest",
+                    str(temp_video),
+                ])
+                
+                # Replace original
+                temp_video.replace(audio_file)
+                temp_audio.unlink()
+            else:
+                # Write back directly
+                sf.write(str(audio_file), normalized, rate)
+
+            self.logger.info(
+                "loudness_normalized",
+                file=str(audio_file),
+                from_lufs=loudness,
+                to_lufs=target_lufs,
+            )
+
+        except ImportError:
+            self.logger.warning(
+                "pyloudnorm_not_available",
+                message="Skipping loudness normalization",
+            )
+        except Exception as e:
+            self.logger.warning(
+                "loudness_normalization_failed",
+                error=str(e),
+            )
+
+    def _generate_marketing_doc(self, job_dir: Path) -> str | None:
+        """Generate marketing copy markdown document."""
+        analysis_path = job_dir / "analysis" / "analysis.json"
+        if not analysis_path.exists():
+            return None
+
+        analysis = json.loads(analysis_path.read_text())
+        marketing = analysis.get("marketing", {})
+        metadata = analysis.get("metadata", {})
+
+        output_dir = job_dir / "output" / "marketing"
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        doc_path = output_dir / "copy.md"
+
+        lines = [
+            "# Marketing Copy",
+            "",
+            f"**Episode Summary:** {metadata.get('summary', 'N/A')}",
+            f"**Topics:** {', '.join(metadata.get('topics', []))}",
+            f"**Mood:** {metadata.get('mood', 'N/A')}",
+            "",
+            "---",
+            "",
+        ]
+
+        # All platforms
+        platform_sections = [
+            ("YouTube", "youtube"),
+            ("Spotify", "spotify"),
+            ("Apple Podcasts", "apple"),
+            ("TikTok", "tiktok"),
+            ("Instagram Reels", "instagram"),
+            ("LinkedIn", "linkedin"),
+            ("Twitter/X", "twitter"),
+            ("Facebook", "facebook"),
+        ]
+
+        for platform_name, platform_key in platform_sections:
+            platform_data = marketing.get(platform_key, {})
+            
+            lines.extend([
+                f"## {platform_name}",
+                "",
+            ])
+
+            # Titles (if available)
+            titles = platform_data.get("titles", [])
+            if titles:
+                lines.append("### Titles")
+                for i, title in enumerate(titles, 1):
+                    lines.append(f"{i}. {title}")
+                lines.append("")
+
+            # Description
+            description = platform_data.get("description", "")
+            if description:
+                lines.extend([
+                    "### Description",
+                    "",
+                    description,
+                    "",
+                ])
+
+            # Hashtags
+            hashtags = platform_data.get("hashtags", [])
+            if hashtags:
+                lines.append(f"**Hashtags:** {' '.join(hashtags)}")
+                lines.append("")
+
+            lines.extend([
+                "---",
+                "",
+            ])
+
+        doc_path.write_text("\n".join(lines))
+        self.logger.info("marketing_doc_generated", path=str(doc_path))
+
+        return str(doc_path.relative_to(job_dir))

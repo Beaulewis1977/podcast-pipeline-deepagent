@@ -1,0 +1,11 @@
+{
+  "tests/test_cli.py::test_new_command_with_video": true,
+  "tests/test_cli.py::test_new_command_with_name": true,
+  "tests/test_cli.py::test_status_command": true,
+  "tests/test_cli.py::test_run_command": true,
+  "tests/test_cli.py::test_run_command_with_stage": true,
+  "tests/test_cli.py::test_review_command": true,
+  "tests/test_cli.py::test_review_command_with_port": true,
+  "tests/test_ui.py::TestUIConfig::test_get_config_returns_config": true,
+  "tests/test_ui.py::TestUIConfig::test_get_pipeline_returns_pipeline": true
+}

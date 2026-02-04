@@ -1,0 +1,107 @@
+name: Security
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  schedule:
+    # Run weekly on Sunday at midnight
+    - cron: "0 0 * * 0"
+
+permissions:
+  contents: read
+  security-events: write
+
+env:
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  # ===========================================================================
+  # Secret Scanning - Gitleaks
+  # ===========================================================================
+  secrets:
+    name: Secret Scanning
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ===========================================================================
+  # Dependency Audit - pip-audit
+  # ===========================================================================
+  dependencies:
+    name: Dependency Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: uv sync --frozen --dev
+
+      - name: Run pip-audit
+        run: |
+          uv export --no-emit-project --frozen > requirements-audit.txt
+          uv run pip-audit --strict --desc on -r requirements-audit.txt
+
+  # ===========================================================================
+  # SAST - Bandit via Ruff
+  # ===========================================================================
+  sast:
+    name: Static Analysis
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: uv sync --frozen --dev
+
+      - name: Run Ruff security rules (Bandit)
+        run: |
+          uv run ruff check . --select S --output-format=github
+
+  # ===========================================================================
+  # CodeQL Analysis (requires code scanning enabled in repo settings)
+  # To enable: Settings > Code security and analysis > Code scanning > Set up
+  # ===========================================================================
+  # codeql:
+  #   name: CodeQL Analysis
+  #   runs-on: ubuntu-latest
+  #   permissions:
+  #     actions: read
+  #     contents: read
+  #     security-events: write
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - uses: github/codeql-action/init@v3
+  #       with:
+  #         languages: python
+  #         queries: security-and-quality
+  #     - uses: github/codeql-action/analyze@v3
+  #       with:
+  #         category: "/language:python"

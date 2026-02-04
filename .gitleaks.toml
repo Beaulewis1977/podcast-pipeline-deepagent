@@ -1,0 +1,74 @@
+# Gitleaks Configuration
+# https://github.com/gitleaks/gitleaks
+
+title = "podcast-pipeline gitleaks config"
+
+[extend]
+useDefault = true
+
+# Global allowlist for false positives
+[allowlist]
+description = "Global allowlist"
+paths = [
+    # Example files
+    '''\.env\.example''',
+
+    # Test fixtures and mocks
+    '''.*test.*''',
+    '''.*fixture.*''',
+    '''.*mock.*''',
+
+    # Documentation
+    '''.*\.md$''',
+    '''docs/.*''',
+
+    # Planning documents
+    '''\.planning/.*''',
+
+    # Archive
+    '''_archive/.*''',
+
+    # Lock files
+    '''uv\.lock''',
+    '''poetry\.lock''',
+]
+
+regexes = [
+    # Example/placeholder patterns
+    '''EXAMPLE_.*''',
+    '''YOUR[_-]API[_-]KEY''',
+    '''your[_-]api[_-]key''',
+    '''<your[_-].*>''',
+    '''sk-test-.*''',
+    '''pk_test_.*''',
+]
+
+# Custom rules for project-specific secrets
+[[rules]]
+id = "gemini-api-key"
+description = "Detect Gemini API keys"
+regex = '''AIza[0-9A-Za-z\\-_]{35}'''
+[rules.allowlist]
+paths = ['''\.env\.example''']
+
+[[rules]]
+id = "anthropic-api-key"
+description = "Detect Anthropic API keys"
+regex = '''sk-ant-[a-zA-Z0-9-_]{20,}'''
+[rules.allowlist]
+paths = ['''\.env\.example''']
+
+[[rules]]
+id = "openai-api-key"
+description = "Detect OpenAI API keys"
+regex = '''sk-[a-zA-Z0-9]{20,}'''
+[rules.allowlist]
+paths = ['''\.env\.example''']
+regexes = ['''sk-test.*''', '''sk-ant.*''']  # Exclude test keys and Anthropic keys
+
+[[rules]]
+id = "youtube-api-key"
+description = "Detect YouTube/Google API keys"
+regex = '''AIza[0-9A-Za-z\\-_]{35}'''
+[rules.allowlist]
+paths = ['''\.env\.example''']

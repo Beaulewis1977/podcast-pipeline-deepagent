@@ -1,0 +1,136 @@
+# CodeRabbit Configuration
+# https://docs.coderabbit.ai/guides/configuration
+
+language: en-US
+
+reviews:
+  # Automatic review settings
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches:
+      - main
+      - master
+
+  # Request changes when issues found
+  request_changes_workflow: true
+
+  # Generate high-level summary
+  high_level_summary: true
+
+  # Poem in review (fun)
+  poem: false
+
+  # Review profile (chill, default, assertive, etc.)
+  profile: default
+
+  # Path filters - exclude from review
+  path_filters:
+    - "!**/node_modules/**"
+    - "!**/__pycache__/**"
+    - "!**/dist/**"
+    - "!**/*.lock"
+    - "!**/uv.lock"
+    - "!**/poetry.lock"
+    - "!**/_archive/**"
+    - "!**/htmlcov/**"
+    - "!**/.coverage"
+    - "!**/coverage.xml"
+
+  # Path-specific review instructions
+  path_instructions:
+    - path: "src/**/*.py"
+      instructions: |
+        Review for Python best practices:
+        - Proper type annotations
+        - Docstrings for public functions/classes
+        - Error handling with specific exceptions
+        - No hardcoded secrets or credentials
+        - Async/await patterns where appropriate
+        - Pydantic models for data validation
+
+    - path: "tests/**/*.py"
+      instructions: |
+        Review test quality:
+        - Test coverage for edge cases
+        - Proper use of fixtures and mocking
+        - Clear test names describing behavior
+        - No hardcoded test data that could be secrets
+
+    - path: "src/podcast_pipeline/cli.py"
+      instructions: |
+        Review CLI design:
+        - Clear help text for all commands
+        - Proper error messages for users
+        - Consistent command naming
+        - Exit codes for scripting
+
+    - path: "src/podcast_pipeline/providers/**"
+      instructions: |
+        Review AI provider integration:
+        - Proper error handling for API failures
+        - Rate limiting considerations
+        - Fallback behavior implementation
+        - No exposed API keys
+
+    - path: ".github/**"
+      instructions: |
+        Review CI/CD configuration:
+        - Security best practices
+        - Minimal permissions
+        - Proper caching
+        - No hardcoded secrets
+
+# Chat settings
+chat:
+  auto_reply: true
+
+# Enable tools
+tools:
+  # Built-in tools
+  github-checks:
+    enabled: true
+  shellcheck:
+    enabled: true
+  yamllint:
+    enabled: true
+  markdownlint:
+    enabled: true
+
+  # Ruff for Python
+  ruff:
+    enabled: true
+
+  # Custom rules
+  custom:
+    enabled: true
+    rules:
+      - name: no-hardcoded-secrets
+        description: "No hardcoded API keys or secrets"
+        pattern: "(api_key|password|secret|token)\\s*[=:]\\s*['\"][^'\"]{8,}['\"]"
+        severity: critical
+        file_patterns:
+          - "**/*.py"
+        exclude_patterns:
+          - "**/*.example"
+          - "**/test_*.py"
+          - "**/*_test.py"
+
+      - name: no-print-statements
+        description: "Use logging instead of print"
+        pattern: "^\\s*print\\("
+        severity: warning
+        file_patterns:
+          - "src/**/*.py"
+        exclude_patterns:
+          - "**/cli.py"
+          - "**/test_*.py"
+
+      - name: type-hints-required
+        description: "Functions should have type hints"
+        pattern: "def\\s+\\w+\\([^)]*\\)\\s*:"
+        severity: info
+        file_patterns:
+          - "src/**/*.py"
+        exclude_patterns:
+          - "**/test_*.py"

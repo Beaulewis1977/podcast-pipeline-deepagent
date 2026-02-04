@@ -1,0 +1,316 @@
+{
+  "text": "Welcome to the AI Podcast. Today we're discussing the future of artificial intelligence and machine learning. In recent years, we've seen tremendous advances in natural language processing, computer vision, and generative AI. These technologies are transforming how we work, communicate, and create. The possibilities are truly exciting.",
+  "segments": [
+    {
+      "start": 0.0,
+      "end": 7.0,
+      "text": "Welcome to the AI Podcast. Today we're discussing the future of artificial intelligence and machine learning.",
+      "words": [
+        {
+          "word": "Welcome",
+          "start": 0.0,
+          "end": 0.4,
+          "confidence": 0.7495298385620117
+        },
+        {
+          "word": "to",
+          "start": 0.4,
+          "end": 0.72,
+          "confidence": 0.9130575060844421
+        },
+        {
+          "word": "the",
+          "start": 0.72,
+          "end": 0.82,
+          "confidence": 0.6046207547187805
+        },
+        {
+          "word": "AI",
+          "start": 0.82,
+          "end": 1.1,
+          "confidence": 0.9842923879623413
+        },
+        {
+          "word": "Podcast.",
+          "start": 1.1,
+          "end": 1.64,
+          "confidence": 0.567275881767273
+        },
+        {
+          "word": "Today",
+          "start": 2.26,
+          "end": 2.62,
+          "confidence": 0.9929268956184387
+        },
+        {
+          "word": "we're",
+          "start": 2.62,
+          "end": 2.96,
+          "confidence": 0.763352245092392
+        },
+        {
+          "word": "discussing",
+          "start": 2.96,
+          "end": 3.44,
+          "confidence": 0.9952860474586487
+        },
+        {
+          "word": "the",
+          "start": 3.44,
+          "end": 3.76,
+          "confidence": 0.9864082336425781
+        },
+        {
+          "word": "future",
+          "start": 3.76,
+          "end": 4.1,
+          "confidence": 0.980599582195282
+        },
+        {
+          "word": "of",
+          "start": 4.1,
+          "end": 4.38,
+          "confidence": 0.9979032278060913
+        },
+        {
+          "word": "artificial",
+          "start": 4.38,
+          "end": 4.9,
+          "confidence": 0.9605783820152283
+        },
+        {
+          "word": "intelligence",
+          "start": 4.9,
+          "end": 5.64,
+          "confidence": 0.9984662532806396
+        },
+        {
+          "word": "and",
+          "start": 5.64,
+          "end": 6.14,
+          "confidence": 0.9535318613052368
+        },
+        {
+          "word": "machine",
+          "start": 6.14,
+          "end": 6.46,
+          "confidence": 0.9786098003387451
+        },
+        {
+          "word": "learning.",
+          "start": 6.46,
+          "end": 7.0,
+          "confidence": 0.997119665145874
+        }
+      ],
+      "speaker": null
+    },
+    {
+      "start": 7.46,
+      "end": 16.0,
+      "text": "In recent years, we've seen tremendous advances in natural language processing, computer vision, and generative AI.",
+      "words": [
+        {
+          "word": "In",
+          "start": 7.46,
+          "end": 7.7,
+          "confidence": 0.9894914627075195
+        },
+        {
+          "word": "recent",
+          "start": 7.7,
+          "end": 8.02,
+          "confidence": 0.9994033575057983
+        },
+        {
+          "word": "years,",
+          "start": 8.02,
+          "end": 8.56,
+          "confidence": 0.9992793202400208
+        },
+        {
+          "word": "we've",
+          "start": 9.06,
+          "end": 9.26,
+          "confidence": 0.9835091531276703
+        },
+        {
+          "word": "seen",
+          "start": 9.26,
+          "end": 9.5,
+          "confidence": 0.9949467778205872
+        },
+        {
+          "word": "tremendous",
+          "start": 9.5,
+          "end": 10.16,
+          "confidence": 0.9960349202156067
+        },
+        {
+          "word": "advances",
+          "start": 10.16,
+          "end": 10.82,
+          "confidence": 0.9960781931877136
+        },
+        {
+          "word": "in",
+          "start": 10.82,
+          "end": 11.12,
+          "confidence": 0.9993072748184204
+        },
+        {
+          "word": "natural",
+          "start": 11.12,
+          "end": 11.54,
+          "confidence": 0.9799938201904297
+        },
+        {
+          "word": "language",
+          "start": 11.54,
+          "end": 12.1,
+          "confidence": 0.9801714420318604
+        },
+        {
+          "word": "processing,",
+          "start": 12.1,
+          "end": 12.94,
+          "confidence": 0.9968506693840027
+        },
+        {
+          "word": "computer",
+          "start": 13.44,
+          "end": 13.9,
+          "confidence": 0.9938568472862244
+        },
+        {
+          "word": "vision,",
+          "start": 13.9,
+          "end": 14.4,
+          "confidence": 0.9990317821502686
+        },
+        {
+          "word": "and",
+          "start": 14.76,
+          "end": 14.96,
+          "confidence": 0.9973942041397095
+        },
+        {
+          "word": "generative",
+          "start": 14.96,
+          "end": 15.48,
+          "confidence": 0.9686780869960785
+        },
+        {
+          "word": "AI.",
+          "start": 15.48,
+          "end": 16.0,
+          "confidence": 0.9984984397888184
+        }
+      ],
+      "speaker": null
+    },
+    {
+      "start": 16.5,
+      "end": 24.14,
+      "text": "These technologies are transforming how we work, communicate, and create. The possibilities are truly exciting.",
+      "words": [
+        {
+          "word": "These",
+          "start": 16.5,
+          "end": 16.76,
+          "confidence": 0.9376007318496704
+        },
+        {
+          "word": "technologies",
+          "start": 16.76,
+          "end": 17.26,
+          "confidence": 0.7540751099586487
+        },
+        {
+          "word": "are",
+          "start": 17.26,
+          "end": 17.68,
+          "confidence": 0.9990760087966919
+        },
+        {
+          "word": "transforming",
+          "start": 17.68,
+          "end": 18.28,
+          "confidence": 0.9944320321083069
+        },
+        {
+          "word": "how",
+          "start": 18.28,
+          "end": 18.76,
+          "confidence": 0.9951382279396057
+        },
+        {
+          "word": "we",
+          "start": 18.76,
+          "end": 18.98,
+          "confidence": 0.9986966252326965
+        },
+        {
+          "word": "work,",
+          "start": 18.98,
+          "end": 19.32,
+          "confidence": 0.9984205961227417
+        },
+        {
+          "word": "communicate,",
+          "start": 19.86,
+          "end": 20.3,
+          "confidence": 0.9955617189407349
+        },
+        {
+          "word": "and",
+          "start": 20.74,
+          "end": 20.94,
+          "confidence": 0.9971796274185181
+        },
+        {
+          "word": "create.",
+          "start": 20.94,
+          "end": 21.32,
+          "confidence": 0.9970548152923584
+        },
+        {
+          "word": "The",
+          "start": 22.06,
+          "end": 22.18,
+          "confidence": 0.9718934893608093
+        },
+        {
+          "word": "possibilities",
+          "start": 22.18,
+          "end": 22.82,
+          "confidence": 0.9655770659446716
+        },
+        {
+          "word": "are",
+          "start": 22.82,
+          "end": 23.12,
+          "confidence": 0.9993911981582642
+        },
+        {
+          "word": "truly",
+          "start": 23.12,
+          "end": 23.5,
+          "confidence": 0.9988289475440979
+        },
+        {
+          "word": "exciting.",
+          "start": 23.5,
+          "end": 24.14,
+          "confidence": 0.9917212128639221
+        }
+      ],
+      "speaker": null
+    }
+  ],
+  "filler_cuts": [],
+  "language": "en",
+  "duration": 24.7989375,
+  "speaker": null,
+  "track_index": 0
+}

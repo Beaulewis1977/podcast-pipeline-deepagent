@@ -1,0 +1,172 @@
+# Podcast Pipeline Configuration
+# Copy to config.yaml and customize as needed
+
+# Directories
+paths:
+  jobs_dir: ./jobs
+  models_cache: ./models
+
+# AI Models
+# Gemini models: gemini-2.5-flash-latest (recommended), gemini-3-flash, gemini-3-pro, gemini-2.5-pro
+# Kimi models: kimi-k2.5 (recommended), moonshot-v1-128k (legacy)
+# NOTE: gemini-2.0-flash is RETIRING March 3, 2026 - do not use!
+models:
+  provider: gemini
+  model: gemini-2.5-flash  # Best balance of cost/performance for video
+  fallback_provider: kimi
+  fallback_model: kimi-k2.5  # Latest Kimi multimodal model
+
+# Transcription (faster-whisper)
+transcription:
+  provider: whisper
+  model: large-v3  # large-v3 for best quality, small for faster
+  device: cuda     # cuda for GPU, cpu for CPU-only
+  compute_type: float16  # float16 for GPU, int8 for CPU/lower memory
+
+# Filler Word Detection
+fillers:
+  words:
+    - um
+    - uh
+    - hmm
+    - er
+    - ah
+    - like
+    - you know
+    - basically
+    - actually
+    - so
+  min_confidence: 0.5
+  min_duration_ms: 150
+  padding_ms: 50
+
+# Audio Processing
+audio:
+  target_loudness:
+    youtube: -14.0
+    spotify: -16.0
+    apple: -16.0
+    tiktok: -14.0
+    instagram: -14.0
+    linkedin: -14.0
+    twitter: -14.0
+    facebook: -14.0
+  noise_reduction: auto
+  sample_rate: 44100
+
+# Platform Export Specifications
+platforms:
+  # YouTube - Long-form horizontal video
+  youtube:
+    container: mp4
+    video_codec: libx264
+    video_bitrate: 8M
+    audio_codec: aac
+    audio_bitrate: 256k
+    loudness_lufs: -14.0
+    preset: medium
+    pix_fmt: yuv420p
+    width: 1920
+    height: 1080
+    aspect_ratio: "16:9"
+    fps: 30
+
+  # Spotify - Audio only (MP3)
+  spotify:
+    container: mp3
+    audio_codec: libmp3lame
+    audio_bitrate: 320k
+    loudness_lufs: -16.0
+    audio_only: true
+
+  # Apple Podcasts - Audio only (AAC)
+  apple:
+    container: m4a
+    audio_codec: aac
+    audio_bitrate: 128k
+    loudness_lufs: -16.0
+    audio_only: true
+
+  # TikTok - Vertical short-form (60s max)
+  tiktok:
+    container: mp4
+    video_codec: libx264
+    video_bitrate: 5M
+    audio_codec: aac
+    audio_bitrate: 128k
+    loudness_lufs: -14.0
+    width: 1080
+    height: 1920
+    aspect_ratio: "9:16"
+    max_duration: 60
+    fps: 30
+    crop_mode: center
+    preset: fast
+    pix_fmt: yuv420p
+
+  # Instagram Reels - Vertical short-form (90s max)
+  instagram:
+    container: mp4
+    video_codec: libx264
+    video_bitrate: 5M
+    audio_codec: aac
+    audio_bitrate: 128k
+    loudness_lufs: -14.0
+    width: 1080
+    height: 1920
+    aspect_ratio: "9:16"
+    max_duration: 90
+    min_duration: 3
+    fps: 30
+    crop_mode: center
+    preset: fast
+    pix_fmt: yuv420p
+
+  # LinkedIn - Square video (10 min max)
+  linkedin:
+    container: mp4
+    video_codec: libx264
+    video_bitrate: 6M
+    audio_codec: aac
+    audio_bitrate: 192k
+    loudness_lufs: -14.0
+    width: 1080
+    height: 1080
+    aspect_ratio: "1:1"
+    max_duration: 600
+    fps: 30
+    crop_mode: center
+    preset: medium
+    pix_fmt: yuv420p
+
+  # Twitter/X - Horizontal video (2:20 max)
+  twitter:
+    container: mp4
+    video_codec: libx264
+    video_bitrate: 5M
+    audio_codec: aac
+    audio_bitrate: 128k
+    loudness_lufs: -14.0
+    width: 1280
+    height: 720
+    aspect_ratio: "16:9"
+    max_duration: 140
+    fps: 30
+    preset: fast
+    pix_fmt: yuv420p
+
+  # Facebook - Horizontal video
+  facebook:
+    container: mp4
+    video_codec: libx264
+    video_bitrate: 8M
+    audio_codec: aac
+    audio_bitrate: 256k
+    loudness_lufs: -14.0
+    width: 1920
+    height: 1080
+    aspect_ratio: "16:9"
+    max_duration: 14400  # 4 hours
+    fps: 30
+    preset: medium
+    pix_fmt: yuv420p
