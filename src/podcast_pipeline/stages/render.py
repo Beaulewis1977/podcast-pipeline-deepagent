@@ -376,7 +376,11 @@ class RenderStage(Stage):
 
         keep_ranges = self._invert_cut_ranges(cut_ranges, duration)
         if not keep_ranges:
-            return None
+            # Cuts cover the entire duration - this would result in empty output
+            raise ValueError(
+                "EditPlan removes entire content: cuts span the full video duration. "
+                "Review and adjust the edit plan to retain some content."
+            )
 
         # Check if single keep range covers full duration (with tolerance for floats)
         if len(keep_ranges) == 1:

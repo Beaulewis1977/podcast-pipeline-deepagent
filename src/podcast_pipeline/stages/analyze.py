@@ -1,7 +1,7 @@
 """Analyze stage: AI analysis of video content."""
 
+import dataclasses
 import json
-from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -240,9 +240,19 @@ class AnalyzeStage(Stage):
                     }
                 )
 
+            def _serialize_signal(obj: Any) -> dict[str, Any]:
+                """Safely serialize dataclass or Pydantic model to dict."""
+                if hasattr(obj, "model_dump"):
+                    return dict(obj.model_dump())
+                if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
+                    return dataclasses.asdict(obj)
+                if isinstance(obj, dict):
+                    return obj
+                return dict(vars(obj))
+
             viral_payload = {
                 "generated_at": datetime.now(UTC).isoformat(),
-                "signals": [asdict(signal) for signal in signals],
+                "signals": [_serialize_signal(signal) for signal in signals],
                 "clip_scores": clip_scores,
             }
 
