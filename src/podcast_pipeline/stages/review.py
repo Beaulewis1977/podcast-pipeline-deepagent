@@ -79,9 +79,20 @@ class ReviewStage(Stage):
         decisions = ReviewDecisions.model_validate(review_data)
 
         if decisions.review_complete:
+            analysis_path = job_dir / "analysis" / "analysis.json"
+            filler_path = job_dir / "analysis" / "filler_cuts.json"
+
+            analysis = json.loads(analysis_path.read_text()) if analysis_path.exists() else {}
+            fillers = json.loads(filler_path.read_text()) if filler_path.exists() else []
+
+            edit_plan_path = write_edit_plan(job_dir, decisions, analysis, fillers)
+
             return StageResult(
                 success=True,
-                outputs=[str(review_path.relative_to(job_dir))],
+                outputs=[
+                    str(review_path.relative_to(job_dir)),
+                    str(edit_plan_path.relative_to(job_dir)),
+                ],
                 data={"status": "review_complete", "decisions": decisions.model_dump()},
             )
 
@@ -172,6 +183,10 @@ def approve_review(job_dir: Path, platforms: list[str] | None = None) -> ReviewD
     # Save
     review_path.parent.mkdir(parents=True, exist_ok=True)
     review_path.write_text(decisions.model_dump_json(indent=2))
+
+    analysis = json.loads(analysis_path.read_text()) if analysis_path.exists() else {}
+    fillers = json.loads(filler_path.read_text()) if filler_path.exists() else []
+    write_edit_plan(job_dir, decisions, analysis, fillers)
 
     return decisions
 

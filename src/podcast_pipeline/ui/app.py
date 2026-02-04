@@ -11,7 +11,12 @@ import streamlit as st
 from podcast_pipeline.config import Config, load_config
 from podcast_pipeline.models.job import Job, StageStatus
 from podcast_pipeline.pipeline import Pipeline
-from podcast_pipeline.stages.review import ReviewDecisions, approve_review, get_review_summary
+from podcast_pipeline.stages.review import (
+    ReviewDecisions,
+    approve_review,
+    get_review_summary,
+    write_edit_plan,
+)
 
 # Page config must be first Streamlit command
 st.set_page_config(
@@ -746,6 +751,12 @@ def save_review_decisions(job_dir: Path, decisions: ReviewDecisions | None) -> N
     
     review_path = review_dir / "review_state.json"
     review_path.write_text(decisions.model_dump_json(indent=2))
+
+    analysis_path = job_dir / "analysis" / "analysis.json"
+    filler_path = job_dir / "analysis" / "filler_cuts.json"
+    analysis = json.loads(analysis_path.read_text()) if analysis_path.exists() else {}
+    fillers = json.loads(filler_path.read_text()) if filler_path.exists() else []
+    write_edit_plan(job_dir, decisions, analysis, fillers)
 
 
 def update_thumbnail_selection(job_dir: Path, thumbnail_idx: int) -> None:
