@@ -38,6 +38,19 @@ reviews:
     - "!**/.coverage"
     - "!**/coverage.xml"
 
+  # Enable tools
+  tools:
+    shellcheck:
+      enabled: true
+    yamllint:
+      enabled: true
+    markdownlint:
+      enabled: true
+    ruff:
+      enabled: true
+    gitleaks:
+      enabled: true
+
   # Path-specific review instructions
   path_instructions:
     - path: "src/**/*.py"
@@ -85,16 +98,3 @@ reviews:
 # Chat settings
 chat:
   auto_reply: true
-
-# Enable tools (using valid CodeRabbit schema)
-tools:
-  shellcheck:
-    enabled: true
-  yamllint:
-    enabled: true
-  markdownlint:
-    enabled: true
-  ruff:
-    enabled: true
-  gitleaks:
-    enabled: true
