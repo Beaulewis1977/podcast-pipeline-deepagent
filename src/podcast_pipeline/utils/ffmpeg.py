@@ -62,9 +62,7 @@ def run_ffmpeg(
     except subprocess.TimeoutExpired as e:
         raise FFmpegError(f"FFmpeg timed out after {timeout}s") from e
     except FileNotFoundError as e:
-        raise FFmpegError(
-            "FFmpeg not found. Please install FFmpeg and ensure it's in PATH."
-        ) from e
+        raise FFmpegError("FFmpeg not found. Please install FFmpeg and ensure it's in PATH.") from e
 
 
 def run_ffprobe(
@@ -254,7 +252,7 @@ def get_video_info(video_path: Path) -> dict[str, Any]:
     try:
         metadata = get_video_metadata(video_path)
         video_stream = metadata.get("video", {})
-        
+
         return {
             "width": video_stream.get("width", 1920),
             "height": video_stream.get("height", 1080),

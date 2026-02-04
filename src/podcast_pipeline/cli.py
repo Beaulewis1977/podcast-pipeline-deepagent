@@ -1,8 +1,6 @@
 """Command-line interface for podcast-pipeline."""
 
-import json
 from pathlib import Path
-from typing import Optional
 
 import typer
 from rich.console import Console
@@ -11,7 +9,7 @@ from rich.table import Table
 
 from podcast_pipeline import __version__
 from podcast_pipeline.config import load_config
-from podcast_pipeline.models.job import Job, StageStatus
+from podcast_pipeline.models.job import StageStatus
 from podcast_pipeline.pipeline import Pipeline
 from podcast_pipeline.stages.review import approve_review, get_review_summary
 from podcast_pipeline.utils.logging import setup_logging
@@ -35,7 +33,7 @@ def version_callback(value: bool) -> None:
 
 @app.callback()
 def main(
-    version: Optional[bool] = typer.Option(
+    _version: bool | None = typer.Option(
         None,
         "--version",
         "-v",
@@ -58,7 +56,7 @@ def main(
 @app.command()
 def new(
     video_path: str = typer.Argument(..., help="Path to the input video file"),
-    name: Optional[str] = typer.Option(
+    name: str | None = typer.Option(
         None,
         "--name",
         "-n",
@@ -90,12 +88,12 @@ def new(
         )
     except Exception as e:
         console.print(f"[red]Error creating job:[/red] {e}")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
 
 
 @app.command()
 def status(
-    job_id: Optional[str] = typer.Argument(None, help="Job ID to check (or list all if omitted)"),
+    job_id: str | None = typer.Argument(None, help="Job ID to check (or list all if omitted)"),
 ) -> None:
     """Check the status of a job or list all jobs."""
     config = load_config()
@@ -124,7 +122,12 @@ def status(
 
             # Build stages string with colors
             stage_parts = []
-            status_colors = {"complete": "green", "running": "blue", "waiting": "yellow", "failed": "red"}
+            status_colors = {
+                "complete": "green",
+                "running": "blue",
+                "waiting": "yellow",
+                "failed": "red",
+            }
             for n, s in job_info["stages"].items():
                 color = status_colors.get(s, "white")
                 stage_parts.append(f"[{color}]{n}[/]")
@@ -144,7 +147,7 @@ def status(
             job = pipeline.load_job(job_id)
         except FileNotFoundError:
             console.print(f"[red]Job not found:[/red] {job_id}")
-            raise typer.Exit(1)
+            raise typer.Exit(1) from None
 
         table = Table(title=f"Job: {job.job_id}")
         table.add_column("Stage")
@@ -183,13 +186,13 @@ def status(
 @app.command()
 def run(
     job_id: str = typer.Argument(..., help="Job ID to run"),
-    stage: Optional[str] = typer.Option(
+    stage: str | None = typer.Option(
         None,
         "--stage",
         "-s",
         help="Specific stage to run (ingest, transcribe, analyze, review, render)",
     ),
-    until: Optional[str] = typer.Option(
+    until: str | None = typer.Option(
         None,
         "--until",
         "-u",
@@ -204,7 +207,7 @@ def run(
         job = pipeline.load_job(job_id)
     except FileNotFoundError:
         console.print(f"[red]Job not found:[/red] {job_id}")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
 
     console.print(f"[blue]Running pipeline for job:[/blue] {job_id}")
     if stage:
@@ -235,7 +238,7 @@ def run(
 
     except Exception as e:
         console.print(f"[red]Pipeline error:[/red] {e}")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
 
 
 @app.command()
@@ -250,7 +253,7 @@ def review(
         job = pipeline.load_job(job_id)
     except FileNotFoundError:
         console.print(f"[red]Job not found:[/red] {job_id}")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
 
     job_dir = job.get_job_dir(config.paths.jobs_dir)
     summary = get_review_summary(job_dir)
@@ -270,40 +273,39 @@ def review(
     if summary.get("filler_cuts"):
         console.print(f"\n[bold]Filler Words Detected:[/bold] {len(summary['filler_cuts'])}")
         for f in summary["filler_cuts"][:5]:
-            console.print(f"  [{f['index']}] \"{f['word']}\" at {f['start']} - {f['end']}")
+            console.print(f'  [{f["index"]}] "{f["word"]}" at {f["start"]} - {f["end"]}')
         if len(summary["filler_cuts"]) > 5:
             console.print(f"  ... and {len(summary['filler_cuts']) - 5} more")
 
     # Show content cuts
     if summary.get("content_cuts"):
-        console.print(f"\n[bold]Suggested Content Cuts:[/bold]")
+        console.print("\n[bold]Suggested Content Cuts:[/bold]")
         for c in summary["content_cuts"]:
             console.print(f"  [{c['index']}] {c['start']} - {c['end']}: {c['reason']}")
 
     # Show viral clips
     if summary.get("viral_clips"):
-        console.print(f"\n[bold]Viral Clip Candidates:[/bold]")
+        console.print("\n[bold]Viral Clip Candidates:[/bold]")
         for c in summary["viral_clips"]:
             console.print(
                 f"  [{c['index']}] {c['start']} - {c['end']} (score: {c['score']}/10)\n"
                 f"       {c['description']}\n"
-                f"       Hook: \"{c['hook']}\""
+                f'       Hook: "{c["hook"]}"'
             )
 
     # Show thumbnails
     if summary.get("thumbnails"):
-        console.print(f"\n[bold]Thumbnail Candidates:[/bold]")
+        console.print("\n[bold]Thumbnail Candidates:[/bold]")
         for t in summary["thumbnails"]:
             console.print(
-                f"  [{t['index']}] {t['timestamp']}: {t['description']}\n"
-                f"       Text: \"{t['text']}\""
+                f'  [{t["index"]}] {t["timestamp"]}: {t["description"]}\n       Text: "{t["text"]}"'
             )
 
     # Show marketing
     if summary.get("marketing"):
         yt = summary["marketing"].get("youtube", {})
         if yt.get("titles"):
-            console.print(f"\n[bold]YouTube Title Suggestions:[/bold]")
+            console.print("\n[bold]YouTube Title Suggestions:[/bold]")
             for i, title in enumerate(yt["titles"], 1):
                 console.print(f"  {i}. {title}")
 
@@ -325,7 +327,7 @@ def review(
 @app.command()
 def approve(
     job_id: str = typer.Argument(..., help="Job ID to approve"),
-    platforms: Optional[str] = typer.Option(
+    platforms: str | None = typer.Option(
         "youtube,spotify",
         "--platforms",
         "-p",
@@ -340,10 +342,12 @@ def approve(
         job = pipeline.load_job(job_id)
     except FileNotFoundError:
         console.print(f"[red]Job not found:[/red] {job_id}")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
 
     job_dir = job.get_job_dir(config.paths.jobs_dir)
-    platform_list = [p.strip() for p in platforms.split(",")] if platforms else ["youtube", "spotify"]
+    platform_list = (
+        [p.strip() for p in platforms.split(",")] if platforms else ["youtube", "spotify"]
+    )
 
     decisions = approve_review(job_dir, platform_list)
 
@@ -380,7 +384,7 @@ def ui(
 
     # Find the app.py file
     ui_app_path = Path(__file__).parent / "ui" / "app.py"
-    
+
     if not ui_app_path.exists():
         console.print(f"[red]Error:[/red] UI app not found at {ui_app_path}")
         raise typer.Exit(1)
@@ -415,7 +419,7 @@ def ui(
         console.print("\n[yellow]UI server stopped.[/yellow]")
     except subprocess.CalledProcessError as e:
         console.print(f"[red]Error starting UI:[/red] {e}")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
 
 
 if __name__ == "__main__":

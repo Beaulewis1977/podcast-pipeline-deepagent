@@ -10,7 +10,7 @@ repos:
   # Code Quality - Ruff (lint + format)
   # ==========================================================================
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.9.0
+    rev: v0.15.0
     hooks:
       - id: ruff
         name: ruff lint
@@ -25,10 +25,11 @@ repos:
     hooks:
       - id: mypy
         name: mypy type check
-        entry: uv run mypy src/
+        entry: bash -c 'uv run --quiet mypy src/'
         language: system
         pass_filenames: false
         always_run: true
+        require_serial: true
 
   # ==========================================================================
   # General File Hygiene

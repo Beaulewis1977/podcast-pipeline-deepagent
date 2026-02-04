@@ -1,8 +1,13 @@
 """Transcribe stage: Speech-to-text with filler detection and multi-track support."""
 
+from __future__ import annotations
+
 import json
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from faster_whisper import WhisperModel
 
 from podcast_pipeline.config import Config
 from podcast_pipeline.models.job import Job
@@ -24,7 +29,7 @@ class TranscribeStage(Stage):
         super().__init__(config)
         self._model = None
 
-    def _get_model(self) -> "WhisperModel":  # type: ignore[name-defined]
+    def _get_model(self) -> WhisperModel:
         """Lazy load the Whisper model."""
         if self._model is None:
             from faster_whisper import WhisperModel
@@ -232,7 +237,7 @@ class TranscribeStage(Stage):
 
     def _detect_fillers(self, segments: list[Segment]) -> list[FillerCut]:
         """Detect filler words in transcript."""
-        filler_words = set(w.lower() for w in self.config.fillers.words)
+        filler_words = {w.lower() for w in self.config.fillers.words}
         min_confidence = self.config.fillers.min_confidence
         min_duration_ms = self.config.fillers.min_duration_ms
         padding_ms = self.config.fillers.padding_ms
@@ -292,30 +297,32 @@ class TranscribeStage(Stage):
 
     def _detect_audio_tracks(self, video_path: Path) -> list[dict[str, Any]]:
         """Detect all audio tracks in the video file.
-        
+
         Args:
             video_path: Path to video file
-            
+
         Returns:
             List of audio track info dictionaries
         """
         try:
             metadata = get_video_metadata(video_path)
             audio_tracks = []
-            
+
             for stream in metadata.get("streams", []):
                 if stream.get("codec_type") == "audio":
-                    audio_tracks.append({
-                        "index": stream.get("index"),
-                        "codec_name": stream.get("codec_name"),
-                        "sample_rate": stream.get("sample_rate"),
-                        "channels": stream.get("channels"),
-                        "channel_layout": stream.get("channel_layout", ""),
-                    })
-            
+                    audio_tracks.append(
+                        {
+                            "index": stream.get("index"),
+                            "codec_name": stream.get("codec_name"),
+                            "sample_rate": stream.get("sample_rate"),
+                            "channels": stream.get("channels"),
+                            "channel_layout": stream.get("channel_layout", ""),
+                        }
+                    )
+
             self.logger.info("audio_tracks_detected", count=len(audio_tracks))
             return audio_tracks
-            
+
         except Exception as e:
             self.logger.warning("audio_track_detection_failed", error=str(e))
             return []
@@ -328,25 +335,30 @@ class TranscribeStage(Stage):
         sample_rate: int = 16000,
     ) -> Path:
         """Extract a specific audio track from video.
-        
+
         Args:
             video_path: Path to video file
             output_path: Path for output audio
             track_index: Audio stream index
             sample_rate: Output sample rate
-            
+
         Returns:
             Path to extracted audio
         """
         args = [
-            "-i", str(video_path),
-            "-map", f"0:a:{track_index}",
-            "-acodec", "pcm_s16le",
-            "-ar", str(sample_rate),
-            "-ac", "1",
+            "-i",
+            str(video_path),
+            "-map",
+            f"0:a:{track_index}",
+            "-acodec",
+            "pcm_s16le",
+            "-ar",
+            str(sample_rate),
+            "-ac",
+            "1",
             str(output_path),
         ]
-        
+
         run_ffmpeg(args)
         return output_path
 
@@ -356,14 +368,14 @@ class TranscribeStage(Stage):
         job_dir: Path,
     ) -> StageResult:
         """Transcribe multiple audio tracks separately.
-        
+
         This is useful for podcasts with separate tracks for host/guest.
         Creates per-track transcripts and a merged transcript.
-        
+
         Args:
             job: Job instance
             job_dir: Job directory path
-            
+
         Returns:
             Stage result
         """
@@ -375,7 +387,7 @@ class TranscribeStage(Stage):
                 success=False,
                 error="Input video not found",
             )
-        
+
         # Detect audio tracks
         tracks = self._detect_audio_tracks(video_path)
 
@@ -383,7 +395,7 @@ class TranscribeStage(Stage):
             # Single track - use standard transcription
             self.logger.info("single_track_detected", falling_back="standard")
             return self._run_single_track(job, job_dir)
-        
+
         # Create directories
         analysis_dir = job_dir / "analysis"
         intermediate_dir = job_dir / "intermediate"
@@ -391,13 +403,13 @@ class TranscribeStage(Stage):
         analysis_dir.mkdir(parents=True, exist_ok=True)
         intermediate_dir.mkdir(parents=True, exist_ok=True)
         transcripts_dir.mkdir(parents=True, exist_ok=True)
-        
+
         outputs: list[str] = []
         all_transcripts: list[TranscriptResult] = []
-        
+
         try:
             model = self._get_model()
-            
+
             # Transcribe each track
             for i, track in enumerate(tracks):
                 self.logger.info(
@@ -405,11 +417,11 @@ class TranscribeStage(Stage):
                     track_index=i,
                     channels=track.get("channels"),
                 )
-                
+
                 # Extract track audio
                 track_audio = intermediate_dir / f"audio_track_{i}.wav"
                 self._extract_audio_track(video_path, track_audio, i)
-                
+
                 # Transcribe track
                 segments_iter, info = model.transcribe(
                     str(track_audio),
@@ -417,37 +429,41 @@ class TranscribeStage(Stage):
                     vad_filter=True,
                     vad_parameters={"min_silence_duration_ms": 500},
                 )
-                
+
                 # Process segments
                 transcript_segments: list[Segment] = []
                 all_text_parts: list[str] = []
-                
+
                 for segment in segments_iter:
                     words = []
                     if segment.words:
                         for word_info in segment.words:
-                            words.append(Word(
-                                word=word_info.word.strip(),
-                                start=word_info.start,
-                                end=word_info.end,
-                                confidence=word_info.probability,
-                            ))
-                    
+                            words.append(
+                                Word(
+                                    word=word_info.word.strip(),
+                                    start=word_info.start,
+                                    end=word_info.end,
+                                    confidence=word_info.probability,
+                                )
+                            )
+
                     # Add speaker label
                     speaker_label = f"Speaker {i + 1}"
-                    
-                    transcript_segments.append(Segment(
-                        start=segment.start,
-                        end=segment.end,
-                        text=segment.text.strip(),
-                        words=words,
-                        speaker=speaker_label,
-                    ))
+
+                    transcript_segments.append(
+                        Segment(
+                            start=segment.start,
+                            end=segment.end,
+                            text=segment.text.strip(),
+                            words=words,
+                            speaker=speaker_label,
+                        )
+                    )
                     all_text_parts.append(f"[{speaker_label}] {segment.text.strip()}")
-                
+
                 full_text = " ".join(all_text_parts)
                 filler_cuts = self._detect_fillers(transcript_segments)
-                
+
                 track_result = TranscriptResult(
                     text=full_text,
                     segments=transcript_segments,
@@ -457,38 +473,38 @@ class TranscribeStage(Stage):
                     speaker=f"Speaker {i + 1}",
                     track_index=i,
                 )
-                
+
                 all_transcripts.append(track_result)
-                
+
                 # Save per-track transcript
                 track_path = analysis_dir / f"transcript_track_{i}.json"
                 track_path.write_text(track_result.model_dump_json(indent=2))
                 outputs.append(str(track_path.relative_to(job_dir)))
-            
+
             # Merge transcripts
             merged = self._merge_transcripts(all_transcripts)
-            
+
             # Save merged transcript
             transcript_path = analysis_dir / "transcript.json"
             transcript_path.write_text(merged.model_dump_json(indent=2))
             outputs.append(str(transcript_path.relative_to(job_dir)))
-            
+
             # Save combined filler cuts
             all_fillers = []
             for t in all_transcripts:
                 all_fillers.extend(t.filler_cuts)
             all_fillers.sort(key=lambda x: x.start)
-            
+
             filler_path = analysis_dir / "filler_cuts.json"
             filler_data = [f.model_dump() for f in all_fillers]
             filler_path.write_text(json.dumps(filler_data, indent=2))
             outputs.append(str(filler_path.relative_to(job_dir)))
-            
+
             # Export transcript formats
             txt_path = transcripts_dir / "transcript.txt"
             txt_path.write_text(merged.text)
             outputs.append(str(txt_path.relative_to(job_dir)))
-            
+
             srt_path = transcripts_dir / "transcript.srt"
             srt_content = self._generate_srt_with_speakers(merged.segments)
             srt_path.write_text(srt_content)
@@ -498,13 +514,13 @@ class TranscribeStage(Stage):
             vtt_content = self._generate_vtt_with_speakers(merged.segments)
             vtt_path.write_text(vtt_content)
             outputs.append(str(vtt_path.relative_to(job_dir)))
-            
+
             self.logger.info(
                 "multi_track_transcription_complete",
                 tracks=len(tracks),
                 segments=len(merged.segments),
             )
-            
+
             return StageResult(
                 success=True,
                 outputs=outputs,
@@ -513,7 +529,7 @@ class TranscribeStage(Stage):
                     "transcript": merged.model_dump(),
                 },
             )
-            
+
         except Exception as e:
             self.logger.exception("multi_track_transcription_failed")
             return StageResult(
@@ -527,10 +543,10 @@ class TranscribeStage(Stage):
         transcripts: list[TranscriptResult],
     ) -> TranscriptResult:
         """Merge multiple track transcripts into one.
-        
+
         Args:
             transcripts: List of per-track transcripts
-            
+
         Returns:
             Merged transcript with speaker labels
         """
@@ -538,27 +554,27 @@ class TranscribeStage(Stage):
         all_segments: list[Segment] = []
         for t in transcripts:
             all_segments.extend(t.segments)
-        
+
         # Sort by start time
         all_segments.sort(key=lambda x: x.start)
-        
+
         # Build merged text
         text_parts = []
         for seg in all_segments:
             speaker = seg.speaker or "Unknown"
             text_parts.append(f"[{speaker}] {seg.text}")
-        
+
         full_text = " ".join(text_parts)
-        
+
         # Combine filler cuts
         all_fillers: list[FillerCut] = []
         for t in transcripts:
             all_fillers.extend(t.filler_cuts)
         all_fillers.sort(key=lambda x: x.start)
-        
+
         # Get language and duration from first transcript
         first = transcripts[0] if transcripts else None
-        
+
         return TranscriptResult(
             text=full_text,
             segments=all_segments,
@@ -575,10 +591,10 @@ class TranscribeStage(Stage):
         for i, segment in enumerate(segments, 1):
             start = seconds_to_srt_timestamp(segment.start)
             end = seconds_to_srt_timestamp(segment.end)
-            
+
             speaker = segment.speaker or ""
             text = f"[{speaker}] {segment.text}" if speaker else segment.text
-            
+
             lines.append(f"{i}")
             lines.append(f"{start} --> {end}")
             lines.append(text)

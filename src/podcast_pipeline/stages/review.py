@@ -40,9 +40,7 @@ class ReviewDecisions(BaseModel):
     marketing_edits: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
     # Export settings
-    export_platforms: list[str] = Field(
-        default_factory=lambda: ["youtube", "spotify"]
-    )
+    export_platforms: list[str] = Field(default_factory=lambda: ["youtube", "spotify"])
     export_quality: str = "final"  # draft or final
 
     # Review completion
@@ -281,7 +279,9 @@ def get_review_summary(job_dir: Path) -> dict[str, Any]:
     if transcript_path.exists():
         data = json.loads(transcript_path.read_text())
         summary["transcript"] = {
-            "text": data.get("text", "")[:2000] + "..." if len(data.get("text", "")) > 2000 else data.get("text", ""),
+            "text": data.get("text", "")[:2000] + "..."
+            if len(data.get("text", "")) > 2000
+            else data.get("text", ""),
             "duration": data.get("duration", 0),
             "language": data.get("language", "unknown"),
         }

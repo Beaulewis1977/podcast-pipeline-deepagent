@@ -80,7 +80,7 @@ class BaseProvider(ABC):
         """Build the analysis prompt."""
         transcript_text = transcript.get("text", "")[:10000]  # Limit length
 
-        return f'''You are a professional podcast editor and marketing strategist.
+        return f"""You are a professional podcast editor and marketing strategist.
 
 Analyze this podcast video and transcript to provide editing suggestions and marketing content.
 
@@ -164,4 +164,4 @@ Identify:
 3. 3-5 thumbnail frame timestamps
 4. Platform-specific marketing copy
 
-Return ONLY valid JSON, no other text.'''
+Return ONLY valid JSON, no other text."""

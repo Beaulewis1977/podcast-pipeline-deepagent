@@ -136,22 +136,40 @@ def new_command(arg: str = typer.Argument(..., help="Description")):
 
 ## Git Workflow
 
-- **main**: Production-ready releases only
-- **develop**: Active development branch (base for all work)
-- **feature/\***: Feature branches off develop
+### Branch Structure
 
-All work must be done on feature branches and merged via PR:
+| Branch | Purpose | Protection |
+|--------|---------|------------|
+| **main** | Production releases | 🔒 Protected - only owner can merge |
+| **develop** | Active development (origin) | Base for all work |
+| **feat/*** | Feature branches | PR to develop |
+
+### Branch Naming Conventions
+
+| Prefix | Purpose | Example |
+|--------|---------|--------|
+| `feat/` | New features | `feat/audio-normalization` |
+| `fix/` | Bug fixes | `fix/ffmpeg-path-error` |
+| `docs/` | Documentation | `docs/api-reference` |
+| `test/` | Test additions/fixes | `test/integration-coverage` |
+| `refactor/` | Code refactoring | `refactor/provider-abstraction` |
+| `chore/` | Maintenance tasks | `chore/update-dependencies` |
+| `ci/` | CI/CD changes | `ci/add-security-scan` |
+
+### Workflow
+
+All work must be on branches off `develop` and merged via PR:
 ```bash
 git checkout develop
 git pull origin develop
-git checkout -b feature/my-feature
+git checkout -b feat/my-feature
 # ... make changes, commit ...
-git push -u origin feature/my-feature
-# Create PR: feature/* → develop
-# After review: develop → main for releases
+git push -u origin feat/my-feature
+# Create PR: feat/* → develop
+# After review: develop → main for releases (owner only)
 ```
 
-Never commit directly to `main` or `develop`.
+**Never commit directly to `main` or `develop`.**
 
 ## CI/CD
 
@@ -168,6 +186,13 @@ Never commit directly to `main` or `develop`.
 | Kimi (Moonshot) | Video analysis (fallback) | No |
 | OpenAI | Text generation (fallback) | No |
 | YouTube Data API | Trend research | No |
+
+## Available CLI Tools
+
+### saas CLI (`~/.local/share/pnpm/saas`)
+
+- `saas ask "<query>"` - AI-powered questions via Perplexity (web search)
+- `saas docs <library> "<query>"` - Documentation lookup via Context7
 
 ## Do Not
 

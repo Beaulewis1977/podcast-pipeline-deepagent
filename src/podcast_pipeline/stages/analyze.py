@@ -2,8 +2,9 @@
 
 import json
 from dataclasses import asdict
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from podcast_pipeline.config import Config
 from podcast_pipeline.models.job import Job
@@ -171,9 +172,7 @@ class AnalyzeStage(Stage):
 
         try:
             analysis_data = (
-                analysis_result.model_dump()
-                if hasattr(analysis_result, "model_dump")
-                else {}
+                analysis_result.model_dump() if hasattr(analysis_result, "model_dump") else {}
             )
             query, related_topics = self._derive_research_query(job, analysis_data)
 
@@ -201,7 +200,7 @@ class AnalyzeStage(Stage):
     def _derive_research_query(
         self,
         job: Job,
-        analysis_data: dict,
+        analysis_data: dict[str, Any],
     ) -> tuple[str, list[str]]:
         """Derive research query from analysis metadata or job name."""
         topics = analysis_data.get("metadata", {}).get("topics", []) or []
@@ -215,15 +214,13 @@ class AnalyzeStage(Stage):
     def _run_viral_signals(
         self,
         analysis_result: object,
-        transcript_data: dict,
+        transcript_data: dict[str, Any],
         job_dir: Path,
     ) -> str | None:
         """Compute viral signals and per-clip scores."""
         try:
             analysis_data = (
-                analysis_result.model_dump()
-                if hasattr(analysis_result, "model_dump")
-                else {}
+                analysis_result.model_dump() if hasattr(analysis_result, "model_dump") else {}
             )
             detector = ViralClipDetector()
             signals = detector.analyze_transcript(transcript_data)
@@ -239,7 +236,7 @@ class AnalyzeStage(Stage):
                 )
 
             viral_payload = {
-                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "generated_at": datetime.now(UTC).isoformat(),
                 "signals": [asdict(signal) for signal in signals],
                 "clip_scores": clip_scores,
             }

@@ -11,6 +11,7 @@ reviews:
     base_branches:
       - main
       - master
+      - develop
 
   # Request changes when issues found
   request_changes_workflow: true
@@ -21,8 +22,8 @@ reviews:
   # Poem in review (fun)
   poem: false
 
-  # Review profile (chill, default, assertive, etc.)
-  profile: default
+  # Review profile (chill or assertive)
+  profile: chill
 
   # Path filters - exclude from review
   path_filters:

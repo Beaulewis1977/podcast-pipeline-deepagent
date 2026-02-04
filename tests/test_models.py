@@ -1,7 +1,5 @@
 """Tests for Pydantic models."""
 
-import json
-from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -13,8 +11,8 @@ from podcast_pipeline.models.analysis import (
     Metadata,
     ViralClip,
 )
-from podcast_pipeline.models.job import Job, JobStage, StageStatus
-from podcast_pipeline.models.transcript import FillerCut, Segment, TranscriptResult, Word
+from podcast_pipeline.models.job import Job, StageStatus
+from podcast_pipeline.models.transcript import FillerCut, Segment, Word
 
 
 class TestJob:

@@ -18,15 +18,15 @@ class PathsConfig(BaseModel):
 
 class ModelConfig(BaseModel):
     """AI model configuration.
-    
+
     Supported Gemini models (as of Feb 2026):
     - gemini-2.5-flash-latest: Best balance of cost/performance for video (RECOMMENDED)
     - gemini-3-flash: Latest model with Agentic Vision
     - gemini-3-pro: Most intelligent model
     - gemini-2.5-pro: Excellent video understanding, 2M context
-    
+
     NOTE: gemini-2.0-flash is RETIRING on March 3, 2026!
-    
+
     Supported Kimi models:
     - kimi-k2.5: Latest multimodal model (RECOMMENDED)
     - moonshot-v1-128k: Legacy model (for backward compatibility)

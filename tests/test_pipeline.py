@@ -3,10 +3,7 @@
 import json
 from pathlib import Path
 
-import pytest
-
 from podcast_pipeline.config import Config
-from podcast_pipeline.models.job import Job, StageStatus
 from podcast_pipeline.pipeline import Pipeline
 
 
@@ -32,7 +29,7 @@ class TestPipeline:
         """Test pipeline stage order."""
         pipeline = Pipeline(config)
         expected = ["ingest", "transcribe", "analyze", "review", "render"]
-        assert pipeline.STAGE_ORDER == expected
+        assert expected == pipeline.STAGE_ORDER
 
 
 class TestReviewStage:
@@ -40,7 +37,7 @@ class TestReviewStage:
 
     def test_approve_review(self, config: Config, temp_dir: Path):
         """Test approving a review."""
-        from podcast_pipeline.stages.review import ReviewDecisions, approve_review
+        from podcast_pipeline.stages.review import approve_review
 
         # Create job directory structure
         job_dir = temp_dir / "test-job"
@@ -49,9 +46,35 @@ class TestReviewStage:
 
         # Create mock analysis file
         analysis = {
-            "content_cuts": [{"start": "00:10", "end": "00:20", "start_seconds": 10, "end_seconds": 20, "reason": "test"}],
-            "viral_clips": [{"start": "00:30", "end": "01:00", "start_seconds": 30, "end_seconds": 60, "description": "test", "virality_score": 8, "suggested_hook": "watch"}],
-            "thumbnail_frames": [{"timestamp": "00:15", "timestamp_seconds": 15, "visual_description": "test", "suggested_text_overlay": "text", "emotion": "joy"}],
+            "content_cuts": [
+                {
+                    "start": "00:10",
+                    "end": "00:20",
+                    "start_seconds": 10,
+                    "end_seconds": 20,
+                    "reason": "test",
+                }
+            ],
+            "viral_clips": [
+                {
+                    "start": "00:30",
+                    "end": "01:00",
+                    "start_seconds": 30,
+                    "end_seconds": 60,
+                    "description": "test",
+                    "virality_score": 8,
+                    "suggested_hook": "watch",
+                }
+            ],
+            "thumbnail_frames": [
+                {
+                    "timestamp": "00:15",
+                    "timestamp_seconds": 15,
+                    "visual_description": "test",
+                    "suggested_text_overlay": "text",
+                    "emotion": "joy",
+                }
+            ],
             "marketing": {},
             "metadata": {},
         }

@@ -2,12 +2,12 @@
 
 import shutil
 import tempfile
+from collections.abc import Generator
 from pathlib import Path
-from typing import Generator
 
 import pytest
 
-from podcast_pipeline.config import Config, load_config
+from podcast_pipeline.config import Config
 from podcast_pipeline.models.job import Job
 
 

@@ -1,6 +1,6 @@
 """Edit plan schema for render and clip exports."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from pydantic import BaseModel, Field
 
@@ -35,7 +35,7 @@ class EditPlan(BaseModel):
     """Serialized edit plan produced after review."""
 
     version: str = "1.0"
-    generated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    generated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     filler_cuts: list[FillerCutRange] = Field(default_factory=list)
     content_cuts: list[ContentCutRange] = Field(default_factory=list)
     clip_ranges: list[ClipRange] = Field(default_factory=list)

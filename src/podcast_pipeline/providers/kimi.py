@@ -42,8 +42,8 @@ KIMI_API_URL = "https://api.moonshot.cn/v1/chat/completions"
 
 # Supported Kimi models
 SUPPORTED_KIMI_MODELS = [
-    "kimi-k2.5",        # Latest multimodal model (RECOMMENDED)
-    "moonshot-v1-128k", # Legacy model (for backward compatibility)
+    "kimi-k2.5",  # Latest multimodal model (RECOMMENDED)
+    "moonshot-v1-128k",  # Legacy model (for backward compatibility)
 ]
 
 # Default model - kimi-k2.5 is the latest with native multimodal support
@@ -56,10 +56,10 @@ KIMI_INSTANT_TEMPERATURE = 0.6
 
 class KimiProvider(BaseProvider):
     """Kimi (Moonshot) provider - text-based analysis fallback.
-    
+
     Uses Kimi K2.5 with OpenAI-compatible API for transcript analysis.
     Note: Currently text-only, video analysis requires Gemini.
-    
+
     Features:
     - 256K token context window
     - Fast "instant" mode (temperature 0.6)
@@ -135,7 +135,7 @@ class KimiProvider(BaseProvider):
 
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 429:
-                raise RateLimitError(f"Kimi rate limit: {e}")
+                raise RateLimitError(f"Kimi rate limit: {e}") from e
             raise ProviderError(f"Kimi API error: {e}") from e
         except Exception as e:
             raise ProviderError(f"Kimi analysis failed: {e}") from e
@@ -143,10 +143,7 @@ class KimiProvider(BaseProvider):
     def _parse_response(self, response_text: str) -> dict[str, Any]:
         """Parse JSON from Kimi response."""
         json_match = re.search(r"```(?:json)?\s*([\s\S]*?)```", response_text)
-        if json_match:
-            json_str = json_match.group(1).strip()
-        else:
-            json_str = response_text.strip()
+        json_str = json_match.group(1).strip() if json_match else response_text.strip()
 
         try:
             return dict(json.loads(json_str))

@@ -1,7 +1,6 @@
 """Render stage: Export final content for all platforms."""
 
 import json
-import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -10,7 +9,7 @@ from podcast_pipeline.models.edit_plan import EditPlan
 from podcast_pipeline.models.job import Job
 from podcast_pipeline.stages.base import Stage, StageResult
 from podcast_pipeline.stages.review import ReviewDecisions
-from podcast_pipeline.utils.ffmpeg import FFmpegError, run_ffmpeg, get_video_info
+from podcast_pipeline.utils.ffmpeg import FFmpegError, get_video_info, run_ffmpeg
 from podcast_pipeline.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -78,7 +77,7 @@ class RenderStage(Stage):
             except FFmpegError as e:
                 error_msg = f"{platform}: FFmpeg error - {e}"
                 errors.append(error_msg)
-                self.logger.error("render_failed", platform=platform, error=str(e))
+                self.logger.exception("render_failed", platform=platform, error=str(e))
             except Exception as e:
                 error_msg = f"{platform}: {e}"
                 errors.append(error_msg)
@@ -177,12 +176,17 @@ class RenderStage(Stage):
         output_file = output_dir / f"audio.{ext}"
 
         args = [
-            "-i", str(input_video),
+            "-i",
+            str(input_video),
             "-vn",  # No video
-            "-c:a", spec.audio_codec,
-            "-b:a", spec.audio_bitrate,
-            "-ar", str(self.config.audio.sample_rate),
-            "-ac", str(spec.audio_channels),
+            "-c:a",
+            spec.audio_codec,
+            "-b:a",
+            spec.audio_bitrate,
+            "-ar",
+            str(self.config.audio.sample_rate),
+            "-ac",
+            str(spec.audio_channels),
             str(output_file),
         ]
 
@@ -222,7 +226,7 @@ class RenderStage(Stage):
         )
 
         # Build audio filters
-        af_filters = []
+        af_filters: list[str] = []
 
         edit_filter = self._build_edit_plan_filter(
             edit_plan,
@@ -250,9 +254,7 @@ class RenderStage(Stage):
 
         if edit_filter:
             filter_complex, video_map, audio_map = edit_filter
-            args.extend(
-                ["-filter_complex", filter_complex, "-map", video_map, "-map", audio_map]
-            )
+            args.extend(["-filter_complex", filter_complex, "-map", video_map, "-map", audio_map])
         else:
             # Video filters
             if vf_filters:
@@ -263,23 +265,34 @@ class RenderStage(Stage):
                 args.extend(["-af", ",".join(af_filters)])
 
         # Video encoding
-        args.extend([
-            "-c:v", spec.video_codec,
-            "-preset", spec.preset,
-            "-b:v", spec.video_bitrate,
-            "-pix_fmt", spec.pix_fmt,
-        ])
+        args.extend(
+            [
+                "-c:v",
+                spec.video_codec,
+                "-preset",
+                spec.preset,
+                "-b:v",
+                spec.video_bitrate,
+                "-pix_fmt",
+                spec.pix_fmt,
+            ]
+        )
 
         # FPS if specified
         if spec.fps:
             args.extend(["-r", str(spec.fps)])
 
         # Audio encoding
-        args.extend([
-            "-c:a", spec.audio_codec,
-            "-b:a", spec.audio_bitrate,
-            "-ac", str(spec.audio_channels),
-        ])
+        args.extend(
+            [
+                "-c:a",
+                spec.audio_codec,
+                "-b:a",
+                spec.audio_bitrate,
+                "-ac",
+                str(spec.audio_channels),
+            ]
+        )
 
         # Container-specific options
         if spec.container == "mp4":
@@ -324,28 +337,23 @@ class RenderStage(Stage):
             else:
                 # Letterbox (add black bars top/bottom)
                 filters.append(f"scale={target_width}:-2")
-                filters.append(
-                    f"pad={target_width}:{target_height}:(ow-iw)/2:(oh-ih)/2:black"
-                )
+                filters.append(f"pad={target_width}:{target_height}:(ow-iw)/2:(oh-ih)/2:black")
+        # Source is taller - crop top/bottom or letterbox sides
+        elif spec.crop_mode in ["center", "smart"]:
+            # Crop to fit
+            new_height = int(src_width / target_ratio)
+            if spec.crop_mode == "center":
+                y_offset = (src_height - new_height) // 2
+            elif spec.crop_mode == "top":
+                y_offset = 0
+            else:  # bottom
+                y_offset = src_height - new_height
+            filters.append(f"crop={src_width}:{new_height}:0:{y_offset}")
+            filters.append(f"scale={target_width}:{target_height}")
         else:
-            # Source is taller - crop top/bottom or letterbox sides
-            if spec.crop_mode in ["center", "smart"]:
-                # Crop to fit
-                new_height = int(src_width / target_ratio)
-                if spec.crop_mode == "center":
-                    y_offset = (src_height - new_height) // 2
-                elif spec.crop_mode == "top":
-                    y_offset = 0
-                else:  # bottom
-                    y_offset = src_height - new_height
-                filters.append(f"crop={src_width}:{new_height}:0:{y_offset}")
-                filters.append(f"scale={target_width}:{target_height}")
-            else:
-                # Letterbox (add black bars on sides)
-                filters.append(f"scale=-2:{target_height}")
-                filters.append(
-                    f"pad={target_width}:{target_height}:(ow-iw)/2:(oh-ih)/2:black"
-                )
+            # Letterbox (add black bars on sides)
+            filters.append(f"scale=-2:{target_height}")
+            filters.append(f"pad={target_width}:{target_height}:(ow-iw)/2:(oh-ih)/2:black")
 
         return filters
 
@@ -383,9 +391,7 @@ class RenderStage(Stage):
             )
 
         concat_inputs = "".join([f"[v{i}][a{i}]" for i in range(len(keep_ranges))])
-        filter_parts.append(
-            f"{concat_inputs}concat=n={len(keep_ranges)}:v=1:a=1[outv][outa]"
-        )
+        filter_parts.append(f"{concat_inputs}concat=n={len(keep_ranges)}:v=1:a=1[outv][outa]")
 
         video_label = "outv"
         audio_label = "outa"
@@ -409,9 +415,9 @@ class RenderStage(Stage):
             if end > start:
                 ranges.append((start, end))
 
-        for cut in edit_plan.content_cuts:
-            start = max(0.0, float(cut.start_seconds))
-            end = max(0.0, float(cut.end_seconds))
+        for content_cut in edit_plan.content_cuts:
+            start = max(0.0, float(content_cut.start_seconds))
+            end = max(0.0, float(content_cut.end_seconds))
             if end > start:
                 ranges.append((start, end))
 
@@ -511,17 +517,22 @@ class RenderStage(Stage):
 
             # For video files, we need to extract audio first
             is_video = audio_file.suffix.lower() in [".mp4", ".mov", ".mkv", ".webm"]
-            
+
             if is_video:
                 # Extract audio to temp file
                 temp_audio = audio_file.with_suffix(".temp.wav")
-                run_ffmpeg([
-                    "-i", str(audio_file),
-                    "-vn",
-                    "-acodec", "pcm_s16le",
-                    "-ar", "44100",
-                    str(temp_audio),
-                ])
+                run_ffmpeg(
+                    [
+                        "-i",
+                        str(audio_file),
+                        "-vn",
+                        "-acodec",
+                        "pcm_s16le",
+                        "-ar",
+                        "44100",
+                        str(temp_audio),
+                    ]
+                )
                 audio_to_process = temp_audio
             else:
                 audio_to_process = audio_file
@@ -556,19 +567,26 @@ class RenderStage(Stage):
             if is_video:
                 # Write normalized audio
                 sf.write(str(temp_audio), normalized, rate)
-                
+
                 # Mux back into video
                 temp_video = audio_file.with_suffix(".temp.mp4")
-                run_ffmpeg([
-                    "-i", str(audio_file),
-                    "-i", str(temp_audio),
-                    "-c:v", "copy",
-                    "-map", "0:v:0",
-                    "-map", "1:a:0",
-                    "-shortest",
-                    str(temp_video),
-                ])
-                
+                run_ffmpeg(
+                    [
+                        "-i",
+                        str(audio_file),
+                        "-i",
+                        str(temp_audio),
+                        "-c:v",
+                        "copy",
+                        "-map",
+                        "0:v:0",
+                        "-map",
+                        "1:a:0",
+                        "-shortest",
+                        str(temp_video),
+                    ]
+                )
+
                 # Replace original
                 temp_video.replace(audio_file)
                 temp_audio.unlink()
@@ -634,11 +652,13 @@ class RenderStage(Stage):
 
         for platform_name, platform_key in platform_sections:
             platform_data = marketing.get(platform_key, {})
-            
-            lines.extend([
-                f"## {platform_name}",
-                "",
-            ])
+
+            lines.extend(
+                [
+                    f"## {platform_name}",
+                    "",
+                ]
+            )
 
             # Titles (if available)
             titles = platform_data.get("titles", [])
@@ -651,12 +671,14 @@ class RenderStage(Stage):
             # Description
             description = platform_data.get("description", "")
             if description:
-                lines.extend([
-                    "### Description",
-                    "",
-                    description,
-                    "",
-                ])
+                lines.extend(
+                    [
+                        "### Description",
+                        "",
+                        description,
+                        "",
+                    ]
+                )
 
             # Hashtags
             hashtags = platform_data.get("hashtags", [])
@@ -664,10 +686,12 @@ class RenderStage(Stage):
                 lines.append(f"**Hashtags:** {' '.join(hashtags)}")
                 lines.append("")
 
-            lines.extend([
-                "---",
-                "",
-            ])
+            lines.extend(
+                [
+                    "---",
+                    "",
+                ]
+            )
 
         doc_path.write_text("\n".join(lines))
         self.logger.info("marketing_doc_generated", path=str(doc_path))

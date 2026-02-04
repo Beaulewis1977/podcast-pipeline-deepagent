@@ -1,15 +1,11 @@
 """Tests for configuration system."""
 
-import os
 from pathlib import Path
-
-import pytest
 
 from podcast_pipeline.config import (
     Config,
     FillerConfig,
     PathsConfig,
-    PlatformSpec,
     load_config,
 )
 

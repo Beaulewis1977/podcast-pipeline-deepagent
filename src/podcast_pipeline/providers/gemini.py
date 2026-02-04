@@ -39,9 +39,9 @@ logger = get_logger(__name__)
 # Alternative: gemini-3-flash - latest with Agentic Vision
 SUPPORTED_GEMINI_MODELS = [
     "gemini-2.5-flash",  # Recommended: best balance of cost and performance
-    "gemini-3-flash",            # Latest model with Agentic Vision
-    "gemini-3-pro",              # Most intelligent, higher cost
-    "gemini-2.5-pro",            # Excellent video understanding, 2M context
+    "gemini-3-flash",  # Latest model with Agentic Vision
+    "gemini-3-pro",  # Most intelligent, higher cost
+    "gemini-2.5-pro",  # Excellent video understanding, 2M context
 ]
 
 # Default model - gemini-2.5-flash is most cost-effective for video analysis
@@ -50,13 +50,13 @@ DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
 
 class GeminiProvider(BaseProvider):
     """Google Gemini provider for video analysis.
-    
+
     Uses Gemini's multimodal capabilities to analyze video content:
     - Video understanding with 1 FPS sampling
     - Audio and visual processing
     - Temporal reasoning for clip identification
     - Marketing copy generation
-    
+
     Supports: MP4, MOV, AVI, WebM video formats.
     """
 
@@ -65,7 +65,7 @@ class GeminiProvider(BaseProvider):
     def __init__(self, api_key: str | None, model: str = DEFAULT_GEMINI_MODEL):
         self.api_key = api_key
         self.model = model
-        self._client = None
+        self._client: Any = None
 
     def is_available(self) -> bool:
         """Check if Gemini API key is available."""
@@ -146,7 +146,7 @@ class GeminiProvider(BaseProvider):
         except Exception as e:
             error_str = str(e).lower()
             if "rate" in error_str or "quota" in error_str or "429" in error_str:
-                raise RateLimitError(f"Gemini rate limit: {e}")
+                raise RateLimitError(f"Gemini rate limit: {e}") from e
             raise ProviderError(f"Gemini analysis failed: {e}") from e
 
     def _parse_response(self, response_text: str) -> dict[str, Any]:
