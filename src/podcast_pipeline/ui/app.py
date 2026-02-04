@@ -67,6 +67,40 @@ def status_badge(status: str) -> str:
     return f"{colors.get(status, '⚫')} {status.capitalize()}"
 
 
+def _build_research_panel_data(research_payload: dict[str, Any]) -> dict[str, Any]:
+    """Transform research artifact data into UI-friendly display values."""
+    insights = research_payload.get("insights", {}) or {}
+    engagement = insights.get("engagement_benchmarks", {}) or {}
+
+    raw_posting_windows = insights.get("best_posting_windows", [])
+    posting_windows: list[str] = []
+    for item in raw_posting_windows:
+        if not isinstance(item, dict):
+            continue
+        window = item.get("window")
+        videos_published = item.get("videos_published")
+        if window and videos_published is not None:
+            posting_windows.append(f"{window} ({videos_published} videos)")
+        elif window:
+            posting_windows.append(str(window))
+
+    competition_score = insights.get("competition_score")
+    if isinstance(competition_score, (int, float)):
+        competition_score = float(competition_score)
+    else:
+        competition_score = None
+
+    return {
+        "query": research_payload.get("query", "N/A"),
+        "competition_score": competition_score,
+        "competition_tier": insights.get("competition_tier"),
+        "avg_engagement_rate": engagement.get("avg_engagement_rate"),
+        "avg_velocity_per_hour": engagement.get("avg_velocity_per_hour"),
+        "keywords": [str(keyword) for keyword in research_payload.get("suggested_keywords", [])[:10]],
+        "posting_windows": posting_windows,
+    }
+
+
 # ============================================================================
 # Dashboard Page
 # ============================================================================
@@ -543,13 +577,38 @@ def render_marketing_editor(job: Job, job_dir: Path) -> None:
             if research_path.exists():
                 try:
                     research = json.loads(research_path.read_text())
+                    panel_data = _build_research_panel_data(research)
                     st.markdown("**Research Query:**")
-                    st.caption(research.get("query", "N/A"))
+                    st.caption(panel_data["query"])
 
-                    keywords = research.get("suggested_keywords", [])
+                    if panel_data["competition_score"] is not None:
+                        competition_tier = panel_data.get("competition_tier") or "unrated"
+                        st.markdown("**Competition Score:**")
+                        st.caption(
+                            f"{panel_data['competition_score']:.1f}/100 ({competition_tier} competition)"
+                        )
+
+                    avg_engagement = panel_data.get("avg_engagement_rate")
+                    avg_velocity = panel_data.get("avg_velocity_per_hour")
+                    if avg_engagement is not None or avg_velocity is not None:
+                        st.markdown("**Engagement Benchmarks:**")
+                        metrics = []
+                        if avg_engagement is not None:
+                            metrics.append(f"avg engagement: {float(avg_engagement):.4f}")
+                        if avg_velocity is not None:
+                            metrics.append(f"avg velocity/hr: {float(avg_velocity):.2f}")
+                        st.caption(" • ".join(metrics))
+
+                    keywords = panel_data["keywords"]
                     if keywords:
-                        st.markdown("**Trending Keywords:**")
-                        st.write(", ".join(keywords[:10]))
+                        st.markdown("**Top Weighted Keywords:**")
+                        st.write(", ".join(keywords))
+
+                    posting_windows = panel_data["posting_windows"]
+                    if posting_windows:
+                        st.markdown("**Best Posting Windows (UTC):**")
+                        for window in posting_windows[:3]:
+                            st.caption(window)
 
                     competitors = research.get("competitor_channels", [])
                     if competitors:
