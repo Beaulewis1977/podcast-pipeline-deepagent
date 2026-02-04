@@ -525,11 +525,18 @@ class YouTubeResearcher:
 
             for video in videos:
                 base_weight = 1.0 + min(self._safe_int(video.get("view_count")) / 100_000, 2.0)
-                text = f"{video.get('title', '')} {video.get('description', '')}".strip()
-                tokens = self._extract_keyword_tokens(text, seed_terms)
-                ngram_scores = self._score_weighted_ngrams(tokens)
-                for phrase, score in ngram_scores.items():
-                    keyword_scores[phrase] = keyword_scores.get(phrase, 0.0) + (score * base_weight)
+                title_tokens = self._extract_keyword_tokens(video.get("title", ""))
+                description_tokens = self._extract_keyword_tokens(video.get("description", ""))
+
+                for tokens, source_multiplier in (
+                    (title_tokens, 1.2),
+                    (description_tokens, 1.0),
+                ):
+                    for phrase, score in self._score_weighted_ngrams(tokens).items():
+                        phrase_bonus = 1.0 + (0.35 * phrase.count(" "))
+                        keyword_scores[phrase] = keyword_scores.get(phrase, 0.0) + (
+                            score * base_weight * source_multiplier * phrase_bonus
+                        )
 
                 # Hashtags can provide strong explicit intent signals.
                 desc = video.get("description", "")
@@ -542,7 +549,7 @@ class YouTubeResearcher:
         ranked_keywords = sorted(keyword_scores.items(), key=lambda item: (-item[1], item[0]))
         return [keyword for keyword, _ in ranked_keywords[:max_keywords]]
 
-    def _extract_keyword_tokens(self, text: str, seed_terms: set[str]) -> list[str]:
+    def _extract_keyword_tokens(self, text: str) -> list[str]:
         """Extract normalized keyword tokens with stopword/noise filtering."""
         raw_tokens = re.findall(r"[a-z0-9']+", text.lower())
         tokens: list[str] = []
@@ -552,8 +559,6 @@ class YouTubeResearcher:
             if token.isdigit():
                 continue
             if token in self.KEYWORD_STOPWORDS:
-                continue
-            if token in seed_terms:
                 continue
             tokens.append(token)
         return tokens
@@ -565,15 +570,15 @@ class YouTubeResearcher:
             return scores
 
         for token in tokens:
-            scores[token] = scores.get(token, 0.0) + 1.0
+            scores[token] = scores.get(token, 0.0) + 0.75
 
         for idx in range(len(tokens) - 1):
             bigram = f"{tokens[idx]} {tokens[idx + 1]}"
-            scores[bigram] = scores.get(bigram, 0.0) + 1.9
+            scores[bigram] = scores.get(bigram, 0.0) + 2.4
 
         for idx in range(len(tokens) - 2):
             trigram = f"{tokens[idx]} {tokens[idx + 1]} {tokens[idx + 2]}"
-            scores[trigram] = scores.get(trigram, 0.0) + 2.8
+            scores[trigram] = scores.get(trigram, 0.0) + 3.1
 
         return scores
 
