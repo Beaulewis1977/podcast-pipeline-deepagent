@@ -2,6 +2,7 @@
 
 import json
 import subprocess
+from fractions import Fraction
 from pathlib import Path
 from typing import Any
 
@@ -123,6 +124,22 @@ def run_ffprobe(
         raise FFmpegError(f"Failed to parse FFprobe output: {e}") from e
 
 
+def _parse_fps(value: str | None) -> float:
+    """Safely parse FPS from ffprobe r_frame_rate value."""
+    if not value:
+        return 0.0
+
+    try:
+        return float(Fraction(value))
+    except (ValueError, ZeroDivisionError):
+        try:
+            numerator, denominator = value.split("/", 1)
+            denominator_value = float(denominator)
+            return float(numerator) / denominator_value if denominator_value else 0.0
+        except Exception:
+            return 0.0
+
+
 def get_video_metadata(video_path: Path) -> dict[str, Any]:
     """Extract comprehensive metadata from a video file.
 
@@ -154,7 +171,7 @@ def get_video_metadata(video_path: Path) -> dict[str, Any]:
                 {
                     "width": stream.get("width"),
                     "height": stream.get("height"),
-                    "fps": eval(stream.get("r_frame_rate", "0/1")) if stream.get("r_frame_rate") else 0,
+                    "fps": _parse_fps(stream.get("r_frame_rate")),
                     "pix_fmt": stream.get("pix_fmt"),
                 }
             )
