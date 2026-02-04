@@ -502,7 +502,7 @@ def render_marketing_editor(job: Job, job_dir: Path) -> None:
     
     marketing = analysis.get("marketing", {})
     metadata = analysis.get("metadata", {})
-    
+
     # Episode info
     with st.expander("📋 Episode Information", expanded=True):
         summary = st.text_area(
@@ -521,6 +521,75 @@ def render_marketing_editor(job: Job, job_dir: Path) -> None:
             value=metadata.get("mood", ""),
             key="edit_mood",
         )
+
+    # Research + Viral Insights
+    with st.expander("📈 Research & Viral Insights", expanded=False):
+        research_path = job_dir / "analysis" / "research.json"
+        viral_path = job_dir / "analysis" / "viral_signals.json"
+
+        if not research_path.exists() and not viral_path.exists():
+            st.info("Research and viral insights are not available yet. Run the analyze stage after configuring YOUTUBE_API_KEY.")
+        else:
+            if research_path.exists():
+                try:
+                    research = json.loads(research_path.read_text())
+                    st.markdown("**Research Query:**")
+                    st.caption(research.get("query", "N/A"))
+
+                    keywords = research.get("suggested_keywords", [])
+                    if keywords:
+                        st.markdown("**Trending Keywords:**")
+                        st.write(", ".join(keywords[:10]))
+
+                    competitors = research.get("competitor_channels", [])
+                    if competitors:
+                        st.markdown("**Competitor Channels:**")
+                        for channel in competitors[:5]:
+                            title = channel.get("title", "Unknown")
+                            subs = channel.get("subscriber_count", 0)
+                            st.caption(f"{title} — {subs:,} subscribers")
+
+                    trending_videos = research.get("trending_videos", [])
+                    if trending_videos:
+                        st.caption(f"{len(trending_videos)} trending videos analyzed")
+                except Exception as e:
+                    st.warning(f"Failed to load research insights: {e}")
+
+            if viral_path.exists():
+                try:
+                    viral = json.loads(viral_path.read_text())
+                    signals = viral.get("signals", [])
+                    if signals:
+                        st.markdown("**Top Engagement Signals:**")
+                        top_signals = sorted(
+                            signals,
+                            key=lambda s: s.get("strength", 0),
+                            reverse=True,
+                        )[:5]
+                        for signal in top_signals:
+                            timestamp = signal.get("timestamp_seconds", 0)
+                            signal_type = signal.get("signal_type", "signal")
+                            description = signal.get("description", "")
+                            st.caption(f"{signal_type} @ {timestamp:.1f}s — {description}")
+
+                    clip_scores = viral.get("clip_scores", [])
+                    if clip_scores:
+                        st.markdown("**Per-Clip Viral Scores:**")
+                        table_rows = []
+                        for item in clip_scores[:10]:
+                            clip = item.get("clip", {})
+                            score = item.get("score", {})
+                            table_rows.append(
+                                {
+                                    "Start (s)": clip.get("start_seconds", 0),
+                                    "End (s)": clip.get("end_seconds", 0),
+                                    "Score": score.get("overall_score", 0),
+                                    "Description": clip.get("description", ""),
+                                }
+                            )
+                        st.table(table_rows)
+                except Exception as e:
+                    st.warning(f"Failed to load viral signals: {e}")
     
     # Platform-specific marketing
     platforms = [
