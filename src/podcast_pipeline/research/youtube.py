@@ -1,6 +1,8 @@
 """YouTube Data API integration for research and trend analysis."""
 
+from collections import Counter
 from datetime import UTC, datetime, timedelta
+from statistics import median
 from typing import Any
 
 import httpx
@@ -131,12 +133,86 @@ class YouTubeResearcher:
                 for video in videos:
                     video_stats = stats.get(video["video_id"], {})
                     video.update(video_stats)
+                    video.update(self._enrich_video_metrics(video))
+
+            # Always provide a complete metric payload, even if stats API is empty.
+            for video in videos:
+                if "engagement_rate" not in video:
+                    video.update(self._enrich_video_metrics(video))
 
             return videos
 
         except httpx.HTTPError as e:
             logger.exception("youtube_search_failed", error=str(e))
             return []
+
+    def _safe_int(self, value: Any) -> int:
+        """Safely parse integer-like values and clamp to non-negative."""
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return 0
+        return max(parsed, 0)
+
+    def _parse_published_at(self, published_at: Any) -> datetime | None:
+        """Parse YouTube publish timestamp safely."""
+        if not isinstance(published_at, str):
+            return None
+
+        normalized = published_at.strip()
+        if not normalized:
+            return None
+
+        if normalized.endswith("Z"):
+            normalized = f"{normalized[:-1]}+00:00"
+
+        try:
+            parsed = datetime.fromisoformat(normalized)
+        except ValueError:
+            return None
+
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+
+        return parsed.astimezone(UTC)
+
+    def _enrich_video_metrics(
+        self,
+        video: dict[str, Any],
+        reference_time: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Compute per-video engagement and momentum metrics."""
+        now = reference_time or datetime.now(UTC)
+        published_at = self._parse_published_at(video.get("published_at"))
+
+        view_count = self._safe_int(video.get("view_count"))
+        like_count = self._safe_int(video.get("like_count"))
+        comment_count = self._safe_int(video.get("comment_count"))
+
+        interactions = like_count + comment_count
+        engagement_rate = round(interactions / view_count, 4) if view_count > 0 else 0.0
+
+        hours_since_publish = 0.0
+        velocity_per_hour = 0.0
+        published_hour_utc: int | None = None
+        published_weekday_utc: str | None = None
+
+        if published_at is not None:
+            elapsed_hours = max((now - published_at).total_seconds() / 3600, 0.0)
+            hours_since_publish = round(elapsed_hours, 2)
+            effective_hours = max(elapsed_hours, 1.0)
+            velocity_per_hour = round(view_count / effective_hours, 4)
+            published_hour_utc = published_at.hour
+            published_weekday_utc = published_at.strftime("%A")
+
+        return {
+            "engagement_rate": engagement_rate,
+            "hours_since_publish": hours_since_publish,
+            "velocity_per_hour": velocity_per_hour,
+            "published_at_valid": published_at is not None,
+            "published_hour_utc": published_hour_utc,
+            "published_weekday_utc": published_weekday_utc,
+        }
 
     def _get_video_stats(self, video_ids: list[str]) -> dict[str, dict[str, Any]]:
         """Get statistics for multiple videos.
@@ -384,11 +460,21 @@ class YouTubeResearcher:
             return {}
 
         # Calculate average metrics
-        view_counts = [v.get("view_count", 0) for v in videos if v.get("view_count")]
-        like_counts = [v.get("like_count", 0) for v in videos if v.get("like_count")]
+        view_counts = [self._safe_int(v.get("view_count")) for v in videos]
+        like_counts = [self._safe_int(v.get("like_count")) for v in videos]
+        engagement_rates = [float(v.get("engagement_rate", 0.0) or 0.0) for v in videos]
+        velocity_values = [float(v.get("velocity_per_hour", 0.0) or 0.0) for v in videos]
 
         avg_views = sum(view_counts) / len(view_counts) if view_counts else 0
         avg_likes = sum(like_counts) / len(like_counts) if like_counts else 0
+        competition_score = self._calculate_competition_score(videos, competitors)
+        posting_windows = self._best_posting_windows(videos)
+
+        sorted_rates = sorted(engagement_rates)
+        upper_quartile = (
+            sorted_rates[max(int(len(sorted_rates) * 0.75) - 1, 0)] if sorted_rates else 0.0
+        )
+        avg_velocity = sum(velocity_values) / len(velocity_values) if velocity_values else 0.0
 
         # Find best performing videos
         sorted_by_views = sorted(videos, key=lambda x: x.get("view_count", 0), reverse=True)
@@ -396,6 +482,20 @@ class YouTubeResearcher:
         # Analyze title patterns
         title_lengths = [len(v.get("title", "")) for v in videos]
         avg_title_length = sum(title_lengths) / len(title_lengths) if title_lengths else 0
+
+        engagement_benchmarks = {
+            "avg_engagement_rate": round(sum(engagement_rates) / len(engagement_rates), 4)
+            if engagement_rates
+            else 0.0,
+            "median_engagement_rate": round(median(engagement_rates), 4) if engagement_rates else 0.0,
+            "top_quartile_engagement_rate": round(upper_quartile, 4),
+            "avg_velocity_per_hour": round(avg_velocity, 4),
+        }
+
+        posting_patterns = {
+            "total_videos_with_publish_time": sum(1 for v in videos if v.get("published_at_valid")),
+            "best_posting_windows": posting_windows,
+        }
 
         return {
             "avg_views": int(avg_views),
@@ -405,19 +505,116 @@ class YouTubeResearcher:
             "top_video_views": sorted_by_views[0].get("view_count") if sorted_by_views else 0,
             "total_videos_analyzed": len(videos),
             "total_competitors": len(competitors),
-            "recommendation": self._get_recommendation(avg_views, avg_title_length),
+            "competition_score": competition_score,
+            "engagement_benchmarks": engagement_benchmarks,
+            "best_posting_windows": posting_windows,
+            "posting_patterns": posting_patterns,
+            "recommendation": self._get_recommendation(
+                avg_views=avg_views,
+                avg_title_length=avg_title_length,
+                competition_score=competition_score,
+                avg_engagement=engagement_benchmarks["avg_engagement_rate"],
+            ),
         }
 
-    def _get_recommendation(self, avg_views: float, avg_title_length: float) -> str:
+    def _calculate_competition_score(
+        self,
+        videos: list[dict[str, Any]],
+        competitors: list[dict[str, Any]],
+    ) -> float:
+        """Estimate topic competition on a 0-100 scale."""
+        if not videos:
+            return 0.0
+
+        avg_views = sum(self._safe_int(v.get("view_count")) for v in videos) / len(videos)
+        max_views = max(self._safe_int(v.get("view_count")) for v in videos)
+        avg_competitor_subscribers = (
+            sum(self._safe_int(c.get("subscriber_count")) for c in competitors) / len(competitors)
+            if competitors
+            else 0.0
+        )
+        large_competitor_ratio = (
+            sum(1 for c in competitors if self._safe_int(c.get("subscriber_count")) >= 100_000)
+            / len(competitors)
+            if competitors
+            else 0.0
+        )
+
+        normalized_views = min(avg_views / 250_000, 1.0)
+        normalized_competitor_count = min(len(competitors) / 10, 1.0)
+        normalized_subscribers = min(avg_competitor_subscribers / 1_000_000, 1.0)
+        normalized_top_video_ratio = min((max_views / max(avg_views, 1.0)) / 10, 1.0)
+
+        weighted_score = (
+            normalized_views * 0.35
+            + normalized_competitor_count * 0.30
+            + normalized_subscribers * 0.20
+            + normalized_top_video_ratio * 0.10
+            + large_competitor_ratio * 0.05
+        )
+        return round(min(max(weighted_score * 100, 0.0), 100.0), 2)
+
+    def _best_posting_windows(
+        self,
+        videos: list[dict[str, Any]],
+        limit: int = 3,
+    ) -> list[dict[str, Any]]:
+        """Return best UTC posting windows based on historical publish-time concentration."""
+        parsed_times = [
+            self._parse_published_at(video.get("published_at"))
+            for video in videos
+            if video.get("published_at")
+        ]
+        valid_times = [timestamp for timestamp in parsed_times if timestamp is not None]
+        if not valid_times:
+            return []
+
+        total = len(valid_times)
+        hour_counts = Counter(timestamp.hour for timestamp in valid_times)
+        weekday_counts = Counter(timestamp.strftime("%A") for timestamp in valid_times)
+
+        windows = []
+        for hour, count in hour_counts.most_common(limit):
+            strongest_weekday = "Any"
+            top_weekday_count = 0
+            for weekday, weekday_count in weekday_counts.items():
+                if weekday_count > top_weekday_count:
+                    strongest_weekday = weekday
+                    top_weekday_count = weekday_count
+
+            windows.append(
+                {
+                    "window": f"{hour:02d}:00-{hour:02d}:59 UTC",
+                    "hour_utc": hour,
+                    "videos_published": count,
+                    "share_of_posts": round(count / total, 4),
+                    "strongest_weekday": strongest_weekday,
+                }
+            )
+
+        return windows
+
+    def _get_recommendation(
+        self,
+        avg_views: float,
+        avg_title_length: float,
+        competition_score: float,
+        avg_engagement: float,
+    ) -> str:
         """Generate a recommendation based on insights."""
         recommendations = []
 
-        if avg_views > 100000:
+        if competition_score >= 70:
             recommendations.append("This is a high-competition topic with viral potential.")
-        elif avg_views > 10000:
+        elif competition_score >= 40:
             recommendations.append("Good engagement potential with moderate competition.")
         else:
             recommendations.append("Lower competition - good opportunity for growth.")
+
+        if avg_engagement >= 0.08:
+            recommendations.append("Engagement is strong; prioritize clips with explicit hooks.")
+        elif avg_engagement < 0.03:
+            recommendations.append("Engagement is low; sharpen intros and tighten pacing.")
 
         if avg_title_length > 60:
             recommendations.append("Consider shorter, punchier titles (under 60 chars).")
