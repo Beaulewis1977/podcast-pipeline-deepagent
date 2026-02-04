@@ -495,6 +495,7 @@ class YouTubeResearcher:
         posting_patterns = {
             "total_videos_with_publish_time": sum(1 for v in videos if v.get("published_at_valid")),
             "best_posting_windows": posting_windows,
+            "top_weekdays": self._top_posting_days(videos),
         }
 
         return {
@@ -506,6 +507,7 @@ class YouTubeResearcher:
             "total_videos_analyzed": len(videos),
             "total_competitors": len(competitors),
             "competition_score": competition_score,
+            "competition_tier": self._competition_tier(competition_score),
             "engagement_benchmarks": engagement_benchmarks,
             "best_posting_windows": posting_windows,
             "posting_patterns": posting_patterns,
@@ -554,6 +556,14 @@ class YouTubeResearcher:
         )
         return round(min(max(weighted_score * 100, 0.0), 100.0), 2)
 
+    def _competition_tier(self, competition_score: float) -> str:
+        """Convert competition score to a stable label for UI display."""
+        if competition_score >= 70:
+            return "high"
+        if competition_score >= 40:
+            return "medium"
+        return "low"
+
     def _best_posting_windows(
         self,
         videos: list[dict[str, Any]],
@@ -571,16 +581,14 @@ class YouTubeResearcher:
 
         total = len(valid_times)
         hour_counts = Counter(timestamp.hour for timestamp in valid_times)
-        weekday_counts = Counter(timestamp.strftime("%A") for timestamp in valid_times)
+        hour_weekday_counts: dict[int, Counter[str]] = {}
+        for timestamp in valid_times:
+            hour_weekday_counts.setdefault(timestamp.hour, Counter())[timestamp.strftime("%A")] += 1
 
         windows = []
         for hour, count in hour_counts.most_common(limit):
-            strongest_weekday = "Any"
-            top_weekday_count = 0
-            for weekday, weekday_count in weekday_counts.items():
-                if weekday_count > top_weekday_count:
-                    strongest_weekday = weekday
-                    top_weekday_count = weekday_count
+            weekday_counter = hour_weekday_counts.get(hour, Counter())
+            strongest_weekday = weekday_counter.most_common(1)[0][0] if weekday_counter else "Any"
 
             windows.append(
                 {
@@ -593,6 +601,32 @@ class YouTubeResearcher:
             )
 
         return windows
+
+    def _top_posting_days(
+        self,
+        videos: list[dict[str, Any]],
+        limit: int = 3,
+    ) -> list[dict[str, Any]]:
+        """Return most common UTC weekdays for publish times."""
+        weekdays: list[str] = []
+        for video in videos:
+            published_at = self._parse_published_at(video.get("published_at"))
+            if published_at is not None:
+                weekdays.append(published_at.strftime("%A"))
+
+        if not weekdays:
+            return []
+
+        counts = Counter(weekdays)
+        total = len(weekdays)
+        return [
+            {
+                "weekday": weekday,
+                "videos_published": count,
+                "share_of_posts": round(count / total, 4),
+            }
+            for weekday, count in counts.most_common(limit)
+        ]
 
     def _get_recommendation(
         self,
