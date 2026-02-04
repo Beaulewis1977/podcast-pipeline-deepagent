@@ -101,6 +101,51 @@ def _build_research_panel_data(research_payload: dict[str, Any]) -> dict[str, An
     }
 
 
+def _build_clip_score_rows(viral_payload: dict[str, Any], limit: int = 10) -> list[dict[str, Any]]:
+    """Build sorted clip score rows with legacy-field fallbacks."""
+
+    def _to_score(value: Any, default: float = 0.0) -> float:
+        try:
+            score = float(value)
+        except (TypeError, ValueError):
+            return default
+        return min(max(score, 0.0), 10.0)
+
+    rows: list[dict[str, Any]] = []
+    for item in viral_payload.get("clip_scores", []) or []:
+        if not isinstance(item, dict):
+            continue
+        clip = item.get("clip", {}) or {}
+        legacy_score = item.get("score", {}) or {}
+
+        ai_score = _to_score(item.get("ai_score", clip.get("virality_score", 0)))
+        detector_score = _to_score(item.get("detector_score", legacy_score.get("overall_score", 0)))
+        combined_score = item.get("combined_score")
+        if combined_score is None:
+            combined_score = min(max((ai_score * 0.45) + (detector_score * 0.55), 0.0), 10.0)
+        combined_score = _to_score(combined_score)
+
+        reasons = item.get("reasons")
+        if not isinstance(reasons, list) or not reasons:
+            reasons = legacy_score.get("reasons", []) if isinstance(legacy_score, dict) else []
+        reason_text = "; ".join(str(reason) for reason in reasons[:2]) if reasons else ""
+
+        rows.append(
+            {
+                "Start (s)": clip.get("start_seconds", 0),
+                "End (s)": clip.get("end_seconds", 0),
+                "AI Score": round(ai_score, 2),
+                "Detector Score": round(detector_score, 2),
+                "Combined Score": round(combined_score, 2),
+                "Reasons": reason_text,
+                "Description": clip.get("description", ""),
+            }
+        )
+
+    rows.sort(key=lambda row: row["Combined Score"], reverse=True)
+    return rows[:limit]
+
+
 # ============================================================================
 # Dashboard Page
 # ============================================================================
@@ -643,20 +688,8 @@ def render_marketing_editor(job: Job, job_dir: Path) -> None:
 
                     clip_scores = viral.get("clip_scores", [])
                     if clip_scores:
-                        st.markdown("**Per-Clip Viral Scores:**")
-                        table_rows = []
-                        for item in clip_scores[:10]:
-                            clip = item.get("clip", {})
-                            score = item.get("score", {})
-                            table_rows.append(
-                                {
-                                    "Start (s)": clip.get("start_seconds", 0),
-                                    "End (s)": clip.get("end_seconds", 0),
-                                    "Score": score.get("overall_score", 0),
-                                    "Description": clip.get("description", ""),
-                                }
-                            )
-                        st.table(table_rows)
+                        st.markdown("**Per-Clip Score Breakdown:**")
+                        st.table(_build_clip_score_rows(viral, limit=10))
                 except Exception as e:
                     st.warning(f"Failed to load viral signals: {e}")
 
