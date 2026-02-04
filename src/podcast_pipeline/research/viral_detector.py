@@ -29,6 +29,7 @@ class ViralScore(BaseModel):
     hook_score: float = Field(ge=0, le=10)
     emotional_score: float = Field(ge=0, le=10)
     shareability_score: float = Field(ge=0, le=10)
+    engagement_density_score: float = Field(ge=0, le=10)
     engagement_signals: list[dict[str, Any]] = Field(default_factory=list)
     optimal_length_seconds: int = 45
     suggested_start_adjustment: float = 0.0
@@ -342,9 +343,16 @@ class ViralClipDetector:
         hook_score = self._calculate_hook_score(clip_signals, start)
         emotional_score = self._calculate_emotional_score(clip_signals)
         shareability_score = self._calculate_shareability_score(clip_data, duration)
+        engagement_density_score = self._calculate_engagement_density_score(clip_signals, duration)
 
-        # Calculate overall score
-        overall_score = hook_score * 0.35 + emotional_score * 0.35 + shareability_score * 0.30
+        # Calculate overall score with explicit engagement-density contribution.
+        overall_score = (
+            hook_score * 0.30
+            + emotional_score * 0.25
+            + shareability_score * 0.20
+            + engagement_density_score * 0.25
+        )
+        overall_score = min(max(overall_score, 0.0), 10.0)
 
         # Determine optimal length
         optimal_length = self._get_optimal_length(clip_signals, duration)
@@ -353,7 +361,11 @@ class ViralClipDetector:
         start_adj, end_adj = self._suggest_adjustments(clip_signals, start, end)
 
         reasons = self._generate_reasons(
-            hook_score, emotional_score, shareability_score, clip_signals
+            hook_score,
+            emotional_score,
+            shareability_score,
+            clip_signals,
+            engagement_density_score=engagement_density_score,
         )
 
         return ViralScore(
@@ -361,6 +373,7 @@ class ViralClipDetector:
             hook_score=round(hook_score, 1),
             emotional_score=round(emotional_score, 1),
             shareability_score=round(shareability_score, 1),
+            engagement_density_score=round(engagement_density_score, 1),
             engagement_signals=[
                 {
                     "timestamp": s.timestamp_seconds,
@@ -438,6 +451,24 @@ class ViralClipDetector:
 
         return min(max(score, 0.0), 10.0)
 
+    def _calculate_engagement_density_score(
+        self,
+        signals: list[EngagementSignal],
+        duration: float,
+    ) -> float:
+        """Calculate weighted signal density per minute."""
+        if duration <= 0:
+            return 0.0
+
+        minutes = max(duration / 60.0, 0.25)
+        weighted_signal_strength = sum(signal.strength for signal in signals)
+        density = weighted_signal_strength / minutes
+        unique_types = len({signal.signal_type for signal in signals})
+        diversity_bonus = min(unique_types * 0.25, 1.0)
+
+        score = 3.5 + density * 0.9 + diversity_bonus
+        return min(max(score, 0.0), 10.0)
+
     def _get_optimal_length(
         self,
         signals: list[EngagementSignal],
@@ -492,6 +523,7 @@ class ViralClipDetector:
         emotional_score: float,
         shareability_score: float,
         signals: list[EngagementSignal],
+        engagement_density_score: float = 5.0,
     ) -> list[str]:
         """Generate human-readable reasons for the score."""
         reasons = []
@@ -511,6 +543,11 @@ class ViralClipDetector:
         elif shareability_score < 5:
             reasons.append("Consider trimming for better social media fit")
 
+        if engagement_density_score >= 7:
+            reasons.append("Dense concentration of engagement cues throughout the clip")
+        elif engagement_density_score < 5:
+            reasons.append("Signal density is light; strengthen setup, tension, and payoff")
+
         # Specific signal-based reasons
         hook_count = len([s for s in signals if s.signal_type == "hook"])
         if hook_count > 1:
@@ -519,6 +556,22 @@ class ViralClipDetector:
         punchline_count = len([s for s in signals if s.signal_type == "punchline"])
         if punchline_count > 0:
             reasons.append(f"Clear punchline/conclusion ({punchline_count} found)")
+
+        question_count = len([s for s in signals if s.signal_type == "question"])
+        if question_count > 0:
+            reasons.append(f"Interrogative hooks ({question_count}) invite audience response")
+
+        controversy_count = len([s for s in signals if s.signal_type == "controversy"])
+        if controversy_count > 0:
+            reasons.append(f"Controversy cues ({controversy_count}) increase comment potential")
+
+        story_arc_count = len([s for s in signals if s.signal_type == "story_arc"])
+        if story_arc_count > 0:
+            reasons.append(f"Story arc progression signals ({story_arc_count}) improve retention")
+
+        quotable_count = len([s for s in signals if s.signal_type == "quotable"])
+        if quotable_count > 0:
+            reasons.append(f"Quotable moments ({quotable_count}) support shareability")
 
         return reasons
 
