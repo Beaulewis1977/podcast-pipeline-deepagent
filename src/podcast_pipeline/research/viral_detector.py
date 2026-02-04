@@ -16,7 +16,7 @@ class EngagementSignal:
     """A detected engagement signal in the content."""
 
     timestamp_seconds: float
-    signal_type: str  # hook, punchline, emotional_peak, controversy, surprise
+    signal_type: str  # hook, question, controversy, story_arc, quotable, etc.
     strength: float  # 0.0 to 1.0
     description: str
     keywords: list[str]
@@ -78,6 +78,25 @@ class ViralClipDetector:
         "in other words",
     ]
 
+    QUESTION_OPENERS = {"why", "how", "what", "when", "who", "which", "should", "can", "could"}
+    CONTROVERSY_TERMS = {
+        "controversial",
+        "debate",
+        "disagree",
+        "myth",
+        "wrong",
+        "hot take",
+        "unpopular",
+        "argument",
+        "critics",
+        "vs",
+    }
+    STORY_ARC_CUES = {
+        "setup": {"at first", "initially", "in the beginning", "we started", "once"},
+        "tension": {"but then", "however", "tension", "problem", "struggle", "conflict"},
+        "resolution": {"finally", "in the end", "resolved", "we learned", "therefore"},
+    }
+
     def __init__(self) -> None:
         """Initialize the viral detector."""
         self._compiled_hook_patterns = [re.compile(p, re.IGNORECASE) for p in self.HOOK_PATTERNS]
@@ -101,6 +120,7 @@ class ViralClipDetector:
         for segment in segments:
             text = segment.get("text", "")
             start = segment.get("start", 0)
+            text_lower = text.lower()
 
             # Check for hook patterns
             for pattern in self._compiled_hook_patterns:
@@ -116,8 +136,60 @@ class ViralClipDetector:
                     )
                     break
 
+            # Check for question hooks
+            if self._is_question_signal(text):
+                leading_word = text_lower.strip().split(" ", 1)[0].strip(" ,.!?\"'")
+                signals.append(
+                    EngagementSignal(
+                        timestamp_seconds=start,
+                        signal_type="question",
+                        strength=0.78,
+                        description=f"Question hook detected: '{text[:60]}...'",
+                        keywords=[leading_word if leading_word in self.QUESTION_OPENERS else "?"],
+                    )
+                )
+
+            # Check for controversy language
+            matched_controversy = [
+                term for term in self.CONTROVERSY_TERMS if re.search(rf"\b{re.escape(term)}\b", text_lower)
+            ]
+            if matched_controversy:
+                signals.append(
+                    EngagementSignal(
+                        timestamp_seconds=start,
+                        signal_type="controversy",
+                        strength=0.8,
+                        description=f"Controversy cue: {', '.join(matched_controversy[:2])}",
+                        keywords=matched_controversy[:3],
+                    )
+                )
+
+            # Check story arc progression cues
+            story_arc_signals = self._detect_story_arc_signals(text_lower)
+            for stage, cue in story_arc_signals:
+                signals.append(
+                    EngagementSignal(
+                        timestamp_seconds=start,
+                        signal_type="story_arc",
+                        strength=0.72,
+                        description=f"Story arc ({stage}) cue: '{cue}'",
+                        keywords=[stage, cue],
+                    )
+                )
+
+            # Check for quotable one-liners
+            if self._is_quotable_signal(text):
+                signals.append(
+                    EngagementSignal(
+                        timestamp_seconds=start,
+                        signal_type="quotable",
+                        strength=0.74,
+                        description=f"Quotable line candidate: '{text[:60]}...'",
+                        keywords=self._extract_keywords(text_lower),
+                    )
+                )
+
             # Check for emotional words
-            text_lower = text.lower()
             for emotion_type, words in self.EMOTIONAL_WORDS.items():
                 for word in words:
                     if word in text_lower:
@@ -154,6 +226,58 @@ class ViralClipDetector:
         signals.sort(key=lambda x: x.timestamp_seconds)
 
         return signals
+
+    def _is_question_signal(self, text: str) -> bool:
+        """Check if segment likely acts as an interrogative hook."""
+        stripped = text.strip()
+        if not stripped:
+            return False
+
+        if stripped.endswith("?"):
+            return True
+
+        first_word = stripped.lower().split(" ", 1)[0].strip(" ,.!?\"'")
+        return first_word in self.QUESTION_OPENERS
+
+    def _detect_story_arc_signals(self, text_lower: str) -> list[tuple[str, str]]:
+        """Detect setup/tension/resolution cues within a segment."""
+        found: list[tuple[str, str]] = []
+        for stage, cues in self.STORY_ARC_CUES.items():
+            for cue in cues:
+                if cue in text_lower:
+                    found.append((stage, cue))
+                    break
+        return found
+
+    def _is_quotable_signal(self, text: str) -> bool:
+        """Heuristic for concise lines likely to be quote-worthy."""
+        stripped = text.strip()
+        if not stripped:
+            return False
+        word_count = len(re.findall(r"[A-Za-z']+", stripped))
+        if word_count < 6 or word_count > 22:
+            return False
+        if stripped.endswith("?"):
+            return False
+        # Quotables often contain imperative/definitive phrasing.
+        return bool(
+            re.search(
+                r"\b(you|we|i)\b.*\b(should|must|need|can't|cannot|don't|do not|will|is|are)\b",
+                stripped.lower(),
+            )
+        )
+
+    def _extract_keywords(self, text_lower: str, limit: int = 4) -> list[str]:
+        """Extract lightweight keywords for signal explanation."""
+        candidates = re.findall(r"[a-z']+", text_lower)
+        filtered = [word for word in candidates if len(word) > 3]
+        deduped: list[str] = []
+        for word in filtered:
+            if word not in deduped:
+                deduped.append(word)
+            if len(deduped) >= limit:
+                break
+        return deduped
 
     def _analyze_speech_patterns(
         self,
