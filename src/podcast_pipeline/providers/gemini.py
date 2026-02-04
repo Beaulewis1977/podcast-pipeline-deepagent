@@ -1,12 +1,12 @@
 """Google Gemini provider for video analysis.
 
 Supported Models (as of Feb 2026):
-- gemini-2.5-flash: Best balance of cost and performance for video analysis (RECOMMENDED)
-- gemini-3-flash: Latest model with Agentic Vision capabilities
-- gemini-3-pro: Most intelligent model, higher cost
+- gemini-2.5-flash / gemini-2.5-flash-latest: Best balance of cost and performance (RECOMMENDED)
+- gemini-3-flash-preview: Latest model with Agentic Vision capabilities (preview)
+- gemini-3-pro-preview: Most intelligent model, higher cost (preview)
 - gemini-2.5-pro: Excellent video understanding, 2M token context
 
-NOTE: gemini-2.0-flash is RETIRING on March 3, 2026 - DO NOT USE!
+NOTE: gemini-2.0-flash is RETIRING on March 31, 2026 - DO NOT USE!
 
 See: https://ai.google.dev/gemini-api/docs/models
 """
@@ -36,11 +36,12 @@ logger = get_logger(__name__)
 
 # Supported Gemini models for video analysis
 # Primary: gemini-2.5-flash - best cost/performance for video
-# Alternative: gemini-3-flash - latest with Agentic Vision
+# Alternative: gemini-3-flash-preview - latest with Agentic Vision
 SUPPORTED_GEMINI_MODELS = [
     "gemini-2.5-flash",  # Recommended: best balance of cost and performance
-    "gemini-3-flash",  # Latest model with Agentic Vision
-    "gemini-3-pro",  # Most intelligent, higher cost
+    "gemini-2.5-flash-latest",  # Alias for latest 2.5-flash version
+    "gemini-3-flash-preview",  # Latest model with Agentic Vision (preview)
+    "gemini-3-pro-preview",  # Most intelligent, higher cost (preview)
     "gemini-2.5-pro",  # Excellent video understanding, 2M context
 ]
 

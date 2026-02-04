@@ -219,6 +219,7 @@ def write_edit_plan(
                 )
 
     # Determine approved content cuts
+    # Support both start_seconds/end_seconds and start/end key variants
     approved_content: list[ContentCutRange] = []
     content_cuts = analysis.get("content_cuts", [])
     for idx in decisions.approved_content_cuts:
@@ -226,13 +227,14 @@ def write_edit_plan(
             cut = content_cuts[idx]
             approved_content.append(
                 ContentCutRange(
-                    start_seconds=float(cut.get("start_seconds", 0.0)),
-                    end_seconds=float(cut.get("end_seconds", 0.0)),
+                    start_seconds=float(cut.get("start_seconds", cut.get("start", 0.0))),
+                    end_seconds=float(cut.get("end_seconds", cut.get("end", 0.0))),
                     reason=str(cut.get("reason", "")),
                 )
             )
 
     # Determine approved clip ranges
+    # Support both start_seconds/end_seconds and start/end key variants
     approved_clips: list[ClipRange] = []
     viral_clips = analysis.get("viral_clips", [])
     for idx in decisions.selected_clips:
@@ -240,8 +242,8 @@ def write_edit_plan(
             clip = viral_clips[idx]
             approved_clips.append(
                 ClipRange(
-                    start_seconds=float(clip.get("start_seconds", 0.0)),
-                    end_seconds=float(clip.get("end_seconds", 0.0)),
+                    start_seconds=float(clip.get("start_seconds", clip.get("start", 0.0))),
+                    end_seconds=float(clip.get("end_seconds", clip.get("end", 0.0))),
                     description=str(clip.get("description", "")),
                     score=clip.get("virality_score"),
                 )

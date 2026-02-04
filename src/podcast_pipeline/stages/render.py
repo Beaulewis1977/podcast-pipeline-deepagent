@@ -339,15 +339,17 @@ class RenderStage(Stage):
                 filters.append(f"scale={target_width}:-2")
                 filters.append(f"pad={target_width}:{target_height}:(ow-iw)/2:(oh-ih)/2:black")
         # Source is taller - crop top/bottom or letterbox sides
-        elif spec.crop_mode in ["center", "smart"]:
+        elif spec.crop_mode in ["center", "smart", "top", "bottom"]:
             # Crop to fit
             new_height = int(src_width / target_ratio)
             if spec.crop_mode == "center":
                 y_offset = (src_height - new_height) // 2
             elif spec.crop_mode == "top":
                 y_offset = 0
-            else:  # bottom
+            elif spec.crop_mode == "bottom":
                 y_offset = src_height - new_height
+            else:  # smart - default to center
+                y_offset = (src_height - new_height) // 2
             filters.append(f"crop={src_width}:{new_height}:0:{y_offset}")
             filters.append(f"scale={target_width}:{target_height}")
         else:
@@ -501,8 +503,12 @@ class RenderStage(Stage):
                 "+faststart",
                 str(clip_path),
             ]
-            run_ffmpeg(args)
-            outputs.append(str(clip_path.relative_to(job_dir)))
+            try:
+                run_ffmpeg(args)
+                outputs.append(str(clip_path.relative_to(job_dir)))
+            except FFmpegError as e:
+                self.logger.warning("clip_export_failed", clip=idx, error=str(e))
+                continue
 
         if outputs:
             self.logger.info("clips_exported", count=len(outputs))

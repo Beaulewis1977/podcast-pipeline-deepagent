@@ -170,6 +170,7 @@ class AnalyzeStage(Stage):
             self.logger.info("research_skipped", reason="missing_api_key")
             return None
 
+        researcher = None
         try:
             analysis_data = (
                 analysis_result.model_dump() if hasattr(analysis_result, "model_dump") else {}
@@ -196,6 +197,9 @@ class AnalyzeStage(Stage):
         except Exception as e:
             self.logger.warning("research_failed", error=str(e))
             return None
+        finally:
+            if researcher is not None:
+                researcher.close()
 
     def _derive_research_query(
         self,

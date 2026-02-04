@@ -59,6 +59,9 @@ jobs:
         run: |
           uv export --no-emit-project --frozen > requirements-audit.txt
           # Ignore pip itself (meta-dependency we can't control)
+          # TODO(security): Remove CVE-2026-1703 ignore once pip >=26.0 is available
+          # CVE fixed in pip 26.0 (path traversal in wheel extraction)
+          # Target removal: When GitHub Actions ubuntu-latest ships pip 26.0+
           uv run pip-audit --strict --desc on -r requirements-audit.txt --ignore-vuln CVE-2026-1703
 
   # ===========================================================================

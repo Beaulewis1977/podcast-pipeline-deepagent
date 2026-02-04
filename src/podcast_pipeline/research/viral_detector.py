@@ -97,7 +97,6 @@ class ViralClipDetector:
         signals: list[EngagementSignal] = []
 
         segments = transcript_data.get("segments", [])
-        transcript_data.get("text", "")
 
         for segment in segments:
             text = segment.get("text", "")
