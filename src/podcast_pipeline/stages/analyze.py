@@ -8,6 +8,7 @@ from podcast_pipeline.models.job import Job
 from podcast_pipeline.providers.base import ProviderError
 from podcast_pipeline.providers.gemini import GeminiProvider
 from podcast_pipeline.providers.kimi import KimiProvider
+from podcast_pipeline.research.youtube import ResearchResult, YouTubeResearcher
 from podcast_pipeline.stages.base import Stage, StageResult
 from podcast_pipeline.utils.logging import get_logger
 
@@ -46,6 +47,7 @@ class AnalyzeStage(Stage):
 
         Creates:
             - analysis/analysis.json
+            - analysis/research.json (optional)
         """
         # Check for required files
         transcript_path = job_dir / "analysis" / "transcript.json"
@@ -105,9 +107,16 @@ class AnalyzeStage(Stage):
                     cuts=len(result.content_cuts),
                 )
 
+                outputs = [str(analysis_path.relative_to(job_dir))]
+
+                # Optional research integration
+                research_output = self._run_research(job, result, job_dir)
+                if research_output:
+                    outputs.append(research_output)
+
                 return StageResult(
                     success=True,
-                    outputs=[str(analysis_path.relative_to(job_dir))],
+                    outputs=outputs,
                     data={
                         "provider": used_provider,
                         "model": used_model,
@@ -135,3 +144,57 @@ class AnalyzeStage(Stage):
             success=False,
             error=f"All providers failed. Last error: {last_error}",
         )
+
+    def _run_research(
+        self,
+        job: Job,
+        analysis_result: object,
+        job_dir: Path,
+    ) -> str | None:
+        """Run YouTube research if configured."""
+        api_key = self.config.api_keys.youtube
+        if not api_key:
+            self.logger.info("research_skipped", reason="missing_api_key")
+            return None
+
+        try:
+            analysis_data = (
+                analysis_result.model_dump()
+                if hasattr(analysis_result, "model_dump")
+                else {}
+            )
+            query, related_topics = self._derive_research_query(job, analysis_data)
+
+            researcher = YouTubeResearcher(api_key=api_key)
+            research_result: ResearchResult = researcher.research_topic(
+                query, related_topics=related_topics
+            )
+
+            research_path = job_dir / "analysis" / "research.json"
+            research_path.write_text(research_result.model_dump_json(indent=2))
+
+            self.logger.info(
+                "research_complete",
+                query=query,
+                topics=len(research_result.topics),
+                videos=len(research_result.trending_videos),
+            )
+
+            return str(research_path.relative_to(job_dir))
+        except Exception as e:
+            self.logger.warning("research_failed", error=str(e))
+            return None
+
+    def _derive_research_query(
+        self,
+        job: Job,
+        analysis_data: dict,
+    ) -> tuple[str, list[str]]:
+        """Derive research query from analysis metadata or job name."""
+        topics = analysis_data.get("metadata", {}).get("topics", []) or []
+        topics = [topic for topic in topics if topic]
+        if topics:
+            return topics[0], topics[1:4]
+
+        fallback = Path(job.input_file).stem or job.job_id
+        return fallback, []
