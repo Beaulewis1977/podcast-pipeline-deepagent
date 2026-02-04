@@ -45,6 +45,53 @@ class ResearchResult(BaseModel):
 class YouTubeResearcher:
     """YouTube Data API client for research and trend analysis."""
 
+    KEYWORD_STOPWORDS = {
+        "about",
+        "after",
+        "again",
+        "also",
+        "because",
+        "been",
+        "between",
+        "could",
+        "from",
+        "have",
+        "into",
+        "just",
+        "more",
+        "most",
+        "only",
+        "other",
+        "over",
+        "some",
+        "than",
+        "that",
+        "their",
+        "them",
+        "there",
+        "these",
+        "they",
+        "this",
+        "those",
+        "through",
+        "under",
+        "very",
+        "what",
+        "when",
+        "where",
+        "which",
+        "while",
+        "with",
+        "your",
+        "youre",
+        "podcast",
+        "video",
+        "videos",
+        "channel",
+        "learn",
+        "watch",
+    }
+
     def __init__(
         self,
         api_key: str | None = None,
@@ -457,7 +504,16 @@ class YouTubeResearcher:
         Returns:
             List of related trending keywords
         """
-        keywords: set[str] = set()
+        if not seed_keywords:
+            return []
+
+        seed_terms = {
+            token
+            for keyword in seed_keywords
+            for token in re.findall(r"[a-z0-9']+", keyword.lower())
+            if len(token) > 2
+        }
+        keyword_scores: dict[str, float] = {}
 
         for seed in seed_keywords:
             videos = self.search_videos(
@@ -468,22 +524,58 @@ class YouTubeResearcher:
             )
 
             for video in videos:
-                # Extract keywords from titles
-                title = video.get("title", "")
-                # Simple keyword extraction (could be enhanced with NLP)
-                words = title.lower().split()
-                for word in words:
-                    word = word.strip(",.!?()[]\"'")
-                    if len(word) > 3 and word not in seed.lower():
-                        keywords.add(word)
+                base_weight = 1.0 + min(self._safe_int(video.get("view_count")) / 100_000, 2.0)
+                text = f"{video.get('title', '')} {video.get('description', '')}".strip()
+                tokens = self._extract_keyword_tokens(text, seed_terms)
+                ngram_scores = self._score_weighted_ngrams(tokens)
+                for phrase, score in ngram_scores.items():
+                    keyword_scores[phrase] = keyword_scores.get(phrase, 0.0) + (score * base_weight)
 
-                # Extract hashtags from description
+                # Hashtags can provide strong explicit intent signals.
                 desc = video.get("description", "")
-                hashtags = [w for w in desc.split() if w.startswith("#")]
-                for tag in hashtags:
-                    keywords.add(tag.strip("#"))
+                hashtags = [tag.lower() for tag in re.findall(r"#([a-z0-9_]+)", desc)]
+                for hashtag in hashtags:
+                    if hashtag in self.KEYWORD_STOPWORDS or hashtag in seed_terms:
+                        continue
+                    keyword_scores[hashtag] = keyword_scores.get(hashtag, 0.0) + (2.0 * base_weight)
 
-        return list(keywords)[:max_keywords]
+        ranked_keywords = sorted(keyword_scores.items(), key=lambda item: (-item[1], item[0]))
+        return [keyword for keyword, _ in ranked_keywords[:max_keywords]]
+
+    def _extract_keyword_tokens(self, text: str, seed_terms: set[str]) -> list[str]:
+        """Extract normalized keyword tokens with stopword/noise filtering."""
+        raw_tokens = re.findall(r"[a-z0-9']+", text.lower())
+        tokens: list[str] = []
+        for token in raw_tokens:
+            if len(token) < 3:
+                continue
+            if token.isdigit():
+                continue
+            if token in self.KEYWORD_STOPWORDS:
+                continue
+            if token in seed_terms:
+                continue
+            tokens.append(token)
+        return tokens
+
+    def _score_weighted_ngrams(self, tokens: list[str]) -> dict[str, float]:
+        """Score unigram/bigram/trigram candidates with phrase preference."""
+        scores: dict[str, float] = {}
+        if not tokens:
+            return scores
+
+        for token in tokens:
+            scores[token] = scores.get(token, 0.0) + 1.0
+
+        for idx in range(len(tokens) - 1):
+            bigram = f"{tokens[idx]} {tokens[idx + 1]}"
+            scores[bigram] = scores.get(bigram, 0.0) + 1.9
+
+        for idx in range(len(tokens) - 2):
+            trigram = f"{tokens[idx]} {tokens[idx + 1]} {tokens[idx + 2]}"
+            scores[trigram] = scores.get(trigram, 0.0) + 2.8
+
+        return scores
 
     def research_topic(
         self,
