@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-02-04
 **Current phase:** Phase 2 execution (Research + Viral Integration)
-**Overall progress:** 91%
+**Overall progress:** 100%
 
 ## Project Reference
 
@@ -15,9 +15,9 @@ See: `.planning/PROJECT.md`
 
 ```
 Phase:    [2 of 3] Research + Viral Integration
-Plan:     [4 of 5] Completed 02-04-PLAN.md
-Status:   In progress
-Progress: [██████████████████░░] 91%
+Plan:     [5 of 5] Completed 02-05-PLAN.md
+Status:   Awaiting phase verification
+Progress: [████████████████████] 100%
 ```
 
 ## Phase Status
@@ -25,14 +25,14 @@ Progress: [██████████████████░░] 91%
 | Phase | Name | Status | Plans | Progress |
 |------:|------|--------|-------|----------|
 | 1 | Wiring + Stability | Complete | 6/6 | 100% |
-| 2 | Research + Viral Integration | In progress | 4/5 | 80% |
+| 2 | Research + Viral Integration | Awaiting verification | 5/5 | 100% |
 | 3 | Polishing + Desktop Distribution | Pending | 0/0 | 0% |
 
 ## Performance Metrics
 
 | Metric | Value |
 |--------|-------|
-| Plans completed | 10 |
+| Plans completed | 11 |
 | Requirements done | 35/83 (21 partial) |
 | Phases complete | 1/3 |
 | Estimated completion | In progress |
@@ -53,6 +53,8 @@ Progress: [██████████████████░░] 91%
 | Keyword ranking is phrase-first (weighted n-grams) with stopword filtering | Surfaces reusable title/thumbnail phrases over weak unigram noise | 2026-02-04 |
 | Analyze clip ranking blends AI (45%) and detector (55%) scores | Prioritizes transcript-level evidence while retaining provider signal | 2026-02-04 |
 | Viral artifact rows remain backward-compatible via additive score fields | UI can adopt richer metrics incrementally without breaking old readers | 2026-02-04 |
+| Insight panels use pure data transformers before rendering | Keeps schema handling testable and resilient to partial artifacts | 2026-02-04 |
+| UI clip table always sorts by combined score with legacy fallbacks | Maintains ranking consistency across new and old artifact shapes | 2026-02-04 |
 
 ### Technical Notes
 
@@ -74,16 +76,17 @@ Progress: [██████████████████░░] 91%
 - 2026-02-04: Completed phase 2 plan 02-02 (viral detector expansion).
 - 2026-02-04: Completed phase 2 plan 02-03 (cache + keyword extraction).
 - 2026-02-04: Completed phase 2 plan 02-04 (analyze re-ranking + explainability).
+- 2026-02-04: Completed phase 2 plan 02-05 (UI research + score visibility).
 
 ## Session Continuity
 
 ### Last session
 
-Executed `02-04-PLAN.md`; added combined score re-ranking and explainable artifact output.
+Executed `02-05-PLAN.md`; added enriched research/score rendering helpers and UI regression coverage.
 
 ### Stopped at
 
-Completed `02-04-PLAN.md`
+Completed `02-05-PLAN.md`
 
 ### Resume file
 
@@ -91,9 +94,9 @@ None
 
 ### Files modified this session
 
-- `src/podcast_pipeline/stages/analyze.py`
-- `tests/test_analyze_ranking.py`
-- `.planning/phases/02-research-+-viral-integration/02-04-SUMMARY.md`
+- `src/podcast_pipeline/ui/app.py`
+- `tests/test_ui_research_panel.py`
+- `.planning/phases/02-research-+-viral-integration/02-05-SUMMARY.md`
 - `.planning/STATE.md`
 
 ---
