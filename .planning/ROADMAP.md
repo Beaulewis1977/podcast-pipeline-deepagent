@@ -54,6 +54,7 @@ Plans:
 **Goal:** Research signals materially improve title/thumbnail/clip recommendations.
 
 **Dependencies:** Phase 1
+**Status:** Complete (verified 2026-02-04)
 
 **Scope / Requirements:**
 - Add engagement rate + velocity metrics to YouTube research output
@@ -71,11 +72,11 @@ Plans:
 **Plans:** 5 plans
 
 Plans:
-- [ ] 02-01-PLAN.md — Research metrics foundation (engagement/velocity/competition/posting)
-- [ ] 02-02-PLAN.md — Viral detector signal expansion + scoring updates
-- [ ] 02-03-PLAN.md — Weighted keyword extraction + YouTube API caching
-- [ ] 02-04-PLAN.md — Analyze-stage combined clip re-ranking
-- [ ] 02-05-PLAN.md — UI visibility for research and combined viral scoring
+- [x] 02-01-PLAN.md — Research metrics foundation (engagement/velocity/competition/posting)
+- [x] 02-02-PLAN.md — Viral detector signal expansion + scoring updates
+- [x] 02-03-PLAN.md — Weighted keyword extraction + YouTube API caching
+- [x] 02-04-PLAN.md — Analyze-stage combined clip re-ranking
+- [x] 02-05-PLAN.md — UI visibility for research and combined viral scoring
 
 ---
 
