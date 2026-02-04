@@ -68,6 +68,15 @@ Plans:
 1. Research artifacts are produced per job and visible in the UI
 2. Viral clip ranking reflects combined AI + research signals
 
+**Plans:** 5 plans
+
+Plans:
+- [ ] 02-01-PLAN.md — Research metrics foundation (engagement/velocity/competition/posting)
+- [ ] 02-02-PLAN.md — Viral detector signal expansion + scoring updates
+- [ ] 02-03-PLAN.md — Weighted keyword extraction + YouTube API caching
+- [ ] 02-04-PLAN.md — Analyze-stage combined clip re-ranking
+- [ ] 02-05-PLAN.md — UI visibility for research and combined viral scoring
+
 ---
 
 ### Phase 3: Polishing + Desktop Distribution
