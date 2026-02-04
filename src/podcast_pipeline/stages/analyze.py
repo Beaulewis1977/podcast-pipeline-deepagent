@@ -97,6 +97,7 @@ class AnalyzeStage(Stage):
 
                 # Save analysis result
                 analysis_path = job_dir / "analysis" / "analysis.json"
+                analysis_path.parent.mkdir(parents=True, exist_ok=True)
                 analysis_path.write_text(result.model_dump_json(indent=2))
 
                 # Update job with provider info
@@ -122,6 +123,8 @@ class AnalyzeStage(Stage):
                 viral_output = self._run_viral_signals(result, transcript_data, job_dir)
                 if viral_output:
                     outputs.append(viral_output)
+
+                self.logger.info("analysis_outputs_ready", outputs=outputs)
 
                 return StageResult(
                     success=True,
@@ -180,6 +183,7 @@ class AnalyzeStage(Stage):
             )
 
             research_path = job_dir / "analysis" / "research.json"
+            research_path.parent.mkdir(parents=True, exist_ok=True)
             research_path.write_text(research_result.model_dump_json(indent=2))
 
             self.logger.info(
@@ -241,6 +245,7 @@ class AnalyzeStage(Stage):
             }
 
             viral_path = job_dir / "analysis" / "viral_signals.json"
+            viral_path.parent.mkdir(parents=True, exist_ok=True)
             viral_path.write_text(json.dumps(viral_payload, indent=2))
 
             self.logger.info(
