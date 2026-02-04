@@ -1,13 +1,19 @@
 """Analyze stage: AI analysis of video content."""
 
+import dataclasses
 import json
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from podcast_pipeline.config import Config
+from podcast_pipeline.models.analysis import AnalysisResult
 from podcast_pipeline.models.job import Job
 from podcast_pipeline.providers.base import ProviderError
 from podcast_pipeline.providers.gemini import GeminiProvider
 from podcast_pipeline.providers.kimi import KimiProvider
+from podcast_pipeline.research.viral_detector import ViralClipDetector
+from podcast_pipeline.research.youtube import ResearchResult, YouTubeResearcher
 from podcast_pipeline.stages.base import Stage, StageResult
 from podcast_pipeline.utils.logging import get_logger
 
@@ -46,6 +52,8 @@ class AnalyzeStage(Stage):
 
         Creates:
             - analysis/analysis.json
+            - analysis/research.json (optional)
+            - analysis/viral_signals.json
         """
         # Check for required files
         transcript_path = job_dir / "analysis" / "transcript.json"
@@ -91,6 +99,7 @@ class AnalyzeStage(Stage):
 
                 # Save analysis result
                 analysis_path = job_dir / "analysis" / "analysis.json"
+                analysis_path.parent.mkdir(parents=True, exist_ok=True)
                 analysis_path.write_text(result.model_dump_json(indent=2))
 
                 # Update job with provider info
@@ -105,9 +114,23 @@ class AnalyzeStage(Stage):
                     cuts=len(result.content_cuts),
                 )
 
+                outputs = [str(analysis_path.relative_to(job_dir))]
+
+                # Optional research integration
+                research_output = self._run_research(job, result, job_dir)
+                if research_output:
+                    outputs.append(research_output)
+
+                # Viral signal analysis
+                viral_output = self._run_viral_signals(result, transcript_data, job_dir)
+                if viral_output:
+                    outputs.append(viral_output)
+
+                self.logger.info("analysis_outputs_ready", outputs=outputs)
+
                 return StageResult(
                     success=True,
-                    outputs=[str(analysis_path.relative_to(job_dir))],
+                    outputs=outputs,
                     data={
                         "provider": used_provider,
                         "model": used_model,
@@ -135,3 +158,115 @@ class AnalyzeStage(Stage):
             success=False,
             error=f"All providers failed. Last error: {last_error}",
         )
+
+    def _run_research(
+        self,
+        job: Job,
+        analysis_result: AnalysisResult,
+        job_dir: Path,
+    ) -> str | None:
+        """Run YouTube research if configured."""
+        api_key = self.config.api_keys.youtube
+        if not api_key:
+            self.logger.info("research_skipped", reason="missing_api_key")
+            return None
+
+        researcher = None
+        try:
+            analysis_data = (
+                analysis_result.model_dump() if hasattr(analysis_result, "model_dump") else {}
+            )
+            query, related_topics = self._derive_research_query(job, analysis_data)
+
+            researcher = YouTubeResearcher(api_key=api_key)
+            research_result: ResearchResult = researcher.research_topic(
+                query, related_topics=related_topics
+            )
+
+            research_path = job_dir / "analysis" / "research.json"
+            research_path.parent.mkdir(parents=True, exist_ok=True)
+            research_path.write_text(research_result.model_dump_json(indent=2))
+
+            self.logger.info(
+                "research_complete",
+                query=query,
+                topics=len(research_result.topics),
+                videos=len(research_result.trending_videos),
+            )
+
+            return str(research_path.relative_to(job_dir))
+        except Exception as e:
+            self.logger.warning("research_failed", error=str(e))
+            return None
+        finally:
+            if researcher is not None:
+                researcher.close()
+
+    def _derive_research_query(
+        self,
+        job: Job,
+        analysis_data: dict[str, Any],
+    ) -> tuple[str, list[str]]:
+        """Derive research query from analysis metadata or job name."""
+        topics = analysis_data.get("metadata", {}).get("topics", []) or []
+        topics = [topic for topic in topics if topic]
+        if topics:
+            return topics[0], topics[1:4]
+
+        fallback = Path(job.input_file).stem or job.job_id
+        return fallback, []
+
+    def _run_viral_signals(
+        self,
+        analysis_result: AnalysisResult,
+        transcript_data: dict[str, Any],
+        job_dir: Path,
+    ) -> str | None:
+        """Compute viral signals and per-clip scores."""
+        try:
+            analysis_data = (
+                analysis_result.model_dump() if hasattr(analysis_result, "model_dump") else {}
+            )
+            detector = ViralClipDetector()
+            signals = detector.analyze_transcript(transcript_data)
+
+            clip_scores = []
+            for clip in analysis_data.get("viral_clips", []) or []:
+                score = detector.score_clip(clip, transcript_data, signals)
+                clip_scores.append(
+                    {
+                        "clip": clip,
+                        "score": score.model_dump(),
+                    }
+                )
+
+            def _serialize_signal(obj: Any) -> dict[str, Any]:
+                """Safely serialize dataclass or Pydantic model to dict."""
+                if hasattr(obj, "model_dump"):
+                    return dict(obj.model_dump())
+                if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
+                    return dataclasses.asdict(obj)
+                if isinstance(obj, dict):
+                    return obj
+                return dict(vars(obj))
+
+            viral_payload = {
+                "generated_at": datetime.now(UTC).isoformat(),
+                "signals": [_serialize_signal(signal) for signal in signals],
+                "clip_scores": clip_scores,
+            }
+
+            viral_path = job_dir / "analysis" / "viral_signals.json"
+            viral_path.parent.mkdir(parents=True, exist_ok=True)
+            viral_path.write_text(json.dumps(viral_payload, indent=2))
+
+            self.logger.info(
+                "viral_signals_complete",
+                signals=len(signals),
+                clips=len(clip_scores),
+            )
+
+            return str(viral_path.relative_to(job_dir))
+        except Exception as e:
+            self.logger.warning("viral_signals_failed", error=str(e))
+            return None

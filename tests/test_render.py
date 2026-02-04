@@ -2,11 +2,8 @@
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
-import pytest
-
-from podcast_pipeline.config import Config, PlatformSpec, load_config
+from podcast_pipeline.config import PlatformSpec, load_config
 from podcast_pipeline.stages.render import RenderStage
 
 
@@ -17,7 +14,7 @@ class TestPlatformSpecs:
         """Test YouTube platform spec defaults."""
         config = load_config()
         spec = config.platforms.youtube
-        
+
         assert spec.width == 1920
         assert spec.height == 1080
         assert spec.aspect_ratio == "16:9"
@@ -28,7 +25,7 @@ class TestPlatformSpecs:
         """Test TikTok platform spec defaults."""
         config = load_config()
         spec = config.platforms.tiktok
-        
+
         assert spec.width == 1080
         assert spec.height == 1920
         assert spec.aspect_ratio == "9:16"
@@ -39,7 +36,7 @@ class TestPlatformSpecs:
         """Test Instagram platform spec defaults."""
         config = load_config()
         spec = config.platforms.instagram
-        
+
         assert spec.width == 1080
         assert spec.height == 1920
         assert spec.aspect_ratio == "9:16"
@@ -50,7 +47,7 @@ class TestPlatformSpecs:
         """Test LinkedIn platform spec (square)."""
         config = load_config()
         spec = config.platforms.linkedin
-        
+
         assert spec.width == 1080
         assert spec.height == 1080
         assert spec.aspect_ratio == "1:1"
@@ -60,7 +57,7 @@ class TestPlatformSpecs:
         """Test Twitter platform spec."""
         config = load_config()
         spec = config.platforms.twitter
-        
+
         assert spec.width == 1280
         assert spec.height == 720
         assert spec.max_duration == 140  # 2:20
@@ -69,7 +66,7 @@ class TestPlatformSpecs:
         """Test Spotify is audio-only."""
         config = load_config()
         spec = config.platforms.spotify
-        
+
         assert spec.audio_only is True
         assert spec.audio_codec == "libmp3lame"
 
@@ -77,7 +74,7 @@ class TestPlatformSpecs:
         """Test Apple Podcasts is audio-only."""
         config = load_config()
         spec = config.platforms.apple
-        
+
         assert spec.audio_only is True
         assert spec.audio_codec == "aac"
 
@@ -96,7 +93,7 @@ class TestRenderStage:
         config = load_config()
         stage = RenderStage(config)
         spec = stage._get_platform_spec("youtube")
-        
+
         assert spec is not None
         assert spec.video_codec == "libx264"
 
@@ -105,20 +102,20 @@ class TestRenderStage:
         config = load_config()
         stage = RenderStage(config)
         spec = stage._get_platform_spec("unknown_platform")
-        
+
         assert spec is None
 
     def test_find_input_video_mp4(self, tmp_path: Path) -> None:
         """Test finding MP4 input video."""
         config = load_config()
         stage = RenderStage(config)
-        
+
         # Create input directory with video
         input_dir = tmp_path / "input"
         input_dir.mkdir()
         video_path = input_dir / "raw.mp4"
         video_path.write_bytes(b"fake video data")
-        
+
         result = stage._find_input_video(tmp_path)
         assert result == video_path
 
@@ -126,12 +123,12 @@ class TestRenderStage:
         """Test finding MOV input video."""
         config = load_config()
         stage = RenderStage(config)
-        
+
         input_dir = tmp_path / "input"
         input_dir.mkdir()
         video_path = input_dir / "raw.mov"
         video_path.write_bytes(b"fake video data")
-        
+
         result = stage._find_input_video(tmp_path)
         assert result == video_path
 
@@ -139,10 +136,10 @@ class TestRenderStage:
         """Test finding video returns None when missing."""
         config = load_config()
         stage = RenderStage(config)
-        
+
         input_dir = tmp_path / "input"
         input_dir.mkdir()
-        
+
         result = stage._find_input_video(tmp_path)
         assert result is None
 
@@ -155,9 +152,9 @@ class TestAspectRatioConversion:
         config = load_config()
         stage = RenderStage(config)
         spec = PlatformSpec(width=1920, height=1080, aspect_ratio="16:9")
-        
+
         filters = stage._build_video_filters(1920, 1080, 1920, 1080, spec)
-        
+
         assert len(filters) == 1
         assert "scale=1920:1080" in filters[0]
 
@@ -165,12 +162,10 @@ class TestAspectRatioConversion:
         """Test converting 16:9 to 9:16 (crop sides)."""
         config = load_config()
         stage = RenderStage(config)
-        spec = PlatformSpec(
-            width=1080, height=1920, aspect_ratio="9:16", crop_mode="center"
-        )
-        
+        spec = PlatformSpec(width=1080, height=1920, aspect_ratio="9:16", crop_mode="center")
+
         filters = stage._build_video_filters(1920, 1080, 1080, 1920, spec)
-        
+
         # Should have crop and scale
         assert len(filters) == 2
         assert "crop" in filters[0]
@@ -180,12 +175,10 @@ class TestAspectRatioConversion:
         """Test converting 16:9 to 1:1 (crop sides)."""
         config = load_config()
         stage = RenderStage(config)
-        spec = PlatformSpec(
-            width=1080, height=1080, aspect_ratio="1:1", crop_mode="center"
-        )
-        
+        spec = PlatformSpec(width=1080, height=1080, aspect_ratio="1:1", crop_mode="center")
+
         filters = stage._build_video_filters(1920, 1080, 1080, 1080, spec)
-        
+
         assert len(filters) == 2
         assert "crop" in filters[0]
         assert "scale=1080:1080" in filters[1]
@@ -198,11 +191,11 @@ class TestMarketingDocGeneration:
         """Test marketing document generation."""
         config = load_config()
         stage = RenderStage(config)
-        
+
         # Create analysis directory with data
         analysis_dir = tmp_path / "analysis"
         analysis_dir.mkdir()
-        
+
         analysis_data = {
             "marketing": {
                 "youtube": {
@@ -221,18 +214,18 @@ class TestMarketingDocGeneration:
                 "mood": "informative",
             },
         }
-        
+
         (analysis_dir / "analysis.json").write_text(json.dumps(analysis_data))
-        
+
         result = stage._generate_marketing_doc(tmp_path)
-        
+
         assert result is not None
         assert "marketing" in result
-        
+
         # Check the file was created
         doc_path = tmp_path / "output" / "marketing" / "copy.md"
         assert doc_path.exists()
-        
+
         content = doc_path.read_text()
         assert "YouTube" in content
         assert "TikTok" in content

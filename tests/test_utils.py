@@ -1,7 +1,5 @@
 """Tests for utility functions."""
 
-import pytest
-
 from podcast_pipeline.utils.time import (
     format_duration,
     seconds_to_srt_timestamp,

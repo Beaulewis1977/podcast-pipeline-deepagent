@@ -1,9 +1,5 @@
 """Tests for the CLI module."""
 
-import tempfile
-from pathlib import Path
-
-import pytest
 from typer.testing import CliRunner
 
 from podcast_pipeline.cli import app

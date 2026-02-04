@@ -1,7 +1,6 @@
 """YouTube Data API integration for research and trend analysis."""
 
-import json
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -16,7 +15,7 @@ YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3"
 
 class TrendingTopic(BaseModel):
     """A trending topic with analysis."""
-    
+
     topic: str
     search_volume: int = 0
     trending_videos: list[dict[str, Any]] = Field(default_factory=list)
@@ -27,14 +26,14 @@ class TrendingTopic(BaseModel):
 
 class ResearchResult(BaseModel):
     """Complete research result for a topic."""
-    
+
     query: str
     topics: list[TrendingTopic] = Field(default_factory=list)
     trending_videos: list[dict[str, Any]] = Field(default_factory=list)
     suggested_keywords: list[str] = Field(default_factory=list)
     competitor_channels: list[dict[str, Any]] = Field(default_factory=list)
     insights: dict[str, Any] = Field(default_factory=dict)
-    generated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    generated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class YouTubeResearcher:
@@ -42,7 +41,7 @@ class YouTubeResearcher:
 
     def __init__(self, api_key: str | None = None):
         """Initialize YouTube researcher.
-        
+
         Args:
             api_key: YouTube Data API key
         """
@@ -69,14 +68,14 @@ class YouTubeResearcher:
         video_duration: str = "any",
     ) -> list[dict[str, Any]]:
         """Search for videos on YouTube.
-        
+
         Args:
             query: Search query
             max_results: Maximum number of results
             published_after: Only videos published after this date
             order: Order by (relevance, date, rating, viewCount)
             video_duration: Duration filter (any, short, medium, long)
-            
+
         Returns:
             List of video items
         """
@@ -84,7 +83,7 @@ class YouTubeResearcher:
             logger.warning("youtube_api_not_configured")
             return []
 
-        params = {
+        params: dict[str, str | int] = {
             "part": "snippet",
             "q": query,
             "type": "video",
@@ -106,20 +105,25 @@ class YouTubeResearcher:
 
             videos = []
             video_ids = []
-            
+
             for item in data.get("items", []):
                 video_id = item.get("id", {}).get("videoId")
                 if video_id:
                     video_ids.append(video_id)
-                    videos.append({
-                        "video_id": video_id,
-                        "title": item.get("snippet", {}).get("title", ""),
-                        "description": item.get("snippet", {}).get("description", ""),
-                        "channel_title": item.get("snippet", {}).get("channelTitle", ""),
-                        "channel_id": item.get("snippet", {}).get("channelId", ""),
-                        "published_at": item.get("snippet", {}).get("publishedAt", ""),
-                        "thumbnail": item.get("snippet", {}).get("thumbnails", {}).get("high", {}).get("url", ""),
-                    })
+                    videos.append(
+                        {
+                            "video_id": video_id,
+                            "title": item.get("snippet", {}).get("title", ""),
+                            "description": item.get("snippet", {}).get("description", ""),
+                            "channel_title": item.get("snippet", {}).get("channelTitle", ""),
+                            "channel_id": item.get("snippet", {}).get("channelId", ""),
+                            "published_at": item.get("snippet", {}).get("publishedAt", ""),
+                            "thumbnail": item.get("snippet", {})
+                            .get("thumbnails", {})
+                            .get("high", {})
+                            .get("url", ""),
+                        }
+                    )
 
             # Get video statistics
             if video_ids:
@@ -131,15 +135,15 @@ class YouTubeResearcher:
             return videos
 
         except httpx.HTTPError as e:
-            logger.error("youtube_search_failed", error=str(e))
+            logger.exception("youtube_search_failed", error=str(e))
             return []
 
     def _get_video_stats(self, video_ids: list[str]) -> dict[str, dict[str, Any]]:
         """Get statistics for multiple videos.
-        
+
         Args:
             video_ids: List of video IDs
-            
+
         Returns:
             Dictionary mapping video_id to stats
         """
@@ -162,7 +166,7 @@ class YouTubeResearcher:
                 video_id = item.get("id")
                 statistics = item.get("statistics", {})
                 content = item.get("contentDetails", {})
-                
+
                 stats[video_id] = {
                     "view_count": int(statistics.get("viewCount", 0)),
                     "like_count": int(statistics.get("likeCount", 0)),
@@ -173,15 +177,15 @@ class YouTubeResearcher:
             return stats
 
         except httpx.HTTPError as e:
-            logger.error("youtube_stats_failed", error=str(e))
+            logger.exception("youtube_stats_failed", error=str(e))
             return {}
 
     def get_channel_info(self, channel_id: str) -> dict[str, Any] | None:
         """Get channel information.
-        
+
         Args:
             channel_id: YouTube channel ID
-            
+
         Returns:
             Channel info dictionary or None
         """
@@ -211,11 +215,14 @@ class YouTubeResearcher:
                 "subscriber_count": int(item.get("statistics", {}).get("subscriberCount", 0)),
                 "video_count": int(item.get("statistics", {}).get("videoCount", 0)),
                 "view_count": int(item.get("statistics", {}).get("viewCount", 0)),
-                "thumbnail": item.get("snippet", {}).get("thumbnails", {}).get("high", {}).get("url", ""),
+                "thumbnail": item.get("snippet", {})
+                .get("thumbnails", {})
+                .get("high", {})
+                .get("url", ""),
             }
 
         except httpx.HTTPError as e:
-            logger.error("youtube_channel_failed", error=str(e))
+            logger.exception("youtube_channel_failed", error=str(e))
             return None
 
     def analyze_competitors(
@@ -224,24 +231,24 @@ class YouTubeResearcher:
         max_channels: int = 10,
     ) -> list[dict[str, Any]]:
         """Analyze competitor channels for given topics.
-        
+
         Args:
             topics: List of topics to search
             max_channels: Maximum number of channels to return
-            
+
         Returns:
             List of competitor channel info
         """
         channels: dict[str, dict[str, Any]] = {}
-        
+
         for topic in topics:
             videos = self.search_videos(
                 topic,
                 max_results=20,
                 order="viewCount",
-                published_after=datetime.now(timezone.utc) - timedelta(days=90),
+                published_after=datetime.now(UTC) - timedelta(days=90),
             )
-            
+
             for video in videos:
                 channel_id = video.get("channel_id")
                 if channel_id and channel_id not in channels:
@@ -255,7 +262,7 @@ class YouTubeResearcher:
             key=lambda x: x.get("subscriber_count", 0),
             reverse=True,
         )
-        
+
         return sorted_channels[:max_channels]
 
     def get_trending_keywords(
@@ -264,24 +271,24 @@ class YouTubeResearcher:
         max_keywords: int = 20,
     ) -> list[str]:
         """Get trending keywords based on seed keywords.
-        
+
         Args:
             seed_keywords: Initial keywords to expand
             max_keywords: Maximum keywords to return
-            
+
         Returns:
             List of related trending keywords
         """
         keywords: set[str] = set()
-        
+
         for seed in seed_keywords:
             videos = self.search_videos(
                 seed,
                 max_results=10,
                 order="viewCount",
-                published_after=datetime.now(timezone.utc) - timedelta(days=30),
+                published_after=datetime.now(UTC) - timedelta(days=30),
             )
-            
+
             for video in videos:
                 # Extract keywords from titles
                 title = video.get("title", "")
@@ -291,13 +298,13 @@ class YouTubeResearcher:
                     word = word.strip(",.!?()[]\"'")
                     if len(word) > 3 and word not in seed.lower():
                         keywords.add(word)
-                
+
                 # Extract hashtags from description
                 desc = video.get("description", "")
                 hashtags = [w for w in desc.split() if w.startswith("#")]
                 for tag in hashtags:
                     keywords.add(tag.strip("#"))
-        
+
         return list(keywords)[:max_keywords]
 
     def research_topic(
@@ -306,34 +313,34 @@ class YouTubeResearcher:
         related_topics: list[str] | None = None,
     ) -> ResearchResult:
         """Perform comprehensive research on a topic.
-        
+
         Args:
             topic: Main topic to research
             related_topics: Additional related topics
-            
+
         Returns:
             Complete research result
         """
         logger.info("researching_topic", topic=topic)
-        
+
         all_topics = [topic] + (related_topics or [])
-        
+
         # Get trending videos
         trending_videos = self.search_videos(
             topic,
             max_results=25,
             order="viewCount",
-            published_after=datetime.now(timezone.utc) - timedelta(days=7),
+            published_after=datetime.now(UTC) - timedelta(days=7),
         )
-        
+
         # Get recent videos
         recent_videos = self.search_videos(
             topic,
             max_results=25,
             order="date",
-            published_after=datetime.now(timezone.utc) - timedelta(days=3),
+            published_after=datetime.now(UTC) - timedelta(days=3),
         )
-        
+
         # Combine and deduplicate
         seen_ids = set()
         all_videos = []
@@ -341,16 +348,16 @@ class YouTubeResearcher:
             if video["video_id"] not in seen_ids:
                 seen_ids.add(video["video_id"])
                 all_videos.append(video)
-        
+
         # Analyze competitors
         competitors = self.analyze_competitors(all_topics[:3])
-        
+
         # Get trending keywords
         keywords = self.get_trending_keywords(all_topics)
-        
+
         # Generate insights
         insights = self._generate_insights(all_videos, competitors)
-        
+
         return ResearchResult(
             query=topic,
             trending_videos=all_videos[:50],
@@ -365,31 +372,31 @@ class YouTubeResearcher:
         competitors: list[dict[str, Any]],
     ) -> dict[str, Any]:
         """Generate insights from research data.
-        
+
         Args:
             videos: List of videos
             competitors: List of competitor channels
-            
+
         Returns:
             Dictionary of insights
         """
         if not videos:
             return {}
-        
+
         # Calculate average metrics
         view_counts = [v.get("view_count", 0) for v in videos if v.get("view_count")]
         like_counts = [v.get("like_count", 0) for v in videos if v.get("like_count")]
-        
+
         avg_views = sum(view_counts) / len(view_counts) if view_counts else 0
         avg_likes = sum(like_counts) / len(like_counts) if like_counts else 0
-        
+
         # Find best performing videos
         sorted_by_views = sorted(videos, key=lambda x: x.get("view_count", 0), reverse=True)
-        
+
         # Analyze title patterns
         title_lengths = [len(v.get("title", "")) for v in videos]
         avg_title_length = sum(title_lengths) / len(title_lengths) if title_lengths else 0
-        
+
         return {
             "avg_views": int(avg_views),
             "avg_likes": int(avg_likes),
@@ -404,19 +411,19 @@ class YouTubeResearcher:
     def _get_recommendation(self, avg_views: float, avg_title_length: float) -> str:
         """Generate a recommendation based on insights."""
         recommendations = []
-        
+
         if avg_views > 100000:
             recommendations.append("This is a high-competition topic with viral potential.")
         elif avg_views > 10000:
             recommendations.append("Good engagement potential with moderate competition.")
         else:
             recommendations.append("Lower competition - good opportunity for growth.")
-        
+
         if avg_title_length > 60:
             recommendations.append("Consider shorter, punchier titles (under 60 chars).")
         elif avg_title_length < 30:
             recommendations.append("Titles could be more descriptive to improve CTR.")
-        
+
         return " ".join(recommendations)
 
     def close(self) -> None:

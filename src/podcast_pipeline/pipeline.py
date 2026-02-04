@@ -1,5 +1,6 @@
 """Pipeline orchestration."""
 
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +36,7 @@ class Pipeline:
         self,
         video_path: Path,
         name: str | None = None,
+        job_id: str | None = None,
     ) -> Job:
         """Create a new job from a video file.
 
@@ -48,12 +50,11 @@ class Pipeline:
         if not video_path.exists():
             raise FileNotFoundError(f"Video file not found: {video_path}")
 
-        # Generate job ID
-        from datetime import datetime
-
-        timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+        # Generate job ID (allow override to keep UI + pipeline in sync)
         job_name = name or video_path.stem
-        job_id = f"{timestamp}_{job_name}"
+        if job_id is None:
+            timestamp = datetime.now(UTC).strftime("%Y-%m-%d_%H%M%S")
+            job_id = f"{timestamp}_{job_name}"
 
         # Create job
         job = Job(
@@ -108,8 +109,7 @@ class Pipeline:
                             "status": job.status.value,
                             "created": job.created_at.isoformat(),
                             "stages": {
-                                name: stage.status.value
-                                for name, stage in job.stages.items()
+                                name: stage.status.value for name, stage in job.stages.items()
                             },
                         }
                     )
@@ -148,8 +148,8 @@ class Pipeline:
             try:
                 idx = self.STAGE_ORDER.index(until_stage)
                 stages_to_run = self.STAGE_ORDER[: idx + 1]
-            except ValueError:
-                raise ValueError(f"Unknown stage: {until_stage}")
+            except ValueError as e:
+                raise ValueError(f"Unknown stage: {until_stage}") from e
         else:
             stages_to_run = self.STAGE_ORDER
 

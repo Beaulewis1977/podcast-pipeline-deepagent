@@ -7,6 +7,12 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from podcast_pipeline.config import Config
+from podcast_pipeline.models.edit_plan import (
+    ClipRange,
+    ContentCutRange,
+    EditPlan,
+    FillerCutRange,
+)
 from podcast_pipeline.models.job import Job, StageStatus
 from podcast_pipeline.stages.base import Stage, StageResult
 from podcast_pipeline.utils.logging import get_logger
@@ -34,9 +40,7 @@ class ReviewDecisions(BaseModel):
     marketing_edits: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
     # Export settings
-    export_platforms: list[str] = Field(
-        default_factory=lambda: ["youtube", "spotify"]
-    )
+    export_platforms: list[str] = Field(default_factory=lambda: ["youtube", "spotify"])
     export_quality: str = "final"  # draft or final
 
     # Review completion
@@ -73,9 +77,20 @@ class ReviewStage(Stage):
         decisions = ReviewDecisions.model_validate(review_data)
 
         if decisions.review_complete:
+            analysis_path = job_dir / "analysis" / "analysis.json"
+            filler_path = job_dir / "analysis" / "filler_cuts.json"
+
+            analysis = json.loads(analysis_path.read_text()) if analysis_path.exists() else {}
+            fillers = json.loads(filler_path.read_text()) if filler_path.exists() else []
+
+            edit_plan_path = write_edit_plan(job_dir, decisions, analysis, fillers)
+
             return StageResult(
                 success=True,
-                outputs=[str(review_path.relative_to(job_dir))],
+                outputs=[
+                    str(review_path.relative_to(job_dir)),
+                    str(edit_plan_path.relative_to(job_dir)),
+                ],
                 data={"status": "review_complete", "decisions": decisions.model_dump()},
             )
 
@@ -167,7 +182,92 @@ def approve_review(job_dir: Path, platforms: list[str] | None = None) -> ReviewD
     review_path.parent.mkdir(parents=True, exist_ok=True)
     review_path.write_text(decisions.model_dump_json(indent=2))
 
+    analysis = json.loads(analysis_path.read_text()) if analysis_path.exists() else {}
+    fillers = json.loads(filler_path.read_text()) if filler_path.exists() else []
+    write_edit_plan(job_dir, decisions, analysis, fillers)
+
     return decisions
+
+
+def write_edit_plan(
+    job_dir: Path,
+    decisions: ReviewDecisions,
+    analysis: dict[str, Any] | None,
+    filler_cuts: list[dict[str, Any]] | None,
+) -> Path:
+    """Write edit_plan.json based on review decisions."""
+    analysis = analysis or {}
+    filler_cuts = filler_cuts or []
+
+    review_dir = job_dir / "review"
+    review_dir.mkdir(parents=True, exist_ok=True)
+
+    # Determine approved filler cuts
+    # Support both start_seconds/end_seconds and start/end key variants
+    approved_filler: list[FillerCutRange] = []
+    if not decisions.reject_all_fillers:
+        filler_indices = decisions.approved_filler_cuts or list(range(len(filler_cuts)))
+        for idx in filler_indices:
+            if idx < len(filler_cuts):
+                filler = filler_cuts[idx]
+                approved_filler.append(
+                    FillerCutRange(
+                        start_seconds=float(filler.get("start_seconds", filler.get("start", 0.0))),
+                        end_seconds=float(filler.get("end_seconds", filler.get("end", 0.0))),
+                        word=str(filler.get("word", "")),
+                        confidence=filler.get("confidence"),
+                    )
+                )
+
+    # Determine approved content cuts
+    # Support both start_seconds/end_seconds and start/end key variants
+    approved_content: list[ContentCutRange] = []
+    content_cuts = analysis.get("content_cuts", [])
+    for idx in decisions.approved_content_cuts:
+        if idx < len(content_cuts):
+            cut = content_cuts[idx]
+            approved_content.append(
+                ContentCutRange(
+                    start_seconds=float(cut.get("start_seconds", cut.get("start", 0.0))),
+                    end_seconds=float(cut.get("end_seconds", cut.get("end", 0.0))),
+                    reason=str(cut.get("reason", "")),
+                )
+            )
+
+    # Determine approved clip ranges
+    # Support both start_seconds/end_seconds and start/end key variants
+    approved_clips: list[ClipRange] = []
+    viral_clips = analysis.get("viral_clips", [])
+    for idx in decisions.selected_clips:
+        if idx < len(viral_clips):
+            clip = viral_clips[idx]
+            approved_clips.append(
+                ClipRange(
+                    start_seconds=float(clip.get("start_seconds", clip.get("start", 0.0))),
+                    end_seconds=float(clip.get("end_seconds", clip.get("end", 0.0))),
+                    description=str(clip.get("description", "")),
+                    score=clip.get("virality_score"),
+                )
+            )
+
+    edit_plan = EditPlan(
+        filler_cuts=approved_filler,
+        content_cuts=approved_content,
+        clip_ranges=approved_clips,
+    )
+
+    edit_path = review_dir / "edit_plan.json"
+    edit_path.write_text(edit_plan.model_dump_json(indent=2))
+
+    logger.info(
+        "edit_plan_written",
+        path=str(edit_path),
+        filler_cuts=len(approved_filler),
+        content_cuts=len(approved_content),
+        clips=len(approved_clips),
+    )
+
+    return edit_path
 
 
 def get_review_summary(job_dir: Path) -> dict[str, Any]:
@@ -182,7 +282,9 @@ def get_review_summary(job_dir: Path) -> dict[str, Any]:
     if transcript_path.exists():
         data = json.loads(transcript_path.read_text())
         summary["transcript"] = {
-            "text": data.get("text", "")[:2000] + "..." if len(data.get("text", "")) > 2000 else data.get("text", ""),
+            "text": data.get("text", "")[:2000] + "..."
+            if len(data.get("text", "")) > 2000
+            else data.get("text", ""),
             "duration": data.get("duration", 0),
             "language": data.get("language", "unknown"),
         }

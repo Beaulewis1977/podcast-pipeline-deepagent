@@ -11,6 +11,7 @@ reviews:
     base_branches:
       - main
       - master
+      - develop
 
   # Request changes when issues found
   request_changes_workflow: true
@@ -21,8 +22,8 @@ reviews:
   # Poem in review (fun)
   poem: false
 
-  # Review profile (chill, default, assertive, etc.)
-  profile: default
+  # Review profile (chill or assertive)
+  profile: chill
 
   # Path filters - exclude from review
   path_filters:
@@ -36,6 +37,19 @@ reviews:
     - "!**/htmlcov/**"
     - "!**/.coverage"
     - "!**/coverage.xml"
+
+  # Enable tools
+  tools:
+    shellcheck:
+      enabled: true
+    yamllint:
+      enabled: true
+    markdownlint:
+      enabled: true
+    ruff:
+      enabled: true
+    gitleaks:
+      enabled: true
 
   # Path-specific review instructions
   path_instructions:
@@ -84,53 +98,3 @@ reviews:
 # Chat settings
 chat:
   auto_reply: true
-
-# Enable tools
-tools:
-  # Built-in tools
-  github-checks:
-    enabled: true
-  shellcheck:
-    enabled: true
-  yamllint:
-    enabled: true
-  markdownlint:
-    enabled: true
-
-  # Ruff for Python
-  ruff:
-    enabled: true
-
-  # Custom rules
-  custom:
-    enabled: true
-    rules:
-      - name: no-hardcoded-secrets
-        description: "No hardcoded API keys or secrets"
-        pattern: "(api_key|password|secret|token)\\s*[=:]\\s*['\"][^'\"]{8,}['\"]"
-        severity: critical
-        file_patterns:
-          - "**/*.py"
-        exclude_patterns:
-          - "**/*.example"
-          - "**/test_*.py"
-          - "**/*_test.py"
-
-      - name: no-print-statements
-        description: "Use logging instead of print"
-        pattern: "^\\s*print\\("
-        severity: warning
-        file_patterns:
-          - "src/**/*.py"
-        exclude_patterns:
-          - "**/cli.py"
-          - "**/test_*.py"
-
-      - name: type-hints-required
-        description: "Functions should have type hints"
-        pattern: "def\\s+\\w+\\([^)]*\\)\\s*:"
-        severity: info
-        file_patterns:
-          - "src/**/*.py"
-        exclude_patterns:
-          - "**/test_*.py"

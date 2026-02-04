@@ -1,13 +1,9 @@
 """Tests for YouTube research and viral clip detection."""
 
-from datetime import datetime, timezone
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
-from podcast_pipeline.research.youtube import YouTubeResearcher, ResearchResult, TrendingTopic
-from podcast_pipeline.research.viral_detector import ViralClipDetector, EngagementSignal, ViralScore
+from podcast_pipeline.research.viral_detector import EngagementSignal, ViralClipDetector, ViralScore
+from podcast_pipeline.research.youtube import ResearchResult, YouTubeResearcher
 
 
 class TestYouTubeResearcher:
@@ -45,7 +41,9 @@ class TestYouTubeResearcher:
                         "channelTitle": "Test Channel",
                         "channelId": "UCtest",
                         "publishedAt": "2025-01-15T00:00:00Z",
-                        "thumbnails": {"high": {"url": "https://i.ytimg.com/vi/JlmK_d7KDoQ/maxresdefault.jpg"}},
+                        "thumbnails": {
+                            "high": {"url": "https://i.ytimg.com/vi/JlmK_d7KDoQ/maxresdefault.jpg"}
+                        },
                     },
                 }
             ]
@@ -54,7 +52,7 @@ class TestYouTubeResearcher:
         mock_get.return_value = mock_response
 
         researcher = YouTubeResearcher(api_key="test_key")
-        
+
         # Mock the stats call
         with patch.object(researcher, "_get_video_stats") as mock_stats:
             mock_stats.return_value = {"abc123": {"view_count": 1000}}
@@ -67,7 +65,7 @@ class TestYouTubeResearcher:
     def test_get_trending_keywords(self) -> None:
         """Test trending keyword extraction."""
         researcher = YouTubeResearcher(api_key="test_key")
-        
+
         with patch.object(researcher, "search_videos") as mock_search:
             mock_search.return_value = [
                 {
@@ -79,23 +77,23 @@ class TestYouTubeResearcher:
                     "description": "Learn #machinelearning basics",
                 },
             ]
-            
+
             keywords = researcher.get_trending_keywords(["AI"], max_keywords=10)
-            
+
             assert isinstance(keywords, list)
 
     def test_generate_insights(self) -> None:
         """Test insight generation from video data."""
         researcher = YouTubeResearcher()
-        
+
         videos = [
             {"title": "Short Title", "view_count": 10000, "like_count": 500},
             {"title": "A Much Longer Video Title Here", "view_count": 50000, "like_count": 2500},
             {"title": "Medium Title Here", "view_count": 25000, "like_count": 1000},
         ]
-        
+
         insights = researcher._generate_insights(videos, [])
-        
+
         assert "avg_views" in insights
         assert "avg_likes" in insights
         assert "avg_title_length" in insights
@@ -126,7 +124,7 @@ class TestViralClipDetector:
     def test_analyze_transcript_with_hook(self) -> None:
         """Test detecting hooks in transcript."""
         detector = ViralClipDetector()
-        
+
         transcript = {
             "segments": [
                 {
@@ -137,9 +135,9 @@ class TestViralClipDetector:
             ],
             "text": "Here's why nobody talks about this secret technique",
         }
-        
+
         signals = detector.analyze_transcript(transcript)
-        
+
         # Should detect hook patterns
         hook_signals = [s for s in signals if s.signal_type == "hook"]
         assert len(hook_signals) > 0
@@ -147,7 +145,7 @@ class TestViralClipDetector:
     def test_analyze_transcript_with_emotional_words(self) -> None:
         """Test detecting emotional words."""
         detector = ViralClipDetector()
-        
+
         transcript = {
             "segments": [
                 {
@@ -158,37 +156,37 @@ class TestViralClipDetector:
             ],
             "text": "This is absolutely amazing and incredible breakthrough",
         }
-        
+
         signals = detector.analyze_transcript(transcript)
-        
+
         emotional_signals = [s for s in signals if s.signal_type == "emotional_peak"]
         assert len(emotional_signals) > 0
 
     def test_analyze_speech_patterns_dramatic_pause(self) -> None:
         """Test detecting dramatic pauses."""
         detector = ViralClipDetector()
-        
+
         segments = [
             {"text": "Something important", "start": 0.0, "end": 3.0},
             {"text": "Then the reveal", "start": 6.0, "end": 9.0},  # 3 second gap
         ]
-        
+
         signals = detector._analyze_speech_patterns(segments)
-        
+
         pause_signals = [s for s in signals if s.signal_type == "dramatic_pause"]
         assert len(pause_signals) >= 1
 
     def test_score_clip_basic(self) -> None:
         """Test basic clip scoring."""
         detector = ViralClipDetector()
-        
+
         clip_data = {
             "start_seconds": 0,
             "end_seconds": 45,
             "description": "Test clip",
             "suggested_hook": "Here's why",
         }
-        
+
         transcript = {
             "segments": [
                 {
@@ -199,9 +197,9 @@ class TestViralClipDetector:
             ],
             "text": "Here's why this is important",
         }
-        
+
         score = detector.score_clip(clip_data, transcript)
-        
+
         assert isinstance(score, ViralScore)
         assert 0 <= score.overall_score <= 10
         assert 0 <= score.hook_score <= 10
@@ -211,7 +209,7 @@ class TestViralClipDetector:
     def test_calculate_hook_score_with_early_hook(self) -> None:
         """Test hook score with early hook."""
         detector = ViralClipDetector()
-        
+
         signals = [
             EngagementSignal(
                 timestamp_seconds=5.0,
@@ -221,7 +219,7 @@ class TestViralClipDetector:
                 keywords=["hook"],
             )
         ]
-        
+
         score = detector._calculate_hook_score(signals, clip_start=0.0)
         assert score >= 7.0  # Should be high with strong early hook
 
@@ -234,7 +232,7 @@ class TestViralClipDetector:
     def test_optimal_length_calculation(self) -> None:
         """Test optimal clip length calculation."""
         detector = ViralClipDetector()
-        
+
         signals = [
             EngagementSignal(
                 timestamp_seconds=30.0,
@@ -244,9 +242,9 @@ class TestViralClipDetector:
                 keywords=["conclusion"],
             )
         ]
-        
+
         optimal = detector._get_optimal_length(signals, current_duration=60)
-        
+
         # Should suggest ending shortly after the punchline
         assert optimal <= 60
         assert optimal >= 30
@@ -254,26 +252,26 @@ class TestViralClipDetector:
     def test_suggest_clips_empty_transcript(self) -> None:
         """Test suggesting clips from empty transcript."""
         detector = ViralClipDetector()
-        
+
         clips = detector.suggest_clips({"segments": [], "text": ""})
         assert clips == []
 
     def test_clips_overlap_detection(self) -> None:
         """Test overlap detection between clips."""
         detector = ViralClipDetector()
-        
+
         # High overlap - 20 seconds overlap out of 30 = 66%
         clip1 = {"start_seconds": 0, "end_seconds": 30}
         clip2 = {"start_seconds": 10, "end_seconds": 40}
         clip3 = {"start_seconds": 60, "end_seconds": 90}
-        
+
         assert detector._clips_overlap(clip1, clip2) is True  # 66% overlap > 50% threshold
         assert detector._clips_overlap(clip1, clip3) is False  # No overlap
 
     def test_format_timestamp(self) -> None:
         """Test timestamp formatting."""
         detector = ViralClipDetector()
-        
+
         assert detector._format_timestamp(0) == "00:00"
         assert detector._format_timestamp(65) == "01:05"
         assert detector._format_timestamp(3661) == "61:01"
@@ -281,14 +279,14 @@ class TestViralClipDetector:
     def test_generate_reasons(self) -> None:
         """Test reason generation."""
         detector = ViralClipDetector()
-        
+
         reasons = detector._generate_reasons(
             hook_score=8.0,
             emotional_score=7.5,
             shareability_score=6.0,
             signals=[],
         )
-        
+
         assert isinstance(reasons, list)
         assert len(reasons) > 0
 
@@ -299,7 +297,7 @@ class TestResearchResult:
     def test_research_result_defaults(self) -> None:
         """Test ResearchResult default values."""
         result = ResearchResult(query="test")
-        
+
         assert result.query == "test"
         assert result.topics == []
         assert result.trending_videos == []
@@ -314,7 +312,7 @@ class TestResearchResult:
             suggested_keywords=["artificial", "intelligence"],
             insights={"avg_views": 10000},
         )
-        
+
         assert len(result.trending_videos) == 1
         assert len(result.suggested_keywords) == 2
         assert result.insights["avg_views"] == 10000
