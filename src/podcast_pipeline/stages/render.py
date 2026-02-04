@@ -5,9 +5,8 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-import numpy as np
-
 from podcast_pipeline.config import Config, PlatformSpec
+from podcast_pipeline.models.edit_plan import EditPlan
 from podcast_pipeline.models.job import Job
 from podcast_pipeline.stages.base import Stage, StageResult
 from podcast_pipeline.stages.review import ReviewDecisions
@@ -45,6 +44,8 @@ class RenderStage(Stage):
                 error="Review not marked as complete. Approve the review first.",
             )
 
+        edit_plan = self._load_edit_plan(job_dir)
+
         # Get input video
         input_video = self._find_input_video(job_dir)
         if not input_video:
@@ -70,7 +71,7 @@ class RenderStage(Stage):
                     continue
 
                 out = self._render_platform(
-                    job_dir, input_video, platform, spec, decisions, video_info
+                    job_dir, input_video, platform, spec, decisions, video_info, edit_plan
                 )
                 outputs.extend(out)
 
@@ -119,6 +120,18 @@ class RenderStage(Stage):
                 return path
         return None
 
+    def _load_edit_plan(self, job_dir: Path) -> EditPlan | None:
+        """Load edit plan if present."""
+        edit_path = job_dir / "review" / "edit_plan.json"
+        if not edit_path.exists():
+            return None
+
+        try:
+            return EditPlan.model_validate_json(edit_path.read_text())
+        except Exception as e:
+            self.logger.warning("edit_plan_load_failed", error=str(e))
+            return None
+
     def _render_platform(
         self,
         job_dir: Path,
@@ -127,6 +140,7 @@ class RenderStage(Stage):
         spec: PlatformSpec,
         decisions: ReviewDecisions,
         video_info: dict[str, Any],
+        edit_plan: EditPlan | None,
     ) -> list[str]:
         """Render export for a specific platform."""
         output_dir = job_dir / "output" / platform
@@ -138,7 +152,13 @@ class RenderStage(Stage):
 
         # Video platforms
         return self._render_video(
-            output_dir, input_video, platform, spec, decisions, video_info
+            output_dir,
+            input_video,
+            platform,
+            spec,
+            decisions,
+            video_info,
+            edit_plan,
         )
 
     def _render_audio_only(
@@ -178,6 +198,7 @@ class RenderStage(Stage):
         spec: PlatformSpec,
         decisions: ReviewDecisions,
         video_info: dict[str, Any],
+        edit_plan: EditPlan | None,
     ) -> list[str]:
         """Render video export with aspect ratio conversion."""
         output_file = output_dir / f"final.{spec.container}"
@@ -198,7 +219,14 @@ class RenderStage(Stage):
 
         # Build audio filters
         af_filters = []
-        
+
+        edit_filter = self._build_edit_plan_filter(
+            edit_plan,
+            src_duration,
+            vf_filters,
+            af_filters,
+        )
+
         # Handle duration limits
         duration_args = []
         if spec.max_duration and src_duration > spec.max_duration:
@@ -216,13 +244,19 @@ class RenderStage(Stage):
         # Duration limit
         args.extend(duration_args)
 
-        # Video filters
-        if vf_filters:
-            args.extend(["-vf", ",".join(vf_filters)])
+        if edit_filter:
+            filter_complex, video_map, audio_map = edit_filter
+            args.extend(
+                ["-filter_complex", filter_complex, "-map", video_map, "-map", audio_map]
+            )
+        else:
+            # Video filters
+            if vf_filters:
+                args.extend(["-vf", ",".join(vf_filters)])
 
-        # Audio filters
-        if af_filters:
-            args.extend(["-af", ",".join(af_filters)])
+            # Audio filters
+            if af_filters:
+                args.extend(["-af", ",".join(af_filters)])
 
         # Video encoding
         args.extend([
@@ -311,11 +345,109 @@ class RenderStage(Stage):
 
         return filters
 
-    def _build_cuts_filter(self, job_dir: Path, decisions: ReviewDecisions) -> str:
-        """Build FFmpeg filter string for applying cuts."""
-        # For MVP, we skip complex cut filtering and just render the full video
-        # Full implementation would build trim filters based on approved cuts
-        return ""
+    def _build_edit_plan_filter(
+        self,
+        edit_plan: EditPlan | None,
+        duration: float,
+        vf_filters: list[str],
+        af_filters: list[str],
+    ) -> tuple[str, str, str] | None:
+        """Build filter_complex for edit plan cuts and optional scaling."""
+        if not edit_plan or duration <= 0:
+            return None
+
+        cut_ranges = self._collect_cut_ranges(edit_plan)
+        if not cut_ranges:
+            return None
+
+        keep_ranges = self._invert_cut_ranges(cut_ranges, duration)
+        if not keep_ranges:
+            return None
+
+        if len(keep_ranges) == 1:
+            start, end = keep_ranges[0]
+            if start <= 0 and end >= duration:
+                return None
+
+        filter_parts: list[str] = []
+        for idx, (start, end) in enumerate(keep_ranges):
+            filter_parts.append(
+                f"[0:v]trim=start={start:.3f}:end={end:.3f},setpts=PTS-STARTPTS[v{idx}]"
+            )
+            filter_parts.append(
+                f"[0:a]atrim=start={start:.3f}:end={end:.3f},asetpts=PTS-STARTPTS[a{idx}]"
+            )
+
+        concat_inputs = "".join([f"[v{i}][a{i}]" for i in range(len(keep_ranges))])
+        filter_parts.append(
+            f"{concat_inputs}concat=n={len(keep_ranges)}:v=1:a=1[outv][outa]"
+        )
+
+        video_label = "outv"
+        audio_label = "outa"
+
+        if vf_filters:
+            filter_parts.append(f"[outv]{','.join(vf_filters)}[vfinal]")
+            video_label = "vfinal"
+        if af_filters:
+            filter_parts.append(f"[outa]{','.join(af_filters)}[afinal]")
+            audio_label = "afinal"
+
+        return ";".join(filter_parts), f"[{video_label}]", f"[{audio_label}]"
+
+    def _collect_cut_ranges(self, edit_plan: EditPlan) -> list[tuple[float, float]]:
+        """Collect cut ranges from edit plan in seconds."""
+        ranges: list[tuple[float, float]] = []
+
+        for cut in edit_plan.filler_cuts:
+            start = max(0.0, float(cut.start_seconds))
+            end = max(0.0, float(cut.end_seconds))
+            if end > start:
+                ranges.append((start, end))
+
+        for cut in edit_plan.content_cuts:
+            start = max(0.0, float(cut.start_seconds))
+            end = max(0.0, float(cut.end_seconds))
+            if end > start:
+                ranges.append((start, end))
+
+        return self._merge_ranges(ranges)
+
+    def _merge_ranges(self, ranges: list[tuple[float, float]]) -> list[tuple[float, float]]:
+        """Merge overlapping ranges."""
+        if not ranges:
+            return []
+
+        sorted_ranges = sorted(ranges, key=lambda x: x[0])
+        merged = [sorted_ranges[0]]
+        for start, end in sorted_ranges[1:]:
+            last_start, last_end = merged[-1]
+            if start <= last_end:
+                merged[-1] = (last_start, max(last_end, end))
+            else:
+                merged.append((start, end))
+        return merged
+
+    def _invert_cut_ranges(
+        self,
+        ranges: list[tuple[float, float]],
+        duration: float,
+    ) -> list[tuple[float, float]]:
+        """Convert cut ranges to keep ranges."""
+        if duration <= 0:
+            return []
+
+        keep_ranges: list[tuple[float, float]] = []
+        cursor = 0.0
+        for start, end in ranges:
+            if start > cursor:
+                keep_ranges.append((cursor, min(start, duration)))
+            cursor = max(cursor, end)
+
+        if cursor < duration:
+            keep_ranges.append((cursor, duration))
+
+        return keep_ranges
 
     def _normalize_loudness(self, audio_file: Path, target_lufs: float) -> None:
         """Normalize audio to target LUFS using pyloudnorm."""
