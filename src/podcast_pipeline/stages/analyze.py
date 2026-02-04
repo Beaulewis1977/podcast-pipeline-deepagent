@@ -1,6 +1,8 @@
 """Analyze stage: AI analysis of video content."""
 
 import json
+from dataclasses import asdict
+from datetime import datetime, timezone
 from pathlib import Path
 
 from podcast_pipeline.config import Config
@@ -8,6 +10,7 @@ from podcast_pipeline.models.job import Job
 from podcast_pipeline.providers.base import ProviderError
 from podcast_pipeline.providers.gemini import GeminiProvider
 from podcast_pipeline.providers.kimi import KimiProvider
+from podcast_pipeline.research.viral_detector import ViralClipDetector
 from podcast_pipeline.research.youtube import ResearchResult, YouTubeResearcher
 from podcast_pipeline.stages.base import Stage, StageResult
 from podcast_pipeline.utils.logging import get_logger
@@ -48,6 +51,7 @@ class AnalyzeStage(Stage):
         Creates:
             - analysis/analysis.json
             - analysis/research.json (optional)
+            - analysis/viral_signals.json
         """
         # Check for required files
         transcript_path = job_dir / "analysis" / "transcript.json"
@@ -113,6 +117,11 @@ class AnalyzeStage(Stage):
                 research_output = self._run_research(job, result, job_dir)
                 if research_output:
                     outputs.append(research_output)
+
+                # Viral signal analysis
+                viral_output = self._run_viral_signals(result, transcript_data, job_dir)
+                if viral_output:
+                    outputs.append(viral_output)
 
                 return StageResult(
                     success=True,
@@ -198,3 +207,49 @@ class AnalyzeStage(Stage):
 
         fallback = Path(job.input_file).stem or job.job_id
         return fallback, []
+
+    def _run_viral_signals(
+        self,
+        analysis_result: object,
+        transcript_data: dict,
+        job_dir: Path,
+    ) -> str | None:
+        """Compute viral signals and per-clip scores."""
+        try:
+            analysis_data = (
+                analysis_result.model_dump()
+                if hasattr(analysis_result, "model_dump")
+                else {}
+            )
+            detector = ViralClipDetector()
+            signals = detector.analyze_transcript(transcript_data)
+
+            clip_scores = []
+            for clip in analysis_data.get("viral_clips", []) or []:
+                score = detector.score_clip(clip, transcript_data, signals)
+                clip_scores.append(
+                    {
+                        "clip": clip,
+                        "score": score.model_dump(),
+                    }
+                )
+
+            viral_payload = {
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "signals": [asdict(signal) for signal in signals],
+                "clip_scores": clip_scores,
+            }
+
+            viral_path = job_dir / "analysis" / "viral_signals.json"
+            viral_path.write_text(json.dumps(viral_payload, indent=2))
+
+            self.logger.info(
+                "viral_signals_complete",
+                signals=len(signals),
+                clips=len(clip_scores),
+            )
+
+            return str(viral_path.relative_to(job_dir))
+        except Exception as e:
+            self.logger.warning("viral_signals_failed", error=str(e))
+            return None
