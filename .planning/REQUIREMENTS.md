@@ -162,4 +162,3 @@ Explicitly excluded to prevent scope creep.
 - **Phase 1 (Wiring + Stability):** Core pipeline wiring, multi-track default, edit plan + render cuts, UI job consistency
 - **Phase 2 (Research + Viral):** Research insights, enhanced scoring, caching
 - **Phase 3 (Desktop + Packaging):** Backend service + Tauri distribution
-
