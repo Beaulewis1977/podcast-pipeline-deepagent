@@ -12,7 +12,7 @@ paths:
 # NOTE: gemini-2.0-flash is RETIRING March 3, 2026 - do not use!
 models:
   provider: gemini
-  model: gemini-2.5-flash  # Best balance of cost/performance for video
+  model: gemini-2.5-flash-latest  # Best balance of cost/performance for video
   fallback_provider: kimi
   fallback_model: kimi-k2.5  # Latest Kimi multimodal model
 
