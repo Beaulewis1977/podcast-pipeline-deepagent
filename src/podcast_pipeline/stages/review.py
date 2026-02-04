@@ -7,6 +7,12 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from podcast_pipeline.config import Config
+from podcast_pipeline.models.edit_plan import (
+    ClipRange,
+    ContentCutRange,
+    EditPlan,
+    FillerCutRange,
+)
 from podcast_pipeline.models.job import Job, StageStatus
 from podcast_pipeline.stages.base import Stage, StageResult
 from podcast_pipeline.utils.logging import get_logger
@@ -168,6 +174,84 @@ def approve_review(job_dir: Path, platforms: list[str] | None = None) -> ReviewD
     review_path.write_text(decisions.model_dump_json(indent=2))
 
     return decisions
+
+
+def write_edit_plan(
+    job_dir: Path,
+    decisions: ReviewDecisions,
+    analysis: dict[str, Any] | None,
+    filler_cuts: list[dict[str, Any]] | None,
+) -> Path:
+    """Write edit_plan.json based on review decisions."""
+    analysis = analysis or {}
+    filler_cuts = filler_cuts or []
+
+    review_dir = job_dir / "review"
+    review_dir.mkdir(parents=True, exist_ok=True)
+
+    # Determine approved filler cuts
+    approved_filler: list[FillerCutRange] = []
+    if not decisions.reject_all_fillers:
+        filler_indices = decisions.approved_filler_cuts or list(range(len(filler_cuts)))
+        for idx in filler_indices:
+            if idx < len(filler_cuts):
+                filler = filler_cuts[idx]
+                approved_filler.append(
+                    FillerCutRange(
+                        start_seconds=float(filler.get("start", 0.0)),
+                        end_seconds=float(filler.get("end", 0.0)),
+                        word=str(filler.get("word", "")),
+                        confidence=filler.get("confidence"),
+                    )
+                )
+
+    # Determine approved content cuts
+    approved_content: list[ContentCutRange] = []
+    content_cuts = analysis.get("content_cuts", [])
+    for idx in decisions.approved_content_cuts:
+        if idx < len(content_cuts):
+            cut = content_cuts[idx]
+            approved_content.append(
+                ContentCutRange(
+                    start_seconds=float(cut.get("start_seconds", 0.0)),
+                    end_seconds=float(cut.get("end_seconds", 0.0)),
+                    reason=str(cut.get("reason", "")),
+                )
+            )
+
+    # Determine approved clip ranges
+    approved_clips: list[ClipRange] = []
+    viral_clips = analysis.get("viral_clips", [])
+    for idx in decisions.selected_clips:
+        if idx < len(viral_clips):
+            clip = viral_clips[idx]
+            approved_clips.append(
+                ClipRange(
+                    start_seconds=float(clip.get("start_seconds", 0.0)),
+                    end_seconds=float(clip.get("end_seconds", 0.0)),
+                    description=str(clip.get("description", "")),
+                    score=clip.get("virality_score"),
+                )
+            )
+
+    edit_plan = EditPlan(
+        filler_cuts=approved_filler,
+        content_cuts=approved_content,
+        clip_ranges=approved_clips,
+    )
+
+    edit_path = review_dir / "edit_plan.json"
+    edit_path.write_text(edit_plan.model_dump_json(indent=2))
+
+    logger.info(
+        "edit_plan_written",
+        path=str(edit_path),
+        filler_cuts=len(approved_filler),
+        content_cuts=len(approved_content),
+        clips=len(approved_clips),
+    )
+
+    return edit_path
 
 
 def get_review_summary(job_dir: Path) -> dict[str, Any]:
