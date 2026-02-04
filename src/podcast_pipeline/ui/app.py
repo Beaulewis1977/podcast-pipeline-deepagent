@@ -153,7 +153,7 @@ def render_new_job_form() -> None:
         # Create job
         pipeline = get_pipeline()
         try:
-            job = pipeline.create_job(video_path, name_part)
+            job = pipeline.create_job(video_path, name_part, job_id=job_id)
             st.success(f"Job created: {job.job_id}")
             st.session_state.current_job_id = job.job_id
             st.rerun()

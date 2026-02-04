@@ -35,6 +35,7 @@ class Pipeline:
         self,
         video_path: Path,
         name: str | None = None,
+        job_id: str | None = None,
     ) -> Job:
         """Create a new job from a video file.
 
@@ -48,12 +49,13 @@ class Pipeline:
         if not video_path.exists():
             raise FileNotFoundError(f"Video file not found: {video_path}")
 
-        # Generate job ID
-        from datetime import datetime
-
-        timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+        # Generate job ID (allow override to keep UI + pipeline in sync)
         job_name = name or video_path.stem
-        job_id = f"{timestamp}_{job_name}"
+        if job_id is None:
+            from datetime import datetime
+
+            timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+            job_id = f"{timestamp}_{job_name}"
 
         # Create job
         job = Job(
