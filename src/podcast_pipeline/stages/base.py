@@ -120,3 +120,17 @@ class Stage(ABC):
 
         job.save(self.config.paths.jobs_dir)
         return result
+
+    def update_progress(
+        self,
+        job: Job,
+        progress_percent: int | None = None,
+        progress_message: str | None = None,
+    ) -> None:
+        """Update stage progress and persist job state."""
+        job.update_stage_progress(
+            self.name,
+            progress_percent=progress_percent,
+            progress_message=progress_message,
+        )
+        job.save(self.config.paths.jobs_dir)

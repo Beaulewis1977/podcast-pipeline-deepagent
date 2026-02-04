@@ -30,6 +30,8 @@ class JobStage(BaseModel):
     error: str | None = None
     provider: str | None = None
     model: str | None = None
+    progress_percent: int | None = None
+    progress_message: str | None = None
 
 
 class Job(BaseModel):
@@ -106,6 +108,24 @@ class Job(BaseModel):
 
         # Update overall job status based on stages
         self._update_overall_status()
+
+    def update_stage_progress(
+        self,
+        stage_name: str,
+        progress_percent: int | None = None,
+        progress_message: str | None = None,
+    ) -> None:
+        """Update a stage's progress without changing status."""
+        if stage_name not in self.stages:
+            self.stages[stage_name] = JobStage()
+
+        stage = self.stages[stage_name]
+        if progress_percent is not None:
+            stage.progress_percent = progress_percent
+        if progress_message is not None:
+            stage.progress_message = progress_message
+
+        self.updated_at = datetime.now(timezone.utc)
 
     def _update_overall_status(self) -> None:
         """Update overall job status based on stage statuses."""
