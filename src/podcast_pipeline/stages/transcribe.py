@@ -493,6 +493,11 @@ class TranscribeStage(Stage):
             srt_content = self._generate_srt_with_speakers(merged.segments)
             srt_path.write_text(srt_content)
             outputs.append(str(srt_path.relative_to(job_dir)))
+
+            vtt_path = transcripts_dir / "transcript.vtt"
+            vtt_content = self._generate_vtt_with_speakers(merged.segments)
+            vtt_path.write_text(vtt_content)
+            outputs.append(str(vtt_path.relative_to(job_dir)))
             
             self.logger.info(
                 "multi_track_transcription_complete",
@@ -575,6 +580,21 @@ class TranscribeStage(Stage):
             text = f"[{speaker}] {segment.text}" if speaker else segment.text
             
             lines.append(f"{i}")
+            lines.append(f"{start} --> {end}")
+            lines.append(text)
+            lines.append("")
+        return "\n".join(lines)
+
+    def _generate_vtt_with_speakers(self, segments: list[Segment]) -> str:
+        """Generate VTT with speaker labels."""
+        lines = ["WEBVTT", ""]
+        for segment in segments:
+            start = seconds_to_vtt_timestamp(segment.start)
+            end = seconds_to_vtt_timestamp(segment.end)
+
+            speaker = segment.speaker or ""
+            text = f"[{speaker}] {segment.text}" if speaker else segment.text
+
             lines.append(f"{start} --> {end}")
             lines.append(text)
             lines.append("")
