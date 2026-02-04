@@ -92,6 +92,10 @@ class RenderStage(Stage):
         except Exception as e:
             self.logger.warning("marketing_doc_failed", error=str(e))
 
+        # Export short-form clips
+        clip_outputs = self._export_clips(job_dir, input_video, edit_plan)
+        outputs.extend(clip_outputs)
+
         self.logger.info("render_complete", outputs=outputs, errors=errors)
 
         if errors and not outputs:
@@ -448,6 +452,56 @@ class RenderStage(Stage):
             keep_ranges.append((cursor, duration))
 
         return keep_ranges
+
+    def _export_clips(
+        self,
+        job_dir: Path,
+        input_video: Path,
+        edit_plan: EditPlan | None,
+    ) -> list[str]:
+        """Export short-form clips from edit plan ranges."""
+        if not edit_plan or not edit_plan.clip_ranges:
+            return []
+
+        clips_dir = job_dir / "output" / "clips"
+        clips_dir.mkdir(parents=True, exist_ok=True)
+
+        outputs: list[str] = []
+        for idx, clip in enumerate(edit_plan.clip_ranges, 1):
+            start = max(0.0, float(clip.start_seconds))
+            end = max(0.0, float(clip.end_seconds))
+            if end <= start:
+                continue
+
+            clip_path = clips_dir / f"clip_{idx:02d}.mp4"
+            args = [
+                "-i",
+                str(input_video),
+                "-ss",
+                f"{start:.3f}",
+                "-to",
+                f"{end:.3f}",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "fast",
+                "-crf",
+                "20",
+                "-c:a",
+                "aac",
+                "-b:a",
+                "128k",
+                "-movflags",
+                "+faststart",
+                str(clip_path),
+            ]
+            run_ffmpeg(args)
+            outputs.append(str(clip_path.relative_to(job_dir)))
+
+        if outputs:
+            self.logger.info("clips_exported", count=len(outputs))
+
+        return outputs
 
     def _normalize_loudness(self, audio_file: Path, target_lufs: float) -> None:
         """Normalize audio to target LUFS using pyloudnorm."""
