@@ -10,7 +10,7 @@ repos:
   # Code Quality - Ruff (lint + format)
   # ==========================================================================
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.0
+    rev: v0.14.14  # Pin to stable v0.14.x; v0.15.0 has breaking formatter changes
     hooks:
       - id: ruff
         name: ruff lint

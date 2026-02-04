@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from podcast_pipeline.config import Config
+from podcast_pipeline.models.analysis import AnalysisResult
 from podcast_pipeline.models.job import Job
 from podcast_pipeline.providers.base import ProviderError
 from podcast_pipeline.providers.gemini import GeminiProvider
@@ -161,7 +162,7 @@ class AnalyzeStage(Stage):
     def _run_research(
         self,
         job: Job,
-        analysis_result: object,
+        analysis_result: AnalysisResult,
         job_dir: Path,
     ) -> str | None:
         """Run YouTube research if configured."""
@@ -217,7 +218,7 @@ class AnalyzeStage(Stage):
 
     def _run_viral_signals(
         self,
-        analysis_result: object,
+        analysis_result: AnalysisResult,
         transcript_data: dict[str, Any],
         job_dir: Path,
     ) -> str | None:

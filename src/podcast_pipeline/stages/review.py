@@ -203,6 +203,7 @@ def write_edit_plan(
     review_dir.mkdir(parents=True, exist_ok=True)
 
     # Determine approved filler cuts
+    # Support both start_seconds/end_seconds and start/end key variants
     approved_filler: list[FillerCutRange] = []
     if not decisions.reject_all_fillers:
         filler_indices = decisions.approved_filler_cuts or list(range(len(filler_cuts)))
@@ -211,8 +212,8 @@ def write_edit_plan(
                 filler = filler_cuts[idx]
                 approved_filler.append(
                     FillerCutRange(
-                        start_seconds=float(filler.get("start", 0.0)),
-                        end_seconds=float(filler.get("end", 0.0)),
+                        start_seconds=float(filler.get("start_seconds", filler.get("start", 0.0))),
+                        end_seconds=float(filler.get("end_seconds", filler.get("end", 0.0))),
                         word=str(filler.get("word", "")),
                         confidence=filler.get("confidence"),
                     )

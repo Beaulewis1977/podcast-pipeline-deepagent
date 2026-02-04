@@ -378,9 +378,10 @@ class RenderStage(Stage):
         if not keep_ranges:
             return None
 
+        # Check if single keep range covers full duration (with tolerance for floats)
         if len(keep_ranges) == 1:
             start, end = keep_ranges[0]
-            if start <= 0 and end >= duration:
+            if start <= 0.001 and end >= duration - 0.001:
                 return None
 
         filter_parts: list[str] = []
