@@ -241,6 +241,12 @@ def render_stage_status(job: Job) -> None:
                 "pending": "○",
             }.get(status, "○")
             st.markdown(f"**{icon} {stage_name.title()}**")
+            if stage:
+                if stage.progress_percent is not None:
+                    progress_value = max(0, min(stage.progress_percent, 100))
+                    st.progress(progress_value)
+                if stage.progress_message:
+                    st.caption(stage.progress_message)
 
 
 def render_video_preview(job: Job, job_dir: Path) -> None:
