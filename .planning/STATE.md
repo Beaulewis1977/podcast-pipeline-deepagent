@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-02-04
 **Current phase:** Phase 2 execution (Research + Viral Integration)
-**Overall progress:** 73%
+**Overall progress:** 82%
 
 ## Project Reference
 
@@ -15,9 +15,9 @@ See: `.planning/PROJECT.md`
 
 ```
 Phase:    [2 of 3] Research + Viral Integration
-Plan:     [2 of 5] Completed 02-02-PLAN.md
+Plan:     [3 of 5] Completed 02-03-PLAN.md
 Status:   In progress
-Progress: [███████████████░░░░░] 73%
+Progress: [████████████████░░░░] 82%
 ```
 
 ## Phase Status
@@ -25,14 +25,14 @@ Progress: [███████████████░░░░░] 73%
 | Phase | Name | Status | Plans | Progress |
 |------:|------|--------|-------|----------|
 | 1 | Wiring + Stability | Complete | 6/6 | 100% |
-| 2 | Research + Viral Integration | In progress | 2/5 | 40% |
+| 2 | Research + Viral Integration | In progress | 3/5 | 60% |
 | 3 | Polishing + Desktop Distribution | Pending | 0/0 | 0% |
 
 ## Performance Metrics
 
 | Metric | Value |
 |--------|-------|
-| Plans completed | 8 |
+| Plans completed | 9 |
 | Requirements done | 35/83 (21 partial) |
 | Phases complete | 1/3 |
 | Estimated completion | In progress |
@@ -49,6 +49,8 @@ Progress: [███████████████░░░░░] 73%
 | Posting recommendations emitted as UTC windows + weekday distributions | Deterministic structure for cross-timezone rendering and tests | 2026-02-04 |
 | Engagement density uses weighted signal strength/minute with diversity bonus | Rewards clips with sustained multi-signal momentum instead of isolated spikes | 2026-02-04 |
 | Detector reasons explicitly mention question/controversy/story-arc/quotable cues | Keeps clip ranking changes interpretable in artifacts and UI | 2026-02-04 |
+| YouTube search/stat calls use normalized TTL cache keys | Reduces repeated quota consumption across identical analyze runs | 2026-02-04 |
+| Keyword ranking is phrase-first (weighted n-grams) with stopword filtering | Surfaces reusable title/thumbnail phrases over weak unigram noise | 2026-02-04 |
 
 ### Technical Notes
 
@@ -68,16 +70,17 @@ Progress: [███████████████░░░░░] 73%
 
 - 2026-02-04: Completed phase 2 plan 02-01 (research metrics foundation).
 - 2026-02-04: Completed phase 2 plan 02-02 (viral detector expansion).
+- 2026-02-04: Completed phase 2 plan 02-03 (cache + keyword extraction).
 
 ## Session Continuity
 
 ### Last session
 
-Executed `02-02-PLAN.md`; added new signal taxonomy and density-aware bounded viral scoring.
+Executed `02-03-PLAN.md`; added normalized API caching and weighted keyword extraction.
 
 ### Stopped at
 
-Completed `02-02-PLAN.md`
+Completed `02-03-PLAN.md`
 
 ### Resume file
 
@@ -85,9 +88,9 @@ None
 
 ### Files modified this session
 
-- `src/podcast_pipeline/research/viral_detector.py`
-- `tests/test_viral_detector_signals.py`
-- `.planning/phases/02-research-+-viral-integration/02-02-SUMMARY.md`
+- `src/podcast_pipeline/research/youtube.py`
+- `tests/test_research_keywords_cache.py`
+- `.planning/phases/02-research-+-viral-integration/02-03-SUMMARY.md`
 - `.planning/STATE.md`
 
 ---
