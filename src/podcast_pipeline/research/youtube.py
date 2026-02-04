@@ -1,5 +1,8 @@
 """YouTube Data API integration for research and trend analysis."""
 
+import copy
+import json
+import re
 from collections import Counter
 from datetime import UTC, datetime, timedelta
 from statistics import median
@@ -13,6 +16,7 @@ from podcast_pipeline.utils.logging import get_logger
 logger = get_logger(__name__)
 
 YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3"
+DEFAULT_CACHE_TTL_SECONDS = 600
 
 
 class TrendingTopic(BaseModel):
@@ -41,14 +45,21 @@ class ResearchResult(BaseModel):
 class YouTubeResearcher:
     """YouTube Data API client for research and trend analysis."""
 
-    def __init__(self, api_key: str | None = None):
+    def __init__(
+        self,
+        api_key: str | None = None,
+        cache_ttl_seconds: int = DEFAULT_CACHE_TTL_SECONDS,
+    ):
         """Initialize YouTube researcher.
 
         Args:
             api_key: YouTube Data API key
+            cache_ttl_seconds: In-memory TTL for normalized API response caching
         """
         self.api_key = api_key
         self._client: httpx.Client | None = None
+        self.cache_ttl_seconds = max(int(cache_ttl_seconds), 0)
+        self._cache: dict[str, dict[str, Any]] = {}
 
     @property
     def client(self) -> httpx.Client:
@@ -60,6 +71,79 @@ class YouTubeResearcher:
     def is_available(self) -> bool:
         """Check if YouTube API is available."""
         return bool(self.api_key)
+
+    def _utcnow(self) -> datetime:
+        """UTC time source (overridable in tests)."""
+        return datetime.now(UTC)
+
+    def _normalize_query(self, query: str) -> str:
+        """Normalize query text for stable cache keys."""
+        return " ".join(query.lower().split())
+
+    def _search_cache_key(
+        self,
+        query: str,
+        max_results: int,
+        published_after: datetime | None,
+        order: str,
+        video_duration: str,
+    ) -> str:
+        """Build normalized cache key for search API calls."""
+        normalized_query = self._normalize_query(query)
+        published_after_key = (
+            published_after.astimezone(UTC).replace(microsecond=0).isoformat()
+            if published_after is not None
+            else "none"
+        )
+        return (
+            "search|"
+            f"q={normalized_query}|"
+            f"max={max_results}|"
+            f"published_after={published_after_key}|"
+            f"order={order.lower()}|"
+            f"duration={video_duration.lower()}"
+        )
+
+    def _stats_cache_key(self, video_ids: list[str]) -> str:
+        """Build normalized cache key for stats API calls."""
+        normalized_ids = ",".join(sorted(video_ids[:50]))
+        return f"stats|ids={normalized_ids}"
+
+    def _cache_get(self, key: str) -> Any | None:
+        """Read cache entry if TTL has not expired."""
+        entry = self._cache.get(key)
+        if entry is None:
+            return None
+
+        cached_at = entry.get("cached_at")
+        if not isinstance(cached_at, datetime):
+            self._cache.pop(key, None)
+            return None
+
+        if self.cache_ttl_seconds == 0:
+            self._cache.pop(key, None)
+            return None
+
+        age_seconds = (self._utcnow() - cached_at).total_seconds()
+        if age_seconds > self.cache_ttl_seconds:
+            self._cache.pop(key, None)
+            return None
+
+        return copy.deepcopy(entry.get("payload"))
+
+    def _cache_set(self, key: str, payload: Any) -> None:
+        """Store JSON-safe payload in cache."""
+        self._cache[key] = {
+            "cached_at": self._utcnow(),
+            "payload": self._json_safe_copy(payload),
+        }
+
+    def _json_safe_copy(self, payload: Any) -> Any:
+        """Round-trip through JSON when possible to guarantee safe serialization."""
+        try:
+            return json.loads(json.dumps(payload))
+        except (TypeError, ValueError):
+            return copy.deepcopy(payload)
 
     def search_videos(
         self,
@@ -84,6 +168,17 @@ class YouTubeResearcher:
         if not self.api_key:
             logger.warning("youtube_api_not_configured")
             return []
+
+        cache_key = self._search_cache_key(
+            query=query,
+            max_results=max_results,
+            published_after=published_after,
+            order=order,
+            video_duration=video_duration,
+        )
+        cached_videos = self._cache_get(cache_key)
+        if cached_videos is not None:
+            return cached_videos
 
         params: dict[str, str | int] = {
             "part": "snippet",
@@ -140,6 +235,7 @@ class YouTubeResearcher:
                 if "engagement_rate" not in video:
                     video.update(self._enrich_video_metrics(video))
 
+            self._cache_set(cache_key, videos)
             return videos
 
         except httpx.HTTPError as e:
@@ -226,6 +322,11 @@ class YouTubeResearcher:
         if not self.api_key or not video_ids:
             return {}
 
+        cache_key = self._stats_cache_key(video_ids)
+        cached_stats = self._cache_get(cache_key)
+        if cached_stats is not None:
+            return cached_stats
+
         params = {
             "part": "statistics,contentDetails",
             "id": ",".join(video_ids[:50]),  # API limit
@@ -250,6 +351,7 @@ class YouTubeResearcher:
                     "duration": content.get("duration", ""),
                 }
 
+            self._cache_set(cache_key, stats)
             return stats
 
         except httpx.HTTPError as e:
