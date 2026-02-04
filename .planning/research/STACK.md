@@ -62,4 +62,3 @@
 
 - OpenAI keys are supported in config but no provider implementation exists.
 - All stack recommendations are based on current repo + internal research report only.
-

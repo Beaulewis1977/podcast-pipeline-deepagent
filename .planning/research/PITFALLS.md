@@ -64,4 +64,3 @@
 - **Non-resumable state**: Avoid in-memory-only state; always write `state.json`
 - **Transcript drift**: Long files require VAD and careful segmentation
 - **Platform spec drift**: Keep specs in config, not hardcoded
-

@@ -74,4 +74,3 @@ jobs/<job_id>/
 - Apply edit plans in render using FFmpeg trim/concat
 - Background worker for long-running stages with progress polling
 - Desktop UI (Tauri v2) consuming the same Python backend
-
