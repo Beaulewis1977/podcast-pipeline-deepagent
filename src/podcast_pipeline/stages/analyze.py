@@ -251,16 +251,23 @@ class AnalyzeStage(Stage):
             clip_scores = []
             for clip in analysis_data.get("viral_clips", []) or []:
                 score = detector.score_clip(clip, transcript_data, signals)
+                score_payload = score.model_dump()
                 ai_score = self._normalize_score(clip.get("virality_score"))
                 detector_score = self._normalize_score(score.overall_score, default=0.0)
                 combined_score = self._combined_score(ai_score, detector_score)
+                reason_snippets = [str(reason) for reason in score_payload.get("reasons", [])[:3]]
                 clip_scores.append(
                     {
                         "clip": clip,
-                        "score": score.model_dump(),
+                        "score": score_payload,
                         "ai_score": round(ai_score, 2),
                         "detector_score": round(detector_score, 2),
                         "combined_score": round(combined_score, 2),
+                        "reasons": reason_snippets,
+                        "score_components": {
+                            "ai_weight": self.ai_score_weight,
+                            "detector_weight": self.detector_score_weight,
+                        },
                     }
                 )
 
@@ -285,6 +292,10 @@ class AnalyzeStage(Stage):
                 "generated_at": datetime.now(UTC).isoformat(),
                 "signals": [_serialize_signal(signal) for signal in signals],
                 "clip_scores": clip_scores,
+                "score_weights": {
+                    "ai_weight": self.ai_score_weight,
+                    "detector_weight": self.detector_score_weight,
+                },
             }
 
             viral_path = job_dir / "analysis" / "viral_signals.json"
