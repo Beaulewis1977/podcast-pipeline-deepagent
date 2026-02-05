@@ -1,4 +1,11 @@
-"""Streamlit UI for Podcast Pipeline - Complete Web Interface."""
+"""Streamlit UI for Podcast Pipeline - Complete Web Interface.
+
+Job lifecycle operations (create, run, list, status) are routed through
+the backend service via ``ServiceClient``.  Display-only operations that
+read local analysis/review files continue to access the filesystem
+directly, since both the service and Streamlit share the same ``jobs/``
+directory on the local machine.
+"""
 
 import contextlib
 import json
@@ -8,9 +15,12 @@ from typing import Any
 
 import streamlit as st
 
+from podcast_pipeline.clients.service_client import (
+    ServiceClient,
+    ServiceError,
+    ServiceUnavailableError,
+)
 from podcast_pipeline.config import Config, load_config
-from podcast_pipeline.models.job import Job
-from podcast_pipeline.pipeline import Pipeline
 from podcast_pipeline.stages.review import (
     ReviewDecisions,
     approve_review,
@@ -26,6 +36,11 @@ st.set_page_config(
 )
 
 
+# ============================================================================
+# Service / Config helpers
+# ============================================================================
+
+
 def get_config() -> Config:
     """Get cached config."""
     if "config" not in st.session_state:
@@ -34,18 +49,28 @@ def get_config() -> Config:
     return config
 
 
-def get_pipeline() -> Pipeline:
-    """Get cached pipeline instance."""
-    if "pipeline" not in st.session_state:
-        st.session_state.pipeline = Pipeline(get_config())
-    pipeline: Pipeline = st.session_state.pipeline
-    return pipeline
+def get_service_client() -> ServiceClient:
+    """Get a cached ``ServiceClient`` configured from project settings."""
+    if "service_client" not in st.session_state:
+        config = get_config()
+        st.session_state.service_client = ServiceClient(
+            base_url=config.service.base_url,
+            timeout=config.service.timeout,
+            retries=config.service.retries,
+        )
+    client: ServiceClient = st.session_state.service_client
+    return client
 
 
-def load_jobs_list() -> list[dict[str, Any]]:
-    """Load list of all jobs."""
-    pipeline = get_pipeline()
-    return pipeline.list_jobs()
+def check_service_status() -> bool:
+    """Return True if the backend service is reachable, False otherwise."""
+    return get_service_client().is_available()
+
+
+def _job_dir_for(job_id: str) -> Path:
+    """Resolve the local filesystem job directory for a given job_id."""
+    config = get_config()
+    return config.paths.jobs_dir / job_id
 
 
 def format_timestamp(ts: datetime | None) -> str:
@@ -65,6 +90,20 @@ def status_badge(status: str) -> str:
         "pending": "⚪",
     }
     return f"{colors.get(status, '⚫')} {status.capitalize()}"
+
+
+def load_jobs_list() -> list[dict[str, Any]]:
+    """Load list of all jobs via the backend service."""
+    client = get_service_client()
+    try:
+        result = client.list_jobs()
+        return [j.model_dump() for j in result.jobs]
+    except ServiceUnavailableError:
+        st.error("Backend service is not running. Start it with: `podcast-pipeline service`")
+        return []
+    except ServiceError as exc:
+        st.error(f"Failed to fetch jobs: {exc}")
+        return []
 
 
 # ============================================================================
@@ -126,7 +165,7 @@ def render_dashboard() -> None:
 
 
 def render_new_job_form() -> None:
-    """Render form to create a new job."""
+    """Render form to create a new job via the backend service."""
     uploaded_file = st.file_uploader(
         "Upload Video File",
         type=["mp4", "mov", "mkv", "avi", "webm"],
@@ -157,15 +196,17 @@ def render_new_job_form() -> None:
         with open(video_path, "wb") as f:
             f.write(uploaded_file.read())
 
-        # Create job
-        pipeline = get_pipeline()
+        # Create job via service
+        client = get_service_client()
         try:
-            job = pipeline.create_job(video_path, name_part, job_id=job_id)
-            st.success(f"Job created: {job.job_id}")
-            st.session_state.current_job_id = job.job_id
+            created = client.create_job(str(video_path), name=name_part)
+            st.success(f"Job created: {created.job_id}")
+            st.session_state.current_job_id = created.job_id
             st.rerun()
-        except Exception as e:
-            st.error(f"Failed to create job: {e}")
+        except ServiceUnavailableError:
+            st.error("Backend service is not running. Start it with: `podcast-pipeline service`")
+        except ServiceError as exc:
+            st.error(f"Failed to create job: {exc}")
 
 
 # ============================================================================
@@ -182,16 +223,18 @@ def render_editor() -> None:
             st.rerun()
         return
 
-    pipeline = get_pipeline()
-    config = get_config()
+    job_dir = _job_dir_for(job_id)
 
+    # Fetch job status from service
+    client = get_service_client()
     try:
-        job = pipeline.load_job(job_id)
-    except FileNotFoundError:
+        job_detail = client.get_job(job_id)
+    except ServiceUnavailableError:
+        st.error("Backend service is not running. Start it with: `podcast-pipeline service`")
+        return
+    except ServiceError:
         st.error(f"Job not found: {job_id}")
         return
-
-    job_dir = job.get_job_dir(config.paths.jobs_dir)
 
     # Header
     col1, col2 = st.columns([4, 1])
@@ -202,8 +245,8 @@ def render_editor() -> None:
             st.session_state.page = "dashboard"
             st.rerun()
 
-    # Stage status
-    render_stage_status(job)
+    # Stage status from service response
+    render_stage_status_from_detail(job_detail.stages)
 
     # Tab navigation
     tabs = st.tabs(
@@ -217,29 +260,29 @@ def render_editor() -> None:
     )
 
     with tabs[0]:
-        render_video_preview(job, job_dir)
+        render_video_preview(job_id, job_dir)
 
     with tabs[1]:
-        render_timeline_editor(job, job_dir)
+        render_timeline_editor(job_id, job_dir)
 
     with tabs[2]:
-        render_thumbnail_selector(job, job_dir)
+        render_thumbnail_selector(job_dir)
 
     with tabs[3]:
-        render_marketing_editor(job, job_dir)
+        render_marketing_editor(job_dir)
 
     with tabs[4]:
-        render_export_panel(job, job_dir)
+        render_export_panel(job_id, job_dir)
 
 
-def render_stage_status(job: Job) -> None:
-    """Render pipeline stage status indicators."""
-    stages = ["ingest", "transcribe", "analyze", "review", "render"]
-    cols = st.columns(len(stages))
+def render_stage_status_from_detail(stages: dict[str, Any]) -> None:
+    """Render pipeline stage status from a service detail response."""
+    stage_names = ["ingest", "transcribe", "analyze", "review", "render"]
+    cols = st.columns(len(stage_names))
 
-    for i, stage_name in enumerate(stages):
-        stage = job.stages.get(stage_name)
-        status = stage.status.value if stage else "pending"
+    for i, stage_name in enumerate(stage_names):
+        stage = stages.get(stage_name)
+        status = stage.status if stage else "pending"
 
         with cols[i]:
             icon = {
@@ -258,7 +301,7 @@ def render_stage_status(job: Job) -> None:
                     st.caption(stage.progress_message)
 
 
-def render_video_preview(job: Job, job_dir: Path) -> None:
+def render_video_preview(job_id: str, job_dir: Path) -> None:
     """Render video preview with playback controls."""
     st.subheader("Video Preview")
 
@@ -307,10 +350,10 @@ def render_video_preview(job: Job, job_dir: Path) -> None:
     else:
         st.info("No video file available. Run the ingest stage first.")
         if st.button("Run Ingest Stage", key="run_ingest"):
-            run_stage(job, "ingest")
+            run_stage_via_service(job_id, "ingest")
 
 
-def render_timeline_editor(job: Job, job_dir: Path) -> None:
+def render_timeline_editor(job_id: str, job_dir: Path) -> None:
     """Render visual cut editor with timeline markers."""
     st.subheader("Timeline Editor")
 
@@ -319,7 +362,7 @@ def render_timeline_editor(job: Job, job_dir: Path) -> None:
     if not analysis_path.exists():
         st.info("No analysis available. Run the analyze stage first.")
         if st.button("Run Analyze Stage", key="run_analyze"):
-            run_stage(job, "analyze")
+            run_stage_via_service(job_id, "analyze")
         return
 
     try:
@@ -422,7 +465,7 @@ def render_timeline_editor(job: Job, job_dir: Path) -> None:
         st.success("Timeline changes saved!")
 
 
-def render_thumbnail_selector(job: Job, job_dir: Path) -> None:
+def render_thumbnail_selector(job_dir: Path) -> None:
     """Render thumbnail candidate selector with grid view."""
     st.subheader("Thumbnail Selector")
 
@@ -492,7 +535,7 @@ def render_thumbnail_selector(job: Job, job_dir: Path) -> None:
                     st.rerun()
 
 
-def render_marketing_editor(job: Job, job_dir: Path) -> None:
+def render_marketing_editor(job_dir: Path) -> None:
     """Render interactive marketing copy editor."""
     st.subheader("Marketing Copy Editor")
 
@@ -612,7 +655,7 @@ def render_marketing_editor(job: Job, job_dir: Path) -> None:
         ("Facebook", "facebook", "📘"),
     ]
 
-    edited_marketing = {}
+    edited_marketing: dict[str, Any] = {}
 
     for platform_name, platform_key, icon in platforms:
         platform_data = marketing.get(platform_key, {})
@@ -685,7 +728,7 @@ def render_marketing_editor(job: Job, job_dir: Path) -> None:
             st.info("Regenerating marketing copy... (This would call AI in production)")
 
 
-def render_export_panel(job: Job, job_dir: Path) -> None:
+def render_export_panel(job_id: str, job_dir: Path) -> None:
     """Render export configuration and execution panel."""
     st.subheader("Export Configuration")
 
@@ -717,7 +760,7 @@ def render_export_panel(job: Job, job_dir: Path) -> None:
 
     # Grid of platform toggles
     cols = st.columns(4)
-    new_selected = []
+    new_selected: list[str] = []
 
     for i, (name, key, desc) in enumerate(available_platforms):
         with cols[i % 4]:
@@ -771,11 +814,11 @@ def render_export_panel(job: Job, job_dir: Path) -> None:
                 update_export_platforms(job_dir, new_selected)
                 # Mark review complete
                 approve_review(job_dir, new_selected)
-                # Run render
-                run_stage(job, "render")
+                # Run render via service
+                run_stage_via_service(job_id, "render")
         elif st.button("🎬 Export Now", key="export_now"):
             update_export_platforms(job_dir, new_selected)
-            run_stage(job, "render")
+            run_stage_via_service(job_id, "render")
 
     with col2:
         if not review_complete:
@@ -800,23 +843,22 @@ def render_export_panel(job: Job, job_dir: Path) -> None:
 # ============================================================================
 # Helper Functions
 # ============================================================================
-def run_stage(job: Job, stage_name: str) -> None:
-    """Run a pipeline stage with progress indicator."""
-    pipeline = get_pipeline()
-    get_config()
+def run_stage_via_service(job_id: str, stage_name: str) -> None:
+    """Run a pipeline stage through the backend service."""
+    client = get_service_client()
 
     with st.spinner(f"Running {stage_name} stage..."):
         try:
-            results = pipeline.run(job, stage=stage_name)
-
-            result = results.get(stage_name)
-            if result and result.success:
+            result = client.run_job(job_id, stage=stage_name)
+            if result.status == "complete":
                 st.success(f"{stage_name.title()} stage completed!")
                 st.rerun()
-            elif result:
-                st.error(f"{stage_name.title()} failed: {result.error}")
-        except Exception as e:
-            st.error(f"Error running {stage_name}: {e}")
+            else:
+                st.error(f"{stage_name.title()} failed: {result.message}")
+        except ServiceUnavailableError:
+            st.error("Backend service is not running. Start it with: `podcast-pipeline service`")
+        except ServiceError as exc:
+            st.error(f"Error running {stage_name}: {exc}")
 
 
 def save_review_decisions(job_dir: Path, decisions: ReviewDecisions | None) -> None:
@@ -883,6 +925,15 @@ def main() -> None:
         st.title("Podcast Pipeline")
         st.divider()
 
+        # Service status indicator
+        if check_service_status():
+            st.success("Service: Connected", icon="🟢")
+        else:
+            st.error("Service: Offline", icon="🔴")
+            st.caption("Run: `podcast-pipeline service`")
+
+        st.divider()
+
         # Navigation
         page = st.radio(
             "Navigation",
@@ -909,9 +960,7 @@ def main() -> None:
             st.caption(f"Current: {current_job[:20]}...")
 
             if st.button("▶️ Run Full Pipeline"):
-                pipeline = get_pipeline()
-                job = pipeline.load_job(current_job)
-                run_stage(job, None)  # type: ignore
+                run_stage_via_service(current_job, "ingest")
 
             if st.button("📋 View Status"):
                 st.session_state.page = "editor"
@@ -943,6 +992,15 @@ def render_settings() -> None:
     with st.expander("📁 Paths", expanded=True):
         st.text_input("Jobs Directory", value=str(config.paths.jobs_dir), disabled=True)
         st.text_input("Models Cache", value=str(config.paths.models_cache), disabled=True)
+
+    # Service
+    with st.expander("🌐 Backend Service"):
+        st.text_input("Service URL", value=config.service.base_url, disabled=True)
+        st.text_input("Timeout (s)", value=str(config.service.timeout), disabled=True)
+        if check_service_status():
+            st.success("Status: Connected")
+        else:
+            st.error("Status: Offline - start with `podcast-pipeline service`")
 
     # AI Models
     with st.expander("🤖 AI Models"):
