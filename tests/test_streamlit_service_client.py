@@ -10,6 +10,7 @@ import shutil
 import tempfile
 from collections.abc import Generator
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
@@ -21,6 +22,7 @@ from podcast_pipeline.clients.service_client import (
     HealthStatus,
     JobDetail,
     JobList,
+    RunResult,
     ServiceClient,
     ServiceResponseError,
     ServiceUnavailableError,
@@ -248,3 +250,160 @@ class TestServiceConfig:
         assert client.base_url == "http://127.0.0.1:8787"
         assert client.timeout == 30.0
         assert client.retries == 2
+
+
+# ---------------------------------------------------------------------------
+# Streamlit action helpers (service-backed)
+# ---------------------------------------------------------------------------
+
+
+class TestStreamlitActions:
+    """Verify that Streamlit UI helper functions correctly route through the ServiceClient.
+
+    These tests mock both ``streamlit`` (which is unavailable in test context)
+    and the service client to isolate the routing logic in the UI module.
+    """
+
+    def test_streamlit_actions_load_jobs_success(self, service_client: ServiceClient):
+        """load_jobs_list returns dicts from service client list_jobs."""
+        from podcast_pipeline.ui.app import load_jobs_list
+
+        mock_st = MagicMock()
+        with (
+            patch("podcast_pipeline.ui.app.get_service_client", return_value=service_client),
+            patch("podcast_pipeline.ui.app.st", mock_st),
+        ):
+            result = load_jobs_list()
+        # Empty list since no jobs created
+        assert isinstance(result, list)
+        assert result == []
+
+    def test_streamlit_actions_load_jobs_unavailable(self):
+        """load_jobs_list shows error and returns [] when backend unreachable."""
+        from podcast_pipeline.ui.app import load_jobs_list
+
+        bad_client = ServiceClient(
+            base_url="http://127.0.0.1:19999",
+            timeout=0.5,
+            retries=0,
+        )
+        mock_st = MagicMock()
+        with (
+            patch("podcast_pipeline.ui.app.get_service_client", return_value=bad_client),
+            patch("podcast_pipeline.ui.app.st", mock_st),
+        ):
+            result = load_jobs_list()
+        assert result == []
+        mock_st.error.assert_called_once()
+        assert "not running" in mock_st.error.call_args[0][0]
+
+    def test_streamlit_actions_load_jobs_with_data(self, service_client: ServiceClient, video_file):
+        """load_jobs_list returns populated list after creating a job."""
+        from podcast_pipeline.ui.app import load_jobs_list
+
+        # Seed a job
+        service_client.create_job(str(video_file), name="action-test")
+
+        mock_st = MagicMock()
+        with (
+            patch("podcast_pipeline.ui.app.get_service_client", return_value=service_client),
+            patch("podcast_pipeline.ui.app.st", mock_st),
+        ):
+            result = load_jobs_list()
+        assert len(result) == 1
+        assert "job_id" in result[0]
+        assert result[0]["status"] == "pending"
+
+    def test_streamlit_actions_run_stage_success(
+        self, service_client: ServiceClient, seeded_job_id: str
+    ):
+        """run_stage_via_service calls service client run_job."""
+        from podcast_pipeline.ui.app import run_stage_via_service
+
+        # Mock run_job to return success without actually running pipeline
+        mock_run = MagicMock(
+            return_value=RunResult(job_id=seeded_job_id, status="complete", message="OK")
+        )
+        service_client.run_job = mock_run  # type: ignore[assignment]
+
+        mock_st = MagicMock()
+        # Prevent st.rerun() from raising
+        mock_st.rerun = MagicMock()
+        with (
+            patch("podcast_pipeline.ui.app.get_service_client", return_value=service_client),
+            patch("podcast_pipeline.ui.app.st", mock_st),
+        ):
+            run_stage_via_service(seeded_job_id, "ingest")
+        mock_run.assert_called_once_with(seeded_job_id, stage="ingest")
+        mock_st.success.assert_called_once()
+
+    def test_streamlit_actions_run_stage_unavailable(self):
+        """run_stage_via_service shows error when backend is down."""
+        from podcast_pipeline.ui.app import run_stage_via_service
+
+        bad_client = ServiceClient(
+            base_url="http://127.0.0.1:19999",
+            timeout=0.5,
+            retries=0,
+        )
+        mock_st = MagicMock()
+        with (
+            patch("podcast_pipeline.ui.app.get_service_client", return_value=bad_client),
+            patch("podcast_pipeline.ui.app.st", mock_st),
+        ):
+            run_stage_via_service("fake-id", "ingest")
+        mock_st.error.assert_called()
+        assert "not running" in mock_st.error.call_args[0][0]
+
+    def test_streamlit_actions_run_stage_failure(
+        self, service_client: ServiceClient, seeded_job_id: str
+    ):
+        """run_stage_via_service shows error message on failed stage."""
+        from podcast_pipeline.ui.app import run_stage_via_service
+
+        mock_run = MagicMock(
+            return_value=RunResult(
+                job_id=seeded_job_id, status="failed", message="FFmpeg not found"
+            )
+        )
+        service_client.run_job = mock_run  # type: ignore[assignment]
+
+        mock_st = MagicMock()
+        with (
+            patch("podcast_pipeline.ui.app.get_service_client", return_value=service_client),
+            patch("podcast_pipeline.ui.app.st", mock_st),
+        ):
+            run_stage_via_service(seeded_job_id, "ingest")
+        mock_st.error.assert_called_once()
+        assert "FFmpeg not found" in mock_st.error.call_args[0][0]
+
+    def test_streamlit_actions_check_service_available(self, service_client: ServiceClient):
+        """check_service_status returns True when backend is up."""
+        from podcast_pipeline.ui.app import check_service_status
+
+        with patch("podcast_pipeline.ui.app.get_service_client", return_value=service_client):
+            assert check_service_status() is True
+
+    def test_streamlit_actions_check_service_unavailable(self):
+        """check_service_status returns False when backend is down."""
+        from podcast_pipeline.ui.app import check_service_status
+
+        bad_client = ServiceClient(
+            base_url="http://127.0.0.1:19999",
+            timeout=0.5,
+            retries=0,
+        )
+        with patch("podcast_pipeline.ui.app.get_service_client", return_value=bad_client):
+            assert check_service_status() is False
+
+    def test_streamlit_actions_no_direct_pipeline_import(self):
+        """Verify Streamlit UI module does NOT import Pipeline directly."""
+        import inspect
+
+        from podcast_pipeline.ui import app as ui_app
+
+        source = inspect.getsource(ui_app)
+        # The module should not import Pipeline
+        assert "from podcast_pipeline.pipeline import Pipeline" not in source
+        # It should use ServiceClient instead
+        assert "ServiceClient" in source
