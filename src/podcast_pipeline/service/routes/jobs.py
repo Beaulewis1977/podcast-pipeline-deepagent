@@ -11,6 +11,8 @@ from fastapi import APIRouter, HTTPException, Request
 from podcast_pipeline.models.job import Job, StageStatus
 from podcast_pipeline.pipeline import Pipeline
 from podcast_pipeline.service.schemas import (
+    BackgroundRunRequest,
+    BackgroundRunResponse,
     CreateJobRequest,
     CreateJobResponse,
     JobDetailResponse,
@@ -22,6 +24,7 @@ from podcast_pipeline.service.schemas import (
     RunJobResponse,
     StageDetail,
 )
+from podcast_pipeline.service.supervisor import Supervisor
 from podcast_pipeline.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -33,6 +36,12 @@ def _get_pipeline(request: Request) -> Pipeline:
     """Retrieve the shared Pipeline instance from app state."""
     pipeline: Pipeline = request.app.state.pipeline
     return pipeline
+
+
+def _get_supervisor(request: Request) -> Supervisor:
+    """Retrieve the shared Supervisor instance from app state."""
+    supervisor: Supervisor = request.app.state.supervisor
+    return supervisor
 
 
 def _load_job_or_404(pipeline: Pipeline, job_id: str) -> Job:
@@ -127,6 +136,37 @@ async def run_job(job_id: str, body: RunJobRequest, request: Request) -> RunJobR
     except Exception as exc:
         logger.exception("run_job_failed", job_id=job_id, error=str(exc))
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+# --------------------------------------------------------------------------
+# POST /jobs/{job_id}/run/background  -- non-blocking background run
+# --------------------------------------------------------------------------
+
+
+@router.post("/{job_id}/run/background", response_model=BackgroundRunResponse)
+async def run_job_background(
+    job_id: str, body: BackgroundRunRequest, request: Request
+) -> BackgroundRunResponse:
+    """Start a non-blocking pipeline run via the supervisor.
+
+    Returns 409 if the job already has an active background run
+    (duplicate run guard).
+    """
+    pipeline = _get_pipeline(request)
+    supervisor = _get_supervisor(request)
+    job = _load_job_or_404(pipeline, job_id)
+
+    accepted = supervisor.start_run(job, stage=body.stage, until_stage=body.until_stage)
+    if not accepted:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Job {job_id} already has an active run",
+        )
+    return BackgroundRunResponse(
+        job_id=job_id,
+        accepted=True,
+        message="Background run started",
+    )
 
 
 # --------------------------------------------------------------------------

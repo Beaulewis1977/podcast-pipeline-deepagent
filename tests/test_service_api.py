@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 from podcast_pipeline.config import Config
 from podcast_pipeline.pipeline import Pipeline
 from podcast_pipeline.service.app import create_app
+from podcast_pipeline.service.supervisor import Supervisor
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -43,7 +44,7 @@ def service_client(service_temp_dir: Path) -> Generator[TestClient, None, None]:
         pipeline = Pipeline(config)
         app.state.config = config
         app.state.pipeline = pipeline
-        app.state.active_runs = {}
+        app.state.supervisor = Supervisor(pipeline)
         yield client
 
 
@@ -190,21 +191,51 @@ class TestRunRoute:
 
 
 # ---------------------------------------------------------------------------
-# Background run + duplicate guard (Task 2 verification targets)
+# Background run + duplicate guard (Task 2)
 # ---------------------------------------------------------------------------
 
 
 class TestBackgroundRun:
-    """Tests for background run supervision (added in Task 2)."""
+    """Tests for background run supervision."""
 
-    def test_background_run_placeholder(self, service_client: TestClient):
-        """Placeholder so pytest collection succeeds before Task 2."""
-        assert service_client.get("/health").status_code == 200
+    def test_background_run_accepted(self, service_client: TestClient, seeded_job: str):
+        """POST /jobs/{id}/run/background returns accepted=True."""
+        resp = service_client.post(
+            f"/jobs/{seeded_job}/run/background",
+            json={},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["job_id"] == seeded_job
+        assert data["accepted"] is True
+        assert "message" in data
+
+    def test_background_run_not_found(self, service_client: TestClient):
+        """POST /jobs/{bad_id}/run/background returns 404."""
+        resp = service_client.post(
+            "/jobs/nonexistent-id/run/background",
+            json={},
+        )
+        assert resp.status_code == 404
 
 
 class TestDuplicateRunGuard:
-    """Tests for duplicate run rejection (added in Task 2)."""
+    """Tests for duplicate run rejection."""
 
-    def test_duplicate_run_guard_placeholder(self, service_client: TestClient):
-        """Placeholder so pytest collection succeeds before Task 2."""
-        assert service_client.get("/health").status_code == 200
+    def test_duplicate_run_guard(self, service_client: TestClient, seeded_job: str):
+        """Second background run request for same job returns 409."""
+        # First request should succeed
+        resp1 = service_client.post(
+            f"/jobs/{seeded_job}/run/background",
+            json={},
+        )
+        assert resp1.status_code == 200
+        assert resp1.json()["accepted"] is True
+
+        # Second request while first is still active should be rejected
+        resp2 = service_client.post(
+            f"/jobs/{seeded_job}/run/background",
+            json={},
+        )
+        assert resp2.status_code == 409
+        assert "already has an active run" in resp2.json()["detail"]

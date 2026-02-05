@@ -129,3 +129,23 @@ class ResumeJobResponse(BaseModel):
     job_id: str
     status: str
     message: str
+
+
+# ---------------------------------------------------------------------------
+# Background run
+# ---------------------------------------------------------------------------
+
+
+class BackgroundRunRequest(BaseModel):
+    """POST /jobs/{job_id}/run/background request body."""
+
+    stage: str | None = Field(None, description="Specific stage to run")
+    until_stage: str | None = Field(None, description="Run up to and including this stage")
+
+
+class BackgroundRunResponse(BaseModel):
+    """POST /jobs/{job_id}/run/background response body."""
+
+    job_id: str
+    accepted: bool
+    message: str

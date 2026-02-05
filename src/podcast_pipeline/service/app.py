@@ -7,13 +7,13 @@ are initialised once in the lifespan and shared across request handlers.
 
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import Any
 
 from fastapi import FastAPI
 
 from podcast_pipeline.config import Config, load_config
 from podcast_pipeline.pipeline import Pipeline
 from podcast_pipeline.service.schemas import HealthResponse
+from podcast_pipeline.service.supervisor import Supervisor
 from podcast_pipeline.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -26,9 +26,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     pipeline = Pipeline(config)
     app.state.config = config
     app.state.pipeline = pipeline
-    # Track active background runs: job_id -> asyncio.Task
-    active_runs: dict[str, Any] = {}
-    app.state.active_runs = active_runs
+    app.state.supervisor = Supervisor(pipeline)
     logger.info("service_started")
     yield
     logger.info("service_stopped")
