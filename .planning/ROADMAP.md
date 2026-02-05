@@ -87,6 +87,16 @@ Plans:
 1. Desktop app can run a full job with no manual setup on a clean machine
 2. Job resume works after app restart
 
+**Plans:** 6 plans
+
+Plans:
+- [ ] 03-01-PLAN.md — Backend service contract + supervisor
+- [ ] 03-02-PLAN.md — Tauri shell + sidecar lifecycle
+- [ ] 03-03-PLAN.md — Streamlit migration to service client
+- [ ] 03-04-PLAN.md — FFmpeg/model asset packaging
+- [ ] 03-05-PLAN.md — Crash recovery + resume orchestration
+- [ ] 03-06-PLAN.md — Installer matrix + smoke validation
+
 ---
 
 ## Notes
