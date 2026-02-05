@@ -10,6 +10,12 @@ import {
   getSidecarStatus,
   HEALTH_POLL_INTERVAL_MS,
 } from "./lib/backend";
+import {
+  type RecoveryStatus,
+  type ResumableJob,
+  checkRecovery,
+  triggerResume,
+} from "./lib/recovery";
 
 function App() {
   const [status, setStatus] = useState<BackendStatus>("disconnected");
@@ -17,6 +23,9 @@ function App() {
   const [sidecar, setSidecar] = useState<SidecarStatus | null>(null);
   const [jobs, setJobs] = useState<JobSummary[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [recoveryStatus, setRecoveryStatus] =
+    useState<RecoveryStatus | null>(null);
+  const [resumingJobId, setResumingJobId] = useState<string | null>(null);
   const bootAttempted = useRef(false);
 
   /** Probe the backend health endpoint using the backend client. */
@@ -42,6 +51,52 @@ function App() {
       // Non-critical: job list will update on next poll
     }
   }, [status]);
+
+  /** Run recovery check after backend becomes connected. */
+  const runRecoveryCheck = useCallback(async () => {
+    try {
+      const recovery = await checkRecovery();
+      setRecoveryStatus(recovery);
+    } catch {
+      // Recovery check is non-critical; proceed without it
+    }
+  }, []);
+
+  /** Resume a specific interrupted job. */
+  const handleResume = useCallback(
+    async (job: ResumableJob) => {
+      setResumingJobId(job.job_id);
+      try {
+        await triggerResume(job.job_id, job.resume_stage);
+        // Remove resumed job from the recovery list
+        setRecoveryStatus((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            resumable_jobs: prev.resumable_jobs.filter(
+              (j) => j.job_id !== job.job_id,
+            ),
+          };
+        });
+        // Refresh jobs list to reflect the resumed job
+        await fetchJobs();
+      } catch (err) {
+        setError(
+          err instanceof Error
+            ? err.message
+            : `Failed to resume ${job.job_id}`,
+        );
+      } finally {
+        setResumingJobId(null);
+      }
+    },
+    [fetchJobs],
+  );
+
+  /** Dismiss the recovery banner without resuming. */
+  const dismissRecovery = useCallback(() => {
+    setRecoveryStatus(null);
+  }, []);
 
   /** Boot the backend sidecar on first mount. */
   useEffect(() => {
@@ -89,6 +144,13 @@ function App() {
     };
   }, []);
 
+  // Run recovery check once backend is connected
+  useEffect(() => {
+    if (status === "connected") {
+      runRecoveryCheck();
+    }
+  }, [status, runRecoveryCheck]);
+
   // Health polling after initial boot
   useEffect(() => {
     const interval = setInterval(pollHealth, HEALTH_POLL_INTERVAL_MS);
@@ -133,12 +195,67 @@ function App() {
     }
   }, []);
 
+  const hasResumableJobs =
+    recoveryStatus !== null && recoveryStatus.resumable_jobs.length > 0;
+
   return (
     <div className="container">
       <header>
         <h1>Podcast Pipeline</h1>
         <h2>Desktop Control Panel</h2>
       </header>
+
+      {/* Recovery banner */}
+      {hasResumableJobs && (
+        <section className="recovery-banner">
+          <div className="recovery-header">
+            <strong>
+              Recovery: {recoveryStatus.resumable_jobs.length} interrupted{" "}
+              {recoveryStatus.resumable_jobs.length === 1 ? "job" : "jobs"}{" "}
+              found
+            </strong>
+            {recoveryStatus.corrected > 0 && (
+              <span className="recovery-corrected">
+                ({recoveryStatus.corrected} stale{" "}
+                {recoveryStatus.corrected === 1 ? "entry" : "entries"}{" "}
+                corrected)
+              </span>
+            )}
+            <button
+              className="btn btn-small"
+              onClick={dismissRecovery}
+              style={{ marginLeft: "auto" }}
+            >
+              Dismiss
+            </button>
+          </div>
+          <ul className="recovery-list">
+            {recoveryStatus.resumable_jobs.map((job) => (
+              <li key={job.job_id} className="recovery-item">
+                <div className="recovery-item-info">
+                  <span className="job-id">{job.job_id}</span>
+                  <span className="recovery-detail">
+                    Resume from: <strong>{job.resume_stage}</strong>
+                    {job.interrupted && " (interrupted)"}
+                  </span>
+                  <span className="recovery-stages">
+                    Done: {job.completed_stages.join(", ") || "none"}
+                    {job.failed_stages.length > 0 &&
+                      ` | Failed: ${job.failed_stages.join(", ")}`}
+                  </span>
+                </div>
+                <button
+                  className="btn"
+                  onClick={() => handleResume(job)}
+                  disabled={resumingJobId === job.job_id}
+                >
+                  {resumingJobId === job.job_id ? "Resuming..." : "Resume"}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {/* Backend status panel */}
       <section className="status-panel">

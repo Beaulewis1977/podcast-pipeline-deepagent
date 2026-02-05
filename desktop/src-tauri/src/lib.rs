@@ -1,3 +1,5 @@
+mod recovery;
+
 use serde::Serialize;
 use std::sync::Mutex;
 use tauri::State;
@@ -26,7 +28,7 @@ const BACKEND_PORT: u16 = 8787;
 /// Launches the `binaries/podcast-backend` sidecar with `--port` argument.
 /// Returns the sidecar status after launch attempt.
 #[tauri::command]
-pub async fn start_sidecar(
+async fn start_sidecar(
     app: tauri::AppHandle,
     state: State<'_, SidecarState>,
 ) -> Result<SidecarStatus, String> {
@@ -70,7 +72,7 @@ pub async fn start_sidecar(
 ///
 /// Kills the sidecar if it is currently running and clears tracked state.
 #[tauri::command]
-pub async fn stop_sidecar(
+async fn stop_sidecar(
     state: State<'_, SidecarState>,
 ) -> Result<SidecarStatus, String> {
     let mut pid_guard = state.pid.lock().map_err(|e| e.to_string())?;
@@ -103,7 +105,7 @@ pub async fn stop_sidecar(
 
 /// Get current sidecar status without changing state.
 #[tauri::command]
-pub async fn sidecar_status(
+async fn sidecar_status(
     state: State<'_, SidecarState>,
 ) -> Result<SidecarStatus, String> {
     let pid_guard = state.pid.lock().map_err(|e| e.to_string())?;
@@ -124,6 +126,8 @@ pub fn run() {
             start_sidecar,
             stop_sidecar,
             sidecar_status,
+            recovery::check_recovery,
+            recovery::trigger_resume,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
