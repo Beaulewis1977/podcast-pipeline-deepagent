@@ -158,6 +158,9 @@ ignore = [
     "PLR0913", # many args acceptable
     "S110",    # try-except-pass for cleanup is acceptable
 ]
+"src/podcast_pipeline/clients/*.py" = [
+    "PLC0415", # lazy imports
+]
 "src/podcast_pipeline/service/*.py" = [
     "PLC0415", # lazy imports for route registration
     "PLR0913", # many args in data classes and supervisor methods

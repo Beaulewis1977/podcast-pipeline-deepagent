@@ -8,6 +8,7 @@ from podcast_pipeline.config.settings import (
     PathsConfig,
     PlatformSpec,
     PlatformSpecs,
+    ServiceConfig,
     load_config,
 )
 
@@ -19,5 +20,6 @@ __all__ = [
     "PathsConfig",
     "PlatformSpec",
     "PlatformSpecs",
+    "ServiceConfig",
     "load_config",
 ]
