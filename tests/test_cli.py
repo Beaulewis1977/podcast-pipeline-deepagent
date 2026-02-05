@@ -74,3 +74,12 @@ def test_list_command():
     """Test 'list' command (alias for status)."""
     result = runner.invoke(app, ["list"])
     assert result.exit_code == 0
+
+
+def test_service_help():
+    """Test 'service' command shows help with host/port options."""
+    result = runner.invoke(app, ["service", "--help"])
+    assert result.exit_code == 0
+    assert "--host" in result.output
+    assert "--port" in result.output
+    assert "sidecar" in result.output.lower() or "service" in result.output.lower()
