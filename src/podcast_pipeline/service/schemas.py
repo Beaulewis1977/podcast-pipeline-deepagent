@@ -121,6 +121,10 @@ class ResumeJobRequest(BaseModel):
         None,
         description="Stage to resume from (defaults to first incomplete stage)",
     )
+    background: bool = Field(
+        False,
+        description="Run the resume in the background (non-blocking)",
+    )
 
 
 class ResumeJobResponse(BaseModel):

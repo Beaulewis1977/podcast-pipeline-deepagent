@@ -22,6 +22,7 @@ from fastapi import FastAPI
 from podcast_pipeline import __version__
 from podcast_pipeline.config import Config, load_config
 from podcast_pipeline.pipeline import Pipeline
+from podcast_pipeline.service.recovery import startup_reconcile
 from podcast_pipeline.service.schemas import HealthResponse
 from podcast_pipeline.service.supervisor import Supervisor
 from podcast_pipeline.utils.logging import get_logger
@@ -48,6 +49,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.config = config
     app.state.pipeline = pipeline
     app.state.supervisor = Supervisor(pipeline)
+    startup_reconcile(config.paths.jobs_dir)
     logger.info("service_started", version=__version__)
     yield
     logger.info("service_stopped")

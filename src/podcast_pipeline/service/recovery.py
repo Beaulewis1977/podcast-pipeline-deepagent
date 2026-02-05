@@ -267,3 +267,24 @@ def prepare_resume(
     job.save(jobs_dir)
     logger.info("job_prepared_for_resume", job_id=job_id, from_stage=from_stage)
     return job
+
+
+def startup_reconcile(jobs_dir: Path) -> dict[str, int]:
+    """Run reconciliation and return a summary suitable for logging.
+
+    Intended to be called once during service lifespan startup so that
+    stale runtime metadata is corrected before any client queries arrive.
+
+    Returns
+    -------
+    A dict with keys ``corrected`` (number of jobs fixed) and
+    ``resumable`` (number of jobs available for resume).
+    """
+    corrected = reconcile_all_jobs(jobs_dir)
+    resumable = list_resumable_jobs(jobs_dir)
+    logger.info(
+        "startup_reconcile_complete",
+        corrected=corrected,
+        resumable=len(resumable),
+    )
+    return {"corrected": corrected, "resumable": len(resumable)}

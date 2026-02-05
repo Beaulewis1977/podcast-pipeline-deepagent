@@ -301,6 +301,22 @@ async def resume_job(job_id: str, body: ResumeJobRequest, request: Request) -> R
             message="All stages already complete, nothing to resume",
         )
 
+    # Background (non-blocking) resume via supervisor
+    if body.background:
+        supervisor = _get_supervisor(request)
+        accepted = supervisor.start_run(job, stage=resume_stage)
+        if not accepted:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Job {job_id} already has an active run",
+            )
+        return ResumeJobResponse(
+            job_id=job_id,
+            status="running",
+            message=f"Background resume started from {resume_stage}",
+        )
+
+    # Synchronous (blocking) resume
     try:
         results = pipeline.run(job, stage=resume_stage)
         failed = [name for name, r in results.items() if not r.success]
