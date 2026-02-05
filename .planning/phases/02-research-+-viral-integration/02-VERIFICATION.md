@@ -11,6 +11,8 @@ score: 10/10 must-haves verified
 **Verified:** 2026-02-04T06:45:00Z
 **Status:** passed
 **Re-verification:** No — initial verification
+**Scope:** Structural verification (code presence, unit tests, artifact wiring)
+**UAT Status:** In progress (see 02-UAT.md for functional testing results)
 
 ## Goal Achievement
 

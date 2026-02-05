@@ -45,7 +45,7 @@ pip install -e .
 ## Architecture Patterns
 
 ### Recommended Project Structure
-```
+```text
 src/podcast_pipeline/
 ├── research/
 │   ├── youtube.py          # query, cache, competition/velocity/posting metrics

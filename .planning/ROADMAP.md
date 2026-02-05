@@ -54,7 +54,7 @@ Plans:
 **Goal:** Research signals materially improve title/thumbnail/clip recommendations.
 
 **Dependencies:** Phase 1
-**Status:** Complete (verified 2026-02-04)
+**Status:** Code complete (verified 2026-02-04) — UAT in progress (see 02-UAT.md)
 
 **Scope / Requirements:**
 - Add engagement rate + velocity metrics to YouTube research output

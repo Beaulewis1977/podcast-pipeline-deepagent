@@ -68,21 +68,21 @@ skipped: 0
   reason: "User reported: theres no job and ui dont have a video for it. i dont see a marketing tab or research and viral insights. i see a dashboard, editor, settings, a deplot, a refresh, rerun, settings, print, record a screncast, and clear cache."
   severity: major
   test: 1
-  root_cause: ""
+  root_cause: "No job artifacts existed in the test environment; the Marketing tab and Research panel only appear in the editor view for jobs that have completed the analyze stage and produced analysis/research.json and analysis/viral_signals.json."
   artifacts: []
   missing: []
-  debug_session: ""
+  debug_session: "Confirmed app.py renders research/viral panels conditionally when artifact files exist. Without a completed job, the dashboard view shows only job management controls."
 
 - truth: "Creating a job in the UI can proceed through transcription so the job can reach analyze/review outputs."
   status: failed
   reason: "Pipeline failed at transcribe due to CUDA runtime missing (libcublas.so.12). Default config uses transcription.device=cuda."
   severity: major
   test: 2
-  root_cause: ""
+  root_cause: "Default config sets transcription.device=cuda but the test environment lacks NVIDIA GPU drivers and CUDA runtime (libcublas.so.12). faster-whisper raises RuntimeError on model init."
   artifacts:
     - src/podcast_pipeline/stages/transcribe.py
     - config.yaml
   missing:
     - "Graceful CPU fallback (or clearer UI guidance) when CUDA libraries are unavailable"
     - "Documented CPU-only config for transcription (device=cpu, compute_type=int8)"
-  debug_session: ""
+  debug_session: "Checked transcribe.py _get_model(): reads device directly from config with no fallback. config.yaml sets device: cuda. Environment has no GPU."

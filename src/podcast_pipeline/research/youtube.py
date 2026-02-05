@@ -96,7 +96,7 @@ class YouTubeResearcher:
         self,
         api_key: str | None = None,
         cache_ttl_seconds: int = DEFAULT_CACHE_TTL_SECONDS,
-    ):
+    ) -> None:
         """Initialize YouTube researcher.
 
         Args:

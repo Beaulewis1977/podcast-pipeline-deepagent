@@ -138,3 +138,4 @@ def test_score_reasons_include_new_signal_categories() -> None:
     assert "controversy" in reason_text
     assert "story arc" in reason_text
     assert "quotable" in reason_text
+    assert "punchline" in reason_text
