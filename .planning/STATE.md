@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-02-05
 **Current phase:** Phase 3 (Polishing + Desktop Distribution)
-**Overall progress:** 75%
+**Overall progress:** 83%
 
 ## Project Reference
 
@@ -15,11 +15,11 @@ See: .planning/PROJECT.md
 
 ```
 Phase:    Phase 3 of 3 (Polishing + Desktop Distribution)
-Plan:     3 of 6 in phase
+Plan:     4 of 6 in phase
 Status:   In progress
-Last activity: 2026-02-05 - Completed 03-03-PLAN.md
+Last activity: 2026-02-05 - Completed 03-04-PLAN.md
 
-Progress: [████████████████░░░░] 75% (9/12 plans)
+Progress: [████████████████████░░░░] 83% (10/12 plans)
 ```
 
 ## Phase Status
@@ -28,13 +28,13 @@ Progress: [████████████████░░░░] 75% (9/
 |------:|------|--------|-------|----------|
 | 1 | Wiring + Stability | Complete | 6/6 | 100% |
 | 2 | Research + Viral Integration | Pending | 0/? | 0% |
-| 3 | Polishing + Desktop Distribution | In progress | 3/6 | 50% |
+| 3 | Polishing + Desktop Distribution | In progress | 4/6 | 67% |
 
 ## Performance Metrics
 
 | Metric | Value |
 |--------|-------|
-| Plans completed | 9 |
+| Plans completed | 10 |
 | Requirements done | 35/83 (21 partial) |
 | Phases complete | 1/3 |
 | Estimated completion | Unknown |
@@ -57,6 +57,10 @@ Progress: [████████████████░░░░] 75% (9/
 | Tauri v2 with shell plugin for sidecar | Tauri v2 approach replaces v1 built-in sidecar API | 2026-02-05 |
 | Mutex PID tracking in Rust | Thread-safe sidecar lifecycle with idempotent start | 2026-02-05 |
 | Boot fallback for dev mode | invoke fails outside Tauri context; fall back to direct health check | 2026-02-05 |
+| Tiered binary resolution (env/sidecar/PATH) | Avoids hardcoded OS paths; supports dev and bundled modes transparently | 2026-02-05 |
+| SKIP_SIDECAR_CHECK for dev iteration | Build.rs validation escape hatch during development | 2026-02-05 |
+| In-memory model download tracking | Ephemeral warmup status; no persistent queue needed | 2026-02-05 |
+| Conservative recovery reconciliation | Never touch completed stages; only correct stale running states | 2026-02-05 |
 
 ### Technical Notes
 
@@ -65,6 +69,9 @@ Progress: [████████████████░░░░] 75% (9/
 - Avoid: moviepy, python-ffmpeg wrappers, original whisper, langchain
 - FastAPI service: lifespan pattern with Pipeline/Config/Supervisor on app.state
 - Background runs: Supervisor wraps Pipeline.run in asyncio executor thread
+- Asset resolution: env -> sidecar dir -> system PATH for binaries
+- Model cache: env -> app_data -> project -> HF hub for model artifacts
+- Sidecar naming: prepare-sidecars.mjs maps Node.js platform/arch to Rust target triples
 
 ### Open Questions
 
@@ -84,24 +91,32 @@ Progress: [████████████████░░░░] 75% (9/
 - 2026-02-05: Completed 03-01 - FastAPI job runner service with background supervision and CLI entrypoint
 - 2026-02-05: Completed 03-02 - Tauri v2 desktop app scaffold with sidecar lifecycle
 - 2026-02-05: Completed 03-03 - Streamlit service migration with typed service client and regression tests
+- 2026-02-05: Completed 03-04 - Asset packaging with sidecar preparation, runtime resolver, and system endpoints
 
 ## Session Continuity
 
 ### Last Session Summary
 
-Completed 03-03: Migrated Streamlit UI to route all job operations through typed ServiceClient backed by httpx, added ServiceConfig to project settings, and created 28-test regression suite covering client contract, retry behavior, and UI action helpers.
+Completed 03-04: Added deterministic sidecar preparation script with target-triple naming, build-time validation in build.rs, runtime asset resolver (assets.py) with tiered binary/model resolution, system readiness endpoints (system.py), recovery module, and 59 regression tests.
 
 ### Next Session Entry Point
 
-Execute 03-04-PLAN.md (next plan in Phase 3).
+Execute 03-05-PLAN.md (next plan in Phase 3).
 
 ### Files Modified This Session
 
-- src/podcast_pipeline/clients/ (new module: service_client.py with typed HTTP client)
-- src/podcast_pipeline/config/settings.py (added ServiceConfig)
-- src/podcast_pipeline/ui/app.py (refactored to use ServiceClient)
-- tests/test_streamlit_service_client.py (new: 28 regression tests)
-- pyproject.toml (httpx dependency)
+- desktop/scripts/prepare-sidecars.mjs (new: target-triple sidecar preparation)
+- desktop/src-tauri/build.rs (new: build-time binary validation)
+- desktop/src-tauri/tauri.conf.json (updated externalBin entries)
+- src/podcast_pipeline/service/assets.py (new: runtime binary/model resolution)
+- src/podcast_pipeline/service/routes/system.py (new: system readiness endpoints)
+- src/podcast_pipeline/service/recovery.py (new: crash-recovery reconciliation)
+- src/podcast_pipeline/service/app.py (wired system router)
+- src/podcast_pipeline/service/routes/jobs.py (added resumable/reconcile routes)
+- src/podcast_pipeline/service/schemas.py (added recovery schemas)
+- src/podcast_pipeline/clients/service_client.py (added recovery client methods)
+- tests/test_asset_resolution.py (new: 31 regression tests)
+- tests/test_job_recovery.py (new: 28 regression tests)
 
 ---
 
