@@ -34,7 +34,11 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "externalBin": ["binaries/podcast-backend"]
+    "externalBin": [
+      "binaries/podcast-backend",
+      "binaries/ffmpeg",
+      "binaries/ffprobe"
+    ]
   },
   "plugins": {
     "shell": {
