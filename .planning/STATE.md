@@ -45,6 +45,12 @@ Progress: [████████████████████] 100%
 |----------|-----------|------|
 | Streamlit-first UI | Fastest path to validate workflow | 2026-02-03 |
 | Desktop follow-up (Rust + Tauri v2) | Better distribution + performance | 2026-02-03 |
+| Hide progress UI unless progress data exists | Avoid noisy empty UI when stages haven't reported progress | 2026-02-04 |
+| Fallback to single-track transcription when only one stream exists | Prevents recursion and preserves current behavior | 2026-02-04 |
+| Use Fraction-based FPS parsing to avoid eval | Removes unsafe eval in ffprobe metadata handling | 2026-02-04 |
+| Derive research query from analysis topics, fallback to job name | Ensures research runs even when topics are sparse | 2026-02-04 |
+| Use review/edit_plan.json as render input | Keeps render and clip exports aligned with review decisions | 2026-02-04 |
+| Apply edit-plan cuts via trim/concat filter_complex | Ensures render output respects approved cuts | 2026-02-04 |
 | Competition score bounded to 0-100 using normalized weighted factors | Keeps topic difficulty stable and comparable for ranking/UI consumers | 2026-02-04 |
 | Posting recommendations emitted as UTC windows + weekday distributions | Deterministic structure for cross-timezone rendering and tests | 2026-02-04 |
 | Engagement density uses weighted signal strength/minute with diversity bonus | Rewards clips with sustained multi-signal momentum instead of isolated spikes | 2026-02-04 |

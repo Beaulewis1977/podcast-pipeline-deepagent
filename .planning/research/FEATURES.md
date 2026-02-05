@@ -67,4 +67,3 @@ Ingest → Transcribe → Analyze → Review → Render
                         ↑
                     Research (feeds Analyze/Review)
 ```
-
