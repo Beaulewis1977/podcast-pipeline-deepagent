@@ -61,6 +61,7 @@ def create_app() -> FastAPI:
     with the ``factory=True`` flag.
     """
     from podcast_pipeline.service.routes.jobs import router as jobs_router
+    from podcast_pipeline.service.routes.system import router as system_router
 
     app = FastAPI(
         title="Podcast Pipeline Service",
@@ -77,5 +78,8 @@ def create_app() -> FastAPI:
 
     # --- job lifecycle routes ---
     app.include_router(jobs_router, prefix="/jobs", tags=["jobs"])
+
+    # --- system / asset readiness routes ---
+    app.include_router(system_router, prefix="/system", tags=["system"])
 
     return app

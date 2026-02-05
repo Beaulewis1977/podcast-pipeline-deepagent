@@ -1,4 +1,4 @@
-"""HTTP routes for job create / run / status / list / resume.
+"""HTTP routes for job create / run / status / list / resume / recovery.
 
 All business logic is delegated to :class:`Pipeline` and :class:`Job`
 from the core package -- route handlers only translate HTTP concerns.
@@ -10,6 +10,11 @@ from fastapi import APIRouter, HTTPException, Request
 
 from podcast_pipeline.models.job import Job, StageStatus
 from podcast_pipeline.pipeline import Pipeline
+from podcast_pipeline.service.recovery import (
+    list_resumable_jobs,
+    prepare_resume,
+    reconcile_all_jobs,
+)
 from podcast_pipeline.service.schemas import (
     BackgroundRunRequest,
     BackgroundRunResponse,
@@ -18,6 +23,8 @@ from podcast_pipeline.service.schemas import (
     JobDetailResponse,
     JobListResponse,
     JobSummary,
+    ResumableJobItem,
+    ResumableJobsResponse,
     ResumeJobRequest,
     ResumeJobResponse,
     RunJobRequest,
@@ -102,6 +109,53 @@ async def create_job(body: CreateJobRequest, request: Request) -> CreateJobRespo
         input_file=job.input_file,
         created_at=job.created_at,
     )
+
+
+# --------------------------------------------------------------------------
+# GET /jobs/resumable  -- list jobs that can be resumed after crash/restart
+# --------------------------------------------------------------------------
+
+
+@router.get("/resumable", response_model=ResumableJobsResponse)
+async def get_resumable_jobs(request: Request) -> ResumableJobsResponse:
+    """Return a list of jobs that can be resumed after an interruption.
+
+    Triggers reconciliation first to correct stale runtime metadata,
+    then identifies jobs with completed work remaining to be done.
+    """
+    pipeline = _get_pipeline(request)
+    jobs_dir = pipeline.config.paths.jobs_dir
+    reconcile_all_jobs(jobs_dir)
+    resumable = list_resumable_jobs(jobs_dir)
+    return ResumableJobsResponse(
+        jobs=[
+            ResumableJobItem(
+                job_id=r.job_id,
+                status=r.status,
+                resume_stage=r.resume_stage,
+                completed_stages=r.completed_stages,
+                failed_stages=r.failed_stages,
+                interrupted=r.interrupted,
+            )
+            for r in resumable
+        ]
+    )
+
+
+# --------------------------------------------------------------------------
+# POST /jobs/reconcile  -- force reconciliation of all jobs
+# --------------------------------------------------------------------------
+
+
+@router.post("/reconcile")
+async def reconcile_jobs(request: Request) -> dict[str, int]:
+    """Force reconciliation of all job runtime metadata.
+
+    Returns the count of jobs that had corrections applied.
+    """
+    pipeline = _get_pipeline(request)
+    corrected = reconcile_all_jobs(pipeline.config.paths.jobs_dir)
+    return {"corrected": corrected}
 
 
 # --------------------------------------------------------------------------
@@ -212,16 +266,28 @@ async def list_jobs(request: Request) -> JobListResponse:
 
 @router.post("/{job_id}/resume", response_model=ResumeJobResponse)
 async def resume_job(job_id: str, body: ResumeJobRequest, request: Request) -> ResumeJobResponse:
-    """Resume a job from the first incomplete stage (or a specific one)."""
-    pipeline = _get_pipeline(request)
-    job = _load_job_or_404(pipeline, job_id)
+    """Resume a job from the first incomplete stage (or a specific one).
 
-    # Determine resume point
-    if body.from_stage:
-        resume_stage = body.from_stage
-    else:
-        # Find first non-complete stage
-        resume_stage = None
+    Uses the recovery module to prepare the job (reset target stage,
+    clear stale runtime metadata) before starting the pipeline run.
+    """
+    pipeline = _get_pipeline(request)
+    _load_job_or_404(pipeline, job_id)  # Validate job exists
+
+    jobs_dir = pipeline.config.paths.jobs_dir
+
+    try:
+        job = prepare_resume(jobs_dir, job_id, from_stage=body.from_stage)
+    except ValueError as exc:
+        return ResumeJobResponse(
+            job_id=job_id,
+            status="complete",
+            message=str(exc),
+        )
+
+    # Determine which stage we are resuming from.
+    resume_stage = body.from_stage
+    if resume_stage is None:
         for stage_name in Pipeline.STAGE_ORDER:
             stage_obj = job.stages.get(stage_name)
             if stage_obj and stage_obj.status != StageStatus.COMPLETE:
@@ -234,10 +300,6 @@ async def resume_job(job_id: str, body: ResumeJobRequest, request: Request) -> R
             status="complete",
             message="All stages already complete, nothing to resume",
         )
-
-    # Reset the target stage so the pipeline will re-run it
-    job.update_stage(resume_stage, StageStatus.PENDING)
-    job.save(pipeline.config.paths.jobs_dir)
 
     try:
         results = pipeline.run(job, stage=resume_stage)

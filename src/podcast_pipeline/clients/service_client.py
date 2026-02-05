@@ -112,6 +112,23 @@ class ResumeResult(BaseModel):
     message: str
 
 
+class ResumableJobItem(BaseModel):
+    """Single entry in the resumable jobs list."""
+
+    job_id: str
+    status: str
+    resume_stage: str
+    completed_stages: list[str] = Field(default_factory=list)
+    failed_stages: list[str] = Field(default_factory=list)
+    interrupted: bool = False
+
+
+class ResumableJobsList(BaseModel):
+    """Response from GET /jobs/resumable."""
+
+    jobs: list[ResumableJobItem]
+
+
 # ---------------------------------------------------------------------------
 # Typed exceptions
 # ---------------------------------------------------------------------------
@@ -296,3 +313,23 @@ class ServiceClient:
         resp = self._request("POST", f"/jobs/{job_id}/resume", json=payload)
         self._raise_for_status(resp)
         return ResumeResult.model_validate(resp.json())
+
+    def list_resumable_jobs(self) -> ResumableJobsList:
+        """Fetch jobs that can be resumed (GET /jobs/resumable).
+
+        The backend reconciles stale runtime metadata before returning
+        the list, so results reflect actual resumability.
+        """
+        resp = self._request("GET", "/jobs/resumable")
+        self._raise_for_status(resp)
+        return ResumableJobsList.model_validate(resp.json())
+
+    def reconcile_jobs(self) -> int:
+        """Force reconciliation of all job runtime metadata (POST /jobs/reconcile).
+
+        Returns the number of jobs that had corrections applied.
+        """
+        resp = self._request("POST", "/jobs/reconcile")
+        self._raise_for_status(resp)
+        data: dict[str, int] = resp.json()
+        return data.get("corrected", 0)

@@ -149,3 +149,25 @@ class BackgroundRunResponse(BaseModel):
     job_id: str
     accepted: bool
     message: str
+
+
+# ---------------------------------------------------------------------------
+# Resumable jobs (recovery)
+# ---------------------------------------------------------------------------
+
+
+class ResumableJobItem(BaseModel):
+    """Single entry in the resumable jobs list."""
+
+    job_id: str
+    status: str
+    resume_stage: str
+    completed_stages: list[str] = Field(default_factory=list)
+    failed_stages: list[str] = Field(default_factory=list)
+    interrupted: bool = False
+
+
+class ResumableJobsResponse(BaseModel):
+    """GET /jobs/resumable response body."""
+
+    jobs: list[ResumableJobItem]
