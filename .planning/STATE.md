@@ -89,19 +89,19 @@ Progress: [████████████████░░░░] 75% (9/
 
 ### Last Session Summary
 
-Finalized 03-02: committed Task 3 (typed backend client and health handshake wiring), created SUMMARY.md. Tauri v2 desktop shell is complete with sidecar lifecycle control, typed TypeScript backend client, and React health-readiness UI.
+Completed 03-03: Migrated Streamlit UI to route all job operations through typed ServiceClient backed by httpx, added ServiceConfig to project settings, and created 28-test regression suite covering client contract, retry behavior, and UI action helpers.
 
 ### Next Session Entry Point
 
-Execute 03-04-PLAN.md (next unexecuted plan in Phase 3).
+Execute 03-04-PLAN.md (next plan in Phase 3).
 
 ### Files Modified This Session
 
-- desktop/src/lib/backend.ts (new: typed backend client with sidecar invoke, health polling, job API)
-- desktop/src/App.tsx (refactored to use backend.ts imports)
-- .gitignore (scoped lib/ exclusion to root-only)
-- .planning/phases/03-polishing-+-desktop-distribution/03-02-SUMMARY.md (new)
-- .planning/STATE.md (updated)
+- src/podcast_pipeline/clients/ (new module: service_client.py with typed HTTP client)
+- src/podcast_pipeline/config/settings.py (added ServiceConfig)
+- src/podcast_pipeline/ui/app.py (refactored to use ServiceClient)
+- tests/test_streamlit_service_client.py (new: 28 regression tests)
+- pyproject.toml (httpx dependency)
 
 ---
 
