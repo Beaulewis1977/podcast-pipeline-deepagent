@@ -96,7 +96,9 @@ def _build_research_panel_data(research_payload: dict[str, Any]) -> dict[str, An
         "competition_tier": insights.get("competition_tier"),
         "avg_engagement_rate": engagement.get("avg_engagement_rate"),
         "avg_velocity_per_hour": engagement.get("avg_velocity_per_hour"),
-        "keywords": [str(keyword) for keyword in research_payload.get("suggested_keywords", [])[:10]],
+        "keywords": [
+            str(keyword) for keyword in research_payload.get("suggested_keywords", [])[:10]
+        ],
         "posting_windows": posting_windows,
     }
 

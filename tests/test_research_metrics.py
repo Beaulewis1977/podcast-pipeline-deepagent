@@ -30,7 +30,9 @@ def test_search_videos_enriches_engagement_metrics(mock_get: MagicMock) -> None:
 
     researcher = YouTubeResearcher(api_key="test-key")
     with patch.object(researcher, "_get_video_stats") as mock_stats:
-        mock_stats.return_value = {"abc123": {"view_count": 1200, "like_count": 120, "comment_count": 30}}
+        mock_stats.return_value = {
+            "abc123": {"view_count": 1200, "like_count": 120, "comment_count": 30}
+        }
         videos = researcher.search_videos("ai", max_results=1)
 
     assert len(videos) == 1

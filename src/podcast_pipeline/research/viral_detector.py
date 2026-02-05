@@ -152,7 +152,9 @@ class ViralClipDetector:
 
             # Check for controversy language
             matched_controversy = [
-                term for term in self.CONTROVERSY_TERMS if re.search(rf"\b{re.escape(term)}\b", text_lower)
+                term
+                for term in self.CONTROVERSY_TERMS
+                if re.search(rf"\b{re.escape(term)}\b", text_lower)
             ]
             if matched_controversy:
                 signals.append(

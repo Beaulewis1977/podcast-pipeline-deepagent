@@ -8,7 +8,11 @@ def test_analyze_transcript_detects_question_controversy_story_and_quotable_sign
     detector = ViralClipDetector()
     transcript = {
         "segments": [
-            {"start": 0.0, "end": 4.0, "text": "Why are most creators still doing this the hard way?"},
+            {
+                "start": 0.0,
+                "end": 4.0,
+                "text": "Why are most creators still doing this the hard way?",
+            },
             {
                 "start": 5.0,
                 "end": 10.0,

@@ -34,7 +34,9 @@ def test_search_videos_cache_hit_for_normalized_equivalent_queries(mock_get: Mag
     researcher = YouTubeResearcher(api_key="key", cache_ttl_seconds=300)
 
     with patch.object(researcher, "_get_video_stats") as mock_stats:
-        mock_stats.return_value = {"abc123": {"view_count": 100, "like_count": 10, "comment_count": 2}}
+        mock_stats.return_value = {
+            "abc123": {"view_count": 100, "like_count": 10, "comment_count": 2}
+        }
         researcher.search_videos(" AI   creator workflow ", max_results=5, order="relevance")
         researcher.search_videos("ai creator workflow", max_results=5, order="relevance")
 
@@ -49,7 +51,9 @@ def test_search_videos_cache_respects_ttl_expiry(mock_get: MagicMock) -> None:
     researcher = YouTubeResearcher(api_key="key", cache_ttl_seconds=0)
 
     with patch.object(researcher, "_get_video_stats") as mock_stats:
-        mock_stats.return_value = {"abc123": {"view_count": 100, "like_count": 10, "comment_count": 2}}
+        mock_stats.return_value = {
+            "abc123": {"view_count": 100, "like_count": 10, "comment_count": 2}
+        }
         researcher.search_videos("podcast growth", max_results=5, order="date")
         researcher.search_videos("podcast growth", max_results=5, order="date")
 
@@ -65,7 +69,9 @@ def test_search_videos_cache_expires_after_ttl_window(mock_get: MagicMock) -> No
     base_time = datetime(2026, 1, 12, 12, 0, tzinfo=UTC)
 
     with patch.object(researcher, "_get_video_stats") as mock_stats:
-        mock_stats.return_value = {"abc123": {"view_count": 100, "like_count": 10, "comment_count": 2}}
+        mock_stats.return_value = {
+            "abc123": {"view_count": 100, "like_count": 10, "comment_count": 2}
+        }
         with patch.object(
             researcher,
             "_utcnow",

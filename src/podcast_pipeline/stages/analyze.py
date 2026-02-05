@@ -228,10 +228,7 @@ class AnalyzeStage(Stage):
 
     def _combined_score(self, ai_score: float, detector_score: float) -> float:
         """Blend provider and detector scores into one bounded value."""
-        combined = (
-            ai_score * self.ai_score_weight
-            + detector_score * self.detector_score_weight
-        )
+        combined = ai_score * self.ai_score_weight + detector_score * self.detector_score_weight
         return min(max(combined, 0.0), 10.0)
 
     def _run_viral_signals(
