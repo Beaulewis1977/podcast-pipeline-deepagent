@@ -6,7 +6,7 @@ import re
 from collections import Counter
 from datetime import UTC, datetime, timedelta
 from statistics import median
-from typing import Any
+from typing import Any, cast
 
 import httpx
 from pydantic import BaseModel, Field
@@ -225,7 +225,7 @@ class YouTubeResearcher:
         )
         cached_videos = self._cache_get(cache_key)
         if cached_videos is not None:
-            return cached_videos
+            return cast(list[dict[str, Any]], cached_videos)
 
         params: dict[str, str | int] = {
             "part": "snippet",
@@ -372,7 +372,7 @@ class YouTubeResearcher:
         cache_key = self._stats_cache_key(video_ids)
         cached_stats = self._cache_get(cache_key)
         if cached_stats is not None:
-            return cached_stats
+            return cast(dict[str, dict[str, Any]], cached_stats)
 
         params = {
             "part": "statistics,contentDetails",
@@ -686,7 +686,9 @@ class YouTubeResearcher:
             "avg_engagement_rate": round(sum(engagement_rates) / len(engagement_rates), 4)
             if engagement_rates
             else 0.0,
-            "median_engagement_rate": round(median(engagement_rates), 4) if engagement_rates else 0.0,
+            "median_engagement_rate": round(median(engagement_rates), 4)
+            if engagement_rates
+            else 0.0,
             "top_quartile_engagement_rate": round(upper_quartile, 4),
             "avg_velocity_per_hour": round(avg_velocity, 4),
         }
