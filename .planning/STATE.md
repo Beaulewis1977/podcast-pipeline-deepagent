@@ -1,7 +1,7 @@
 # Project State: Podcast Pipeline
 
-**Last updated:** 2026-02-04
-**Current phase:** Phase 3 planning (Polishing + Desktop Distribution)
+**Last updated:** 2026-02-05
+**Current phase:** All phases complete
 **Overall progress:** 100%
 
 ## Project Reference
@@ -9,15 +9,17 @@
 See: `.planning/PROJECT.md`
 
 **Core value:** Turn raw podcast recording into multi-platform content without editing software or manual copywriting.
-**Current focus:** Phase 2 verified complete; prepare Phase 3 planning.
+**Current focus:** All 3 phases complete. Milestone v1.0 ready to close.
 
 ## Current Position
 
 ```
-Phase:    [3 of 3] Polishing + Desktop Distribution
-Plan:     [0 of 0] Awaiting phase planning
-Status:   Phase 2 complete (verified)
-Progress: [████████████████████] 100%
+Phase:    3 of 3 (all complete)
+Plan:     17 of 17 total plans
+Status:   All phases complete
+Last activity: 2026-02-05 - Phase 3 complete, Gemini model fix
+
+Progress: [████████████████████████] 100% (17/17 plans)
 ```
 
 ## Phase Status
@@ -26,16 +28,16 @@ Progress: [████████████████████] 100%
 |------:|------|--------|-------|----------|
 | 1 | Wiring + Stability | Complete | 6/6 | 100% |
 | 2 | Research + Viral Integration | Complete | 5/5 | 100% |
-| 3 | Polishing + Desktop Distribution | Pending | 0/0 | 0% |
+| 3 | Polishing + Desktop Distribution | Complete | 6/6 | 100% |
 
 ## Performance Metrics
 
 | Metric | Value |
 |--------|-------|
-| Plans completed | 11 |
+| Plans completed | 17 |
 | Requirements done | 35/83 (21 partial) |
-| Phases complete | 2/3 |
-| Estimated completion | In progress |
+| Phases complete | 3/3 |
+| Estimated completion | Complete |
 
 ## Accumulated Context
 
@@ -61,12 +63,33 @@ Progress: [████████████████████] 100%
 | Viral artifact rows remain backward-compatible via additive score fields | UI can adopt richer metrics incrementally without breaking old readers | 2026-02-04 |
 | Insight panels use pure data transformers before rendering | Keeps schema handling testable and resilient to partial artifacts | 2026-02-04 |
 | UI clip table always sorts by combined score with legacy fallbacks | Maintains ranking consistency across new and old artifact shapes | 2026-02-04 |
+| Factory pattern for FastAPI app | uvicorn factory=True compatible, standard ASGI deployment | 2026-02-05 |
+| asyncio supervisor for background runs | Pipeline.run is blocking; executor thread + async heartbeat | 2026-02-05 |
+| runtime.json for crash recovery | Separate from state.json to decouple process lifecycle from pipeline state | 2026-02-05 |
+| Port 8787 as default service port | Avoids collision with Streamlit (8501) and common dev ports | 2026-02-05 |
+| httpx for typed service client | Sync + async, built-in retry transport, context-managed clients | 2026-02-05 |
+| ServiceConfig in project Config | Single source of truth for backend connection shared by all frontends | 2026-02-05 |
+| Display-only reads stay local FS | Streamlit and service share jobs/ dir; no redundant GET endpoints needed | 2026-02-05 |
+| Tauri v2 with shell plugin for sidecar | Tauri v2 approach replaces v1 built-in sidecar API | 2026-02-05 |
+| Mutex PID tracking in Rust | Thread-safe sidecar lifecycle with idempotent start | 2026-02-05 |
+| Tiered binary resolution (env/sidecar/PATH) | Avoids hardcoded OS paths; supports dev and bundled modes transparently | 2026-02-05 |
+| Conservative recovery reconciliation | Never touch completed stages; only correct stale running states | 2026-02-05 |
+| Three-stage release workflow | build-backend -> build-desktop -> smoke-test for failure isolation | 2026-02-05 |
+| PyInstaller for backend sidecar | Single-file cross-platform binary from Python service | 2026-02-05 |
+| Graduated smoke severity | Blocking checks (artifact/size/sidecar) vs warnings (health/ffmpeg) | 2026-02-05 |
+| Draft releases by default | Manual review before publishing to avoid broken releases | 2026-02-05 |
 
 ### Technical Notes
 
-- Recommended stack: FFmpeg, faster-whisper, Streamlit, Typer, Pydantic.
-- Primary AI: Gemini (configurable; default gemini-2.5-flash) with Kimi K2.5 fallback.
-- Avoid: moviepy, python-ffmpeg wrappers, original whisper, langchain.
+- Recommended stack: FFmpeg, faster-whisper, Streamlit, Typer, Pydantic
+- Primary AI: Gemini (configurable; default gemini-2.5-flash) with Kimi K2.5 fallback
+- Avoid: moviepy, python-ffmpeg wrappers, original whisper, langchain
+- FastAPI service: lifespan pattern with Pipeline/Config/Supervisor on app.state
+- Background runs: Supervisor wraps Pipeline.run in asyncio executor thread
+- Asset resolution: env -> sidecar dir -> system PATH for binaries
+- Model cache: env -> app_data -> project -> HF hub for model artifacts
+- Sidecar naming: prepare-sidecars.mjs maps Node.js platform/arch to Rust target triples
+- Release workflow: tag-triggered with manual dispatch, 4 platform targets
 
 ### Open Questions
 
@@ -78,36 +101,29 @@ Progress: [████████████████████] 100%
 
 ## Recent Activity
 
-- 2026-02-04: Completed phase 2 plan 02-01 (research metrics foundation).
-- 2026-02-04: Completed phase 2 plan 02-02 (viral detector expansion).
-- 2026-02-04: Completed phase 2 plan 02-03 (cache + keyword extraction).
-- 2026-02-04: Completed phase 2 plan 02-04 (analyze re-ranking + explainability).
-- 2026-02-04: Completed phase 2 plan 02-05 (UI research + score visibility).
-- 2026-02-04: Verified phase 2 goal (10/10 must-haves passed).
+- 2026-01-29: Project initialized, requirements defined, roadmap created
+- 2026-02-03: App research report completed
+- 2026-02-04: Codebase map refreshed and planning docs updated
+- 2026-02-04: Completed Phase 2 plans 02-01 through 02-05
+- 2026-02-04: Verified Phase 2 goal (10/10 must-haves passed)
+- 2026-02-05: Completed 03-01 through 03-06 (Phase 3 complete)
+- 2026-02-05: Fixed Gemini model name (gemini-2.5-flash-latest -> gemini-2.5-flash)
+- 2026-02-05: End-to-end smoke test passed (ingest -> transcribe -> analyze -> review)
 
 ## Session Continuity
 
 ### Last session
 
-Executed and verified all Phase 2 plans; created `02-VERIFICATION.md` with passed status.
+Completed Phase 3, fixed Gemini model name, ran successful end-to-end smoke test through Streamlit UI. All 3 phases now complete.
 
 ### Stopped at
 
-Phase 2 verified complete
+All phases complete. Milestone v1.0 ready to close or extend.
 
 ### Resume file
 
 None
 
-### Files modified this session
-
-- `src/podcast_pipeline/ui/app.py`
-- `tests/test_ui_research_panel.py`
-- `.planning/phases/02-research-+-viral-integration/02-05-SUMMARY.md`
-- `.planning/phases/02-research-+-viral-integration/02-VERIFICATION.md`
-- `.planning/ROADMAP.md`
-- `.planning/STATE.md`
-
 ---
 
-*State updated: 2026-02-04*
+*State updated: 2026-02-05*

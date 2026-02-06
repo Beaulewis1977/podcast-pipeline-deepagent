@@ -1,0 +1,278 @@
+name: Desktop Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build artifacts without creating a release"
+        required: false
+        default: "false"
+        type: boolean
+
+# Only one release build at a time
+concurrency:
+  group: desktop-release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.12"
+  NODE_VERSION: "20"
+  CARGO_TERM_COLOR: always
+  # Skip build.rs sidecar validation during CI — binaries are prepared in a
+  # dedicated step before `tauri build`.
+  SKIP_SIDECAR_CHECK: "1"
+
+jobs:
+  # ===========================================================================
+  # Build backend sidecar binary (one per platform)
+  # ===========================================================================
+  build-backend:
+    name: Build Backend (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            backend_ext: ""
+          - platform: macos-latest
+            target: aarch64-apple-darwin
+            backend_ext: ""
+          - platform: macos-15-intel
+            target: x86_64-apple-darwin
+            backend_ext: ""
+          - platform: windows-latest
+            target: x86_64-pc-windows-msvc
+            backend_ext: ".exe"
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Install project dependencies
+        run: uv sync --frozen
+
+      - name: Install PyInstaller
+        run: uv pip install pyinstaller
+
+      - name: Build backend binary with PyInstaller
+        run: |
+          uv run pyinstaller \
+            --name podcast-backend \
+            --onefile \
+            --console \
+            --hidden-import podcast_pipeline \
+            --hidden-import uvicorn \
+            src/podcast_pipeline/service/cli.py
+        shell: bash
+
+      - name: Rename to target-triple convention
+        run: |
+          mkdir -p backend-dist
+          cp dist/podcast-backend${{ matrix.backend_ext }} \
+            backend-dist/podcast-backend-${{ matrix.target }}${{ matrix.backend_ext }}
+        shell: bash
+
+      - name: Upload backend artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-${{ matrix.target }}
+          path: backend-dist/
+          retention-days: 3
+
+  # ===========================================================================
+  # Build desktop installers (Tauri)
+  # ===========================================================================
+  build-desktop:
+    name: Build Desktop (${{ matrix.settings.platform }})
+    needs: build-backend
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        settings:
+          - platform: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            args: ""
+            ext: ""
+          - platform: macos-latest
+            target: aarch64-apple-darwin
+            args: "--target aarch64-apple-darwin"
+            ext: ""
+          - platform: macos-15-intel
+            target: x86_64-apple-darwin
+            args: "--target x86_64-apple-darwin"
+            ext: ""
+          - platform: windows-latest
+            target: x86_64-pc-windows-msvc
+            args: ""
+            ext: ".exe"
+    runs-on: ${{ matrix.settings.platform }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # --- System dependencies (Linux) ---
+      - name: Install Linux system dependencies
+        if: matrix.settings.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libgtk-3-dev \
+            ffmpeg
+
+      # --- Install FFmpeg (macOS) ---
+      - name: Install FFmpeg (macOS)
+        if: startsWith(matrix.settings.platform, 'macos')
+        run: brew install ffmpeg
+
+      # --- Install FFmpeg (Windows) ---
+      - name: Install FFmpeg (Windows)
+        if: matrix.settings.platform == 'windows-latest'
+        run: choco install ffmpeg -y
+
+      # --- Node.js ---
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install pnpm
+        run: npm install -g pnpm
+
+      - name: Install frontend dependencies
+        working-directory: desktop
+        run: pnpm install --frozen-lockfile
+
+      # --- Rust ---
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri -> target
+
+      # --- Download backend sidecar ---
+      - name: Download backend artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: backend-${{ matrix.settings.target }}
+          path: desktop/src-tauri/binaries/
+
+      # --- Prepare sidecar binaries ---
+      - name: Prepare sidecar binaries
+        working-directory: desktop
+        env:
+          TAURI_TARGET_TRIPLE: ${{ matrix.settings.target }}
+          BACKEND_BIN: src-tauri/binaries/podcast-backend-${{ matrix.settings.target }}${{ matrix.settings.ext }}
+        run: node scripts/prepare-sidecars.mjs
+
+      # --- Build with Tauri ---
+      # Code signing secrets are passed directly to the tauri-action step below.
+      - name: Build Tauri application
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # macOS signing
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Windows signing
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        with:
+          projectPath: desktop
+          tauriScript: pnpm tauri
+          args: ${{ matrix.settings.args }}
+          tagName: ${{ github.ref_name }}
+          releaseName: "Podcast Pipeline ${{ github.ref_name }}"
+          releaseBody: "Desktop release for ${{ github.ref_name }}. See CHANGELOG for details."
+          releaseDraft: true
+          prerelease: false
+
+      # --- Upload build artifacts (always, even for dry-run) ---
+      - name: Upload installer artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.settings.target }}
+          path: |
+            desktop/src-tauri/target/release/bundle/**/*.deb
+            desktop/src-tauri/target/release/bundle/**/*.AppImage
+            desktop/src-tauri/target/release/bundle/**/*.dmg
+            desktop/src-tauri/target/release/bundle/**/*.app
+            desktop/src-tauri/target/release/bundle/**/*.msi
+            desktop/src-tauri/target/release/bundle/**/*.exe
+            desktop/src-tauri/target/release/bundle/**/*.nsis
+          retention-days: 7
+          if-no-files-found: warn
+
+  # ===========================================================================
+  # Smoke test (post-build validation)
+  # ===========================================================================
+  smoke-test:
+    name: Smoke Test (${{ matrix.settings.platform }})
+    needs: build-desktop
+    strategy:
+      fail-fast: false
+      matrix:
+        settings:
+          - platform: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            script: desktop/scripts/smoke-test-desktop.sh
+          - platform: macos-latest
+            target: aarch64-apple-darwin
+            script: desktop/scripts/smoke-test-desktop.sh
+          - platform: macos-15-intel
+            target: x86_64-apple-darwin
+            script: desktop/scripts/smoke-test-desktop.sh
+          - platform: windows-latest
+            target: x86_64-pc-windows-msvc
+            script: desktop/scripts/smoke-test-desktop.ps1
+    runs-on: ${{ matrix.settings.platform }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download installer artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: desktop-${{ matrix.settings.target }}
+          path: installer-artifacts/
+
+      - name: Run smoke test (Linux/macOS)
+        if: matrix.settings.platform != 'windows-latest'
+        run: |
+          chmod +x ${{ matrix.settings.script }}
+          bash ${{ matrix.settings.script }} installer-artifacts/
+        timeout-minutes: 5
+
+      - name: Run smoke test (Windows)
+        if: matrix.settings.platform == 'windows-latest'
+        run: powershell -ExecutionPolicy Bypass -File ${{ matrix.settings.script }} installer-artifacts/
+        timeout-minutes: 5

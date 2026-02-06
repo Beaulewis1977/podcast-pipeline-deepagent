@@ -33,7 +33,7 @@ class ModelConfig(BaseModel):
     """
 
     provider: str = "gemini"
-    model: str = "gemini-2.5-flash-latest"  # Best cost/performance for video
+    model: str = "gemini-2.5-flash"  # Best cost/performance for video
     fallback_provider: str | None = "kimi"
     fallback_model: str | None = "kimi-k2.5"  # Latest Kimi multimodal model
 
@@ -229,6 +229,23 @@ class PlatformSpecs(BaseModel):
     )
 
 
+class ServiceConfig(BaseModel):
+    """Backend service connection settings.
+
+    Used by Streamlit and desktop clients to reach the FastAPI backend.
+    """
+
+    host: str = "127.0.0.1"
+    port: int = 8787
+    timeout: float = 30.0
+    retries: int = 2
+
+    @property
+    def base_url(self) -> str:
+        """Build the base URL from host and port."""
+        return f"http://{self.host}:{self.port}"
+
+
 class APIKeysConfig(BaseModel):
     """API keys loaded from environment."""
 
@@ -258,6 +275,7 @@ class Config(BaseModel):
     audio: AudioConfig = Field(default_factory=AudioConfig)
     platforms: PlatformSpecs = Field(default_factory=PlatformSpecs)
     api_keys: APIKeysConfig = Field(default_factory=APIKeysConfig)
+    service: ServiceConfig = Field(default_factory=ServiceConfig)
 
 
 def load_config(config_path: Path | None = None) -> Config:

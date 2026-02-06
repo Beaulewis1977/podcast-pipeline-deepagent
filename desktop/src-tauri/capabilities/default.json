@@ -1,0 +1,21 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nicedoc/tauri-schema-next/refs/heads/main/capability.schema.json",
+  "identifier": "default",
+  "description": "Default capability set for Podcast Pipeline desktop app",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "shell:allow-spawn",
+    "shell:allow-execute",
+    "shell:allow-kill",
+    "shell:allow-stdin-write",
+    {
+      "identifier": "shell:allow-open",
+      "allow": [
+        {
+          "url": "https://**"
+        }
+      ]
+    }
+  ]
+}

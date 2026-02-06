@@ -422,5 +422,38 @@ def ui(
         raise typer.Exit(1) from None
 
 
+@app.command()
+def service(
+    host: str = typer.Option("127.0.0.1", "--host", help="Host to bind the server to"),
+    port: int = typer.Option(8787, "--port", help="Port to listen on"),
+    reload: bool = typer.Option(False, "--reload", help="Enable auto-reload for development"),
+) -> None:
+    """Start the FastAPI backend service (sidecar-compatible).
+
+    Launches the local API server that both the Streamlit UI and the
+    desktop Tauri shell can connect to. Suitable for headless /
+    non-interactive startup (e.g. as a sidecar process).
+    """
+    import uvicorn
+
+    console.print(
+        Panel(
+            f"[green]Starting Podcast Pipeline Service[/green]\n\n"
+            f"URL: [cyan]http://{host}:{port}[/cyan]\n"
+            f"Docs: [cyan]http://{host}:{port}/docs[/cyan]\n\n"
+            f"Press Ctrl+C to stop the server.",
+            title="Podcast Pipeline Service",
+        )
+    )
+
+    uvicorn.run(
+        "podcast_pipeline.service.app:create_app",
+        host=host,
+        port=port,
+        reload=reload,
+        factory=True,
+    )
+
+
 if __name__ == "__main__":
     app()

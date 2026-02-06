@@ -23,25 +23,23 @@ dependencies = [
     "pyloudnorm>=0.1.1",
     "pydub>=0.25.1",
     "soundfile>=0.12.1",
-
     # AI Providers
     "google-genai>=1.0.0",
     "openai>=1.60.0",
     "httpx>=0.28.0",
-
     # CLI & Config
     "typer>=0.15.0",
     "pydantic>=2.10.0",
     "pyyaml>=6.0.0",
     "python-dotenv>=1.0.0",
-
     # UI
     "streamlit>=1.42.0",
-
     # Utilities
     "structlog>=24.4.0",
     "rich>=13.9.0",
     "tenacity>=9.0.0",
+    "fastapi>=0.128.2",
+    "uvicorn>=0.40.0",
 ]
 
 [project.optional-dependencies]
@@ -160,6 +158,17 @@ ignore = [
     "PLR0913", # many args acceptable
     "S110",    # try-except-pass for cleanup is acceptable
 ]
+"src/podcast_pipeline/clients/*.py" = [
+    "PLC0415", # lazy imports
+]
+"src/podcast_pipeline/service/*.py" = [
+    "PLC0415", # lazy imports for route registration
+    "PLR0913", # many args in data classes and supervisor methods
+]
+"src/podcast_pipeline/service/routes/*.py" = [
+    "PLC0415", # lazy imports
+    "PLR0913", # many args in route handlers
+]
 "src/podcast_pipeline/utils/*.py" = [
     "PLC0415", # lazy imports
     "S603",    # subprocess calls are trusted internal utilities
@@ -199,6 +208,7 @@ module = [
     "pyloudnorm.*",
     "soundfile.*",
     "streamlit.*",
+    "uvicorn.*",
 ]
 ignore_missing_imports = true
 

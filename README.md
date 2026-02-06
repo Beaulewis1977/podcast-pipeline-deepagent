@@ -30,6 +30,12 @@ AI-powered podcast production pipeline for multi-platform content. Transform raw
 | Twitter/X | MP4 | 1280×720 | 2:20 | 16:9 landscape |
 | Facebook | MP4 | 1920×1080 | 4hrs | 16:9 landscape |
 
+### Desktop App (Tauri v2)
+- **Cross-Platform**: Native installers for Windows (.msi), macOS (.dmg), and Linux (.deb/.AppImage)
+- **Bundled Backend**: FastAPI service runs as a sidecar process -- no separate server setup
+- **Crash Recovery**: Automatic detection and resume of interrupted jobs on restart
+- **Offline-Ready**: FFmpeg and backend bundled; models downloaded on first use
+
 ### Advanced Features
 - **YouTube Research**: Trend analysis, competitor research, keyword suggestions
 - **Multi-Track Audio**: Per-speaker transcription with automatic track detection
@@ -324,6 +330,44 @@ podcast-pipeline approve <job-id> [--platforms LIST]  # Approve & export
 # Web Interface
 podcast-pipeline ui [--port 8501] [--host localhost]  # Launch UI
 ```
+
+## 🖥️ Desktop Release
+
+Pre-built desktop installers are available from the [Releases](https://github.com/Beaulewis1977/podcast-pipeline/releases) page.
+
+| Platform | Installer | Requirements |
+|----------|-----------|-------------|
+| Windows | `.msi` or `.exe` (NSIS) | Windows 10+ (x64) |
+| macOS (Apple Silicon) | `.dmg` | macOS 12+ (ARM) |
+| macOS (Intel) | `.dmg` | macOS 12+ (x64) |
+| Linux | `.deb` or `.AppImage` | Ubuntu 22.04+ / glibc 2.31+ |
+
+### Building from source
+
+```bash
+# Build backend sidecar
+uv run pyinstaller --name podcast-backend --onefile --console \
+    --hidden-import podcast_pipeline --hidden-import uvicorn \
+    src/podcast_pipeline/service/cli.py
+
+# Prepare sidecars and build desktop app
+cd desktop
+export BACKEND_BIN=../dist/podcast-backend
+node scripts/prepare-sidecars.mjs
+pnpm install && pnpm tauri build
+```
+
+### Smoke testing installers
+
+```bash
+# Linux/macOS
+bash desktop/scripts/smoke-test-desktop.sh path/to/artifacts/
+
+# Windows (PowerShell)
+powershell -ExecutionPolicy Bypass -File desktop/scripts/smoke-test-desktop.ps1 path/to/artifacts/
+```
+
+For the full release and distribution runbook, see [docs/desktop-distribution.md](docs/desktop-distribution.md).
 
 ## 🤝 Contributing
 
