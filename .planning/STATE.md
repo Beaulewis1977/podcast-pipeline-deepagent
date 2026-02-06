@@ -15,11 +15,11 @@ See: .planning/PROJECT.md
 
 ```
 Phase:    Phase 3 of 3 (Polishing + Desktop Distribution)
-Plan:     4 of 6 in phase
+Plan:     5 of 6 in phase
 Status:   In progress
-Last activity: 2026-02-05 - Completed 03-04-PLAN.md
+Last activity: 2026-02-05 - Completed 03-05-PLAN.md
 
-Progress: [████████████████████░░░░] 83% (10/12 plans)
+Progress: [██████████████████████░░] 92% (11/12 plans)
 ```
 
 ## Phase Status
@@ -28,13 +28,13 @@ Progress: [████████████████████░░░
 |------:|------|--------|-------|----------|
 | 1 | Wiring + Stability | Complete | 6/6 | 100% |
 | 2 | Research + Viral Integration | Pending | 0/? | 0% |
-| 3 | Polishing + Desktop Distribution | In progress | 4/6 | 67% |
+| 3 | Polishing + Desktop Distribution | In progress | 5/6 | 83% |
 
 ## Performance Metrics
 
 | Metric | Value |
 |--------|-------|
-| Plans completed | 10 |
+| Plans completed | 11 |
 | Requirements done | 35/83 (21 partial) |
 | Phases complete | 1/3 |
 | Estimated completion | Unknown |
@@ -92,31 +92,29 @@ Progress: [████████████████████░░░
 - 2026-02-05: Completed 03-02 - Tauri v2 desktop app scaffold with sidecar lifecycle
 - 2026-02-05: Completed 03-03 - Streamlit service migration with typed service client and regression tests
 - 2026-02-05: Completed 03-04 - Asset packaging with sidecar preparation, runtime resolver, and system endpoints
+- 2026-02-05: Completed 03-05 - Crash recovery and resume across backend, desktop, and Streamlit
 
 ## Session Continuity
 
 ### Last Session Summary
 
-Completed 03-04: Added deterministic sidecar preparation script with target-triple naming, build-time validation in build.rs, runtime asset resolver (assets.py) with tiered binary/model resolution, system readiness endpoints (system.py), recovery module, and 59 regression tests.
+Completed 03-05: Implemented crash recovery with backend reconciliation, desktop startup recovery hooks (Rust + TypeScript), and Streamlit resume entrypoint. Fixed Tauri v2 compilation issue (pub commands in lib.rs).
 
 ### Next Session Entry Point
 
-Execute 03-05-PLAN.md (next plan in Phase 3).
+Execute 03-06-PLAN.md (final plan in Phase 3 - release workflow).
 
 ### Files Modified This Session
 
-- desktop/scripts/prepare-sidecars.mjs (new: target-triple sidecar preparation)
-- desktop/src-tauri/build.rs (new: build-time binary validation)
-- desktop/src-tauri/tauri.conf.json (updated externalBin entries)
-- src/podcast_pipeline/service/assets.py (new: runtime binary/model resolution)
-- src/podcast_pipeline/service/routes/system.py (new: system readiness endpoints)
-- src/podcast_pipeline/service/recovery.py (new: crash-recovery reconciliation)
-- src/podcast_pipeline/service/app.py (wired system router)
-- src/podcast_pipeline/service/routes/jobs.py (added resumable/reconcile routes)
-- src/podcast_pipeline/service/schemas.py (added recovery schemas)
-- src/podcast_pipeline/clients/service_client.py (added recovery client methods)
-- tests/test_asset_resolution.py (new: 31 regression tests)
-- tests/test_job_recovery.py (new: 28 regression tests)
+- src/podcast_pipeline/service/recovery.py (reconciliation logic)
+- desktop/src-tauri/src/recovery.rs (Tauri recovery commands)
+- desktop/src/lib/recovery.ts (frontend recovery client)
+- desktop/src/App.tsx (recovery banner UI)
+- desktop/src-tauri/src/lib.rs (fixed pub commands, added recovery module)
+- desktop/src-tauri/Cargo.toml (added reqwest, fixed crate-type)
+- desktop/src-tauri/tauri.conf.json (removed invalid app.title)
+- src/podcast_pipeline/ui/app.py (Streamlit resume entrypoint)
+- tests/test_job_recovery.py (28 recovery regression tests)
 
 ---
 
