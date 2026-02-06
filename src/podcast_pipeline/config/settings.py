@@ -33,7 +33,7 @@ class ModelConfig(BaseModel):
     """
 
     provider: str = "gemini"
-    model: str = "gemini-2.5-flash-latest"  # Best cost/performance for video
+    model: str = "gemini-2.5-flash"  # Best cost/performance for video
     fallback_provider: str | None = "kimi"
     fallback_model: str | None = "kimi-k2.5"  # Latest Kimi multimodal model
 
