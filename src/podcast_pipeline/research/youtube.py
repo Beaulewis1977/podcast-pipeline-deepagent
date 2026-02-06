@@ -1,7 +1,12 @@
 """YouTube Data API integration for research and trend analysis."""
 
+import copy
+import json
+import re
+from collections import Counter
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from statistics import median
+from typing import Any, cast
 
 import httpx
 from pydantic import BaseModel, Field
@@ -11,6 +16,7 @@ from podcast_pipeline.utils.logging import get_logger
 logger = get_logger(__name__)
 
 YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3"
+DEFAULT_CACHE_TTL_SECONDS = 600
 
 
 class TrendingTopic(BaseModel):
@@ -39,14 +45,68 @@ class ResearchResult(BaseModel):
 class YouTubeResearcher:
     """YouTube Data API client for research and trend analysis."""
 
-    def __init__(self, api_key: str | None = None):
+    KEYWORD_STOPWORDS = {
+        "about",
+        "after",
+        "again",
+        "also",
+        "because",
+        "been",
+        "between",
+        "could",
+        "from",
+        "have",
+        "into",
+        "just",
+        "more",
+        "most",
+        "only",
+        "other",
+        "over",
+        "some",
+        "than",
+        "that",
+        "their",
+        "them",
+        "there",
+        "these",
+        "they",
+        "this",
+        "those",
+        "through",
+        "under",
+        "very",
+        "what",
+        "when",
+        "where",
+        "which",
+        "while",
+        "with",
+        "your",
+        "youre",
+        "podcast",
+        "video",
+        "videos",
+        "channel",
+        "learn",
+        "watch",
+    }
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        cache_ttl_seconds: int = DEFAULT_CACHE_TTL_SECONDS,
+    ) -> None:
         """Initialize YouTube researcher.
 
         Args:
             api_key: YouTube Data API key
+            cache_ttl_seconds: In-memory TTL for normalized API response caching
         """
         self.api_key = api_key
         self._client: httpx.Client | None = None
+        self.cache_ttl_seconds = max(int(cache_ttl_seconds), 0)
+        self._cache: dict[str, dict[str, Any]] = {}
 
     @property
     def client(self) -> httpx.Client:
@@ -58,6 +118,79 @@ class YouTubeResearcher:
     def is_available(self) -> bool:
         """Check if YouTube API is available."""
         return bool(self.api_key)
+
+    def _utcnow(self) -> datetime:
+        """UTC time source (overridable in tests)."""
+        return datetime.now(UTC)
+
+    def _normalize_query(self, query: str) -> str:
+        """Normalize query text for stable cache keys."""
+        return " ".join(query.lower().split())
+
+    def _search_cache_key(
+        self,
+        query: str,
+        max_results: int,
+        published_after: datetime | None,
+        order: str,
+        video_duration: str,
+    ) -> str:
+        """Build normalized cache key for search API calls."""
+        normalized_query = self._normalize_query(query)
+        published_after_key = (
+            published_after.astimezone(UTC).replace(microsecond=0).isoformat()
+            if published_after is not None
+            else "none"
+        )
+        return (
+            "search|"
+            f"q={normalized_query}|"
+            f"max={max_results}|"
+            f"published_after={published_after_key}|"
+            f"order={order.lower()}|"
+            f"duration={video_duration.lower()}"
+        )
+
+    def _stats_cache_key(self, video_ids: list[str]) -> str:
+        """Build normalized cache key for stats API calls."""
+        normalized_ids = ",".join(sorted(video_ids[:50]))
+        return f"stats|ids={normalized_ids}"
+
+    def _cache_get(self, key: str) -> Any | None:
+        """Read cache entry if TTL has not expired."""
+        entry = self._cache.get(key)
+        if entry is None:
+            return None
+
+        cached_at = entry.get("cached_at")
+        if not isinstance(cached_at, datetime):
+            self._cache.pop(key, None)
+            return None
+
+        if self.cache_ttl_seconds == 0:
+            self._cache.pop(key, None)
+            return None
+
+        age_seconds = (self._utcnow() - cached_at).total_seconds()
+        if age_seconds > self.cache_ttl_seconds:
+            self._cache.pop(key, None)
+            return None
+
+        return copy.deepcopy(entry.get("payload"))
+
+    def _cache_set(self, key: str, payload: Any) -> None:
+        """Store JSON-safe payload in cache."""
+        self._cache[key] = {
+            "cached_at": self._utcnow(),
+            "payload": self._json_safe_copy(payload),
+        }
+
+    def _json_safe_copy(self, payload: Any) -> Any:
+        """Round-trip through JSON when possible to guarantee safe serialization."""
+        try:
+            return json.loads(json.dumps(payload))
+        except (TypeError, ValueError):
+            return copy.deepcopy(payload)
 
     def search_videos(
         self,
@@ -82,6 +215,17 @@ class YouTubeResearcher:
         if not self.api_key:
             logger.warning("youtube_api_not_configured")
             return []
+
+        cache_key = self._search_cache_key(
+            query=query,
+            max_results=max_results,
+            published_after=published_after,
+            order=order,
+            video_duration=video_duration,
+        )
+        cached_videos = self._cache_get(cache_key)
+        if cached_videos is not None:
+            return cast(list[dict[str, Any]], cached_videos)
 
         params: dict[str, str | int] = {
             "part": "snippet",
@@ -131,12 +275,87 @@ class YouTubeResearcher:
                 for video in videos:
                     video_stats = stats.get(video["video_id"], {})
                     video.update(video_stats)
+                    video.update(self._enrich_video_metrics(video))
 
+            # Always provide a complete metric payload, even if stats API is empty.
+            for video in videos:
+                if "engagement_rate" not in video:
+                    video.update(self._enrich_video_metrics(video))
+
+            self._cache_set(cache_key, videos)
             return videos
 
         except httpx.HTTPError as e:
             logger.exception("youtube_search_failed", error=str(e))
             return []
+
+    def _safe_int(self, value: Any) -> int:
+        """Safely parse integer-like values and clamp to non-negative."""
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return 0
+        return max(parsed, 0)
+
+    def _parse_published_at(self, published_at: Any) -> datetime | None:
+        """Parse YouTube publish timestamp safely."""
+        if not isinstance(published_at, str):
+            return None
+
+        normalized = published_at.strip()
+        if not normalized:
+            return None
+
+        if normalized.endswith("Z"):
+            normalized = f"{normalized[:-1]}+00:00"
+
+        try:
+            parsed = datetime.fromisoformat(normalized)
+        except ValueError:
+            return None
+
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+
+        return parsed.astimezone(UTC)
+
+    def _enrich_video_metrics(
+        self,
+        video: dict[str, Any],
+        reference_time: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Compute per-video engagement and momentum metrics."""
+        now = reference_time or datetime.now(UTC)
+        published_at = self._parse_published_at(video.get("published_at"))
+
+        view_count = self._safe_int(video.get("view_count"))
+        like_count = self._safe_int(video.get("like_count"))
+        comment_count = self._safe_int(video.get("comment_count"))
+
+        interactions = like_count + comment_count
+        engagement_rate = round(interactions / view_count, 4) if view_count > 0 else 0.0
+
+        hours_since_publish = 0.0
+        velocity_per_hour = 0.0
+        published_hour_utc: int | None = None
+        published_weekday_utc: str | None = None
+
+        if published_at is not None:
+            elapsed_hours = max((now - published_at).total_seconds() / 3600, 0.0)
+            hours_since_publish = round(elapsed_hours, 2)
+            effective_hours = max(elapsed_hours, 1.0)
+            velocity_per_hour = round(view_count / effective_hours, 4)
+            published_hour_utc = published_at.hour
+            published_weekday_utc = published_at.strftime("%A")
+
+        return {
+            "engagement_rate": engagement_rate,
+            "hours_since_publish": hours_since_publish,
+            "velocity_per_hour": velocity_per_hour,
+            "published_at_valid": published_at is not None,
+            "published_hour_utc": published_hour_utc,
+            "published_weekday_utc": published_weekday_utc,
+        }
 
     def _get_video_stats(self, video_ids: list[str]) -> dict[str, dict[str, Any]]:
         """Get statistics for multiple videos.
@@ -149,6 +368,11 @@ class YouTubeResearcher:
         """
         if not self.api_key or not video_ids:
             return {}
+
+        cache_key = self._stats_cache_key(video_ids)
+        cached_stats = self._cache_get(cache_key)
+        if cached_stats is not None:
+            return cast(dict[str, dict[str, Any]], cached_stats)
 
         params = {
             "part": "statistics,contentDetails",
@@ -174,6 +398,7 @@ class YouTubeResearcher:
                     "duration": content.get("duration", ""),
                 }
 
+            self._cache_set(cache_key, stats)
             return stats
 
         except httpx.HTTPError as e:
@@ -279,7 +504,16 @@ class YouTubeResearcher:
         Returns:
             List of related trending keywords
         """
-        keywords: set[str] = set()
+        if not seed_keywords:
+            return []
+
+        seed_terms = {
+            token
+            for keyword in seed_keywords
+            for token in re.findall(r"[a-z0-9']+", keyword.lower())
+            if len(token) > 2
+        }
+        keyword_scores: dict[str, float] = {}
 
         for seed in seed_keywords:
             videos = self.search_videos(
@@ -290,22 +524,63 @@ class YouTubeResearcher:
             )
 
             for video in videos:
-                # Extract keywords from titles
-                title = video.get("title", "")
-                # Simple keyword extraction (could be enhanced with NLP)
-                words = title.lower().split()
-                for word in words:
-                    word = word.strip(",.!?()[]\"'")
-                    if len(word) > 3 and word not in seed.lower():
-                        keywords.add(word)
+                base_weight = 1.0 + min(self._safe_int(video.get("view_count")) / 100_000, 2.0)
+                title_tokens = self._extract_keyword_tokens(video.get("title", ""))
+                description_tokens = self._extract_keyword_tokens(video.get("description", ""))
 
-                # Extract hashtags from description
+                for tokens, source_multiplier in (
+                    (title_tokens, 1.2),
+                    (description_tokens, 1.0),
+                ):
+                    for phrase, score in self._score_weighted_ngrams(tokens).items():
+                        phrase_bonus = 1.0 + (0.35 * phrase.count(" "))
+                        keyword_scores[phrase] = keyword_scores.get(phrase, 0.0) + (
+                            score * base_weight * source_multiplier * phrase_bonus
+                        )
+
+                # Hashtags can provide strong explicit intent signals.
                 desc = video.get("description", "")
-                hashtags = [w for w in desc.split() if w.startswith("#")]
-                for tag in hashtags:
-                    keywords.add(tag.strip("#"))
+                hashtags = [tag.lower() for tag in re.findall(r"#([a-z0-9_]+)", desc)]
+                for hashtag in hashtags:
+                    if hashtag in self.KEYWORD_STOPWORDS or hashtag in seed_terms:
+                        continue
+                    keyword_scores[hashtag] = keyword_scores.get(hashtag, 0.0) + (2.0 * base_weight)
 
-        return list(keywords)[:max_keywords]
+        ranked_keywords = sorted(keyword_scores.items(), key=lambda item: (-item[1], item[0]))
+        return [keyword for keyword, _ in ranked_keywords[:max_keywords]]
+
+    def _extract_keyword_tokens(self, text: str) -> list[str]:
+        """Extract normalized keyword tokens with stopword/noise filtering."""
+        raw_tokens = re.findall(r"[a-z0-9']+", text.lower())
+        tokens: list[str] = []
+        for token in raw_tokens:
+            if len(token) < 3:
+                continue
+            if token.isdigit():
+                continue
+            if token in self.KEYWORD_STOPWORDS:
+                continue
+            tokens.append(token)
+        return tokens
+
+    def _score_weighted_ngrams(self, tokens: list[str]) -> dict[str, float]:
+        """Score unigram/bigram/trigram candidates with phrase preference."""
+        scores: dict[str, float] = {}
+        if not tokens:
+            return scores
+
+        for token in tokens:
+            scores[token] = scores.get(token, 0.0) + 0.75
+
+        for idx in range(len(tokens) - 1):
+            bigram = f"{tokens[idx]} {tokens[idx + 1]}"
+            scores[bigram] = scores.get(bigram, 0.0) + 2.4
+
+        for idx in range(len(tokens) - 2):
+            trigram = f"{tokens[idx]} {tokens[idx + 1]} {tokens[idx + 2]}"
+            scores[trigram] = scores.get(trigram, 0.0) + 3.1
+
+        return scores
 
     def research_topic(
         self,
@@ -384,11 +659,21 @@ class YouTubeResearcher:
             return {}
 
         # Calculate average metrics
-        view_counts = [v.get("view_count", 0) for v in videos if v.get("view_count")]
-        like_counts = [v.get("like_count", 0) for v in videos if v.get("like_count")]
+        view_counts = [self._safe_int(v.get("view_count")) for v in videos]
+        like_counts = [self._safe_int(v.get("like_count")) for v in videos]
+        engagement_rates = [float(v.get("engagement_rate", 0.0) or 0.0) for v in videos]
+        velocity_values = [float(v.get("velocity_per_hour", 0.0) or 0.0) for v in videos]
 
         avg_views = sum(view_counts) / len(view_counts) if view_counts else 0
         avg_likes = sum(like_counts) / len(like_counts) if like_counts else 0
+        competition_score = self._calculate_competition_score(videos, competitors)
+        posting_windows = self._best_posting_windows(videos)
+
+        sorted_rates = sorted(engagement_rates)
+        upper_quartile = (
+            sorted_rates[max(int(len(sorted_rates) * 0.75) - 1, 0)] if sorted_rates else 0.0
+        )
+        avg_velocity = sum(velocity_values) / len(velocity_values) if velocity_values else 0.0
 
         # Find best performing videos
         sorted_by_views = sorted(videos, key=lambda x: x.get("view_count", 0), reverse=True)
@@ -396,6 +681,23 @@ class YouTubeResearcher:
         # Analyze title patterns
         title_lengths = [len(v.get("title", "")) for v in videos]
         avg_title_length = sum(title_lengths) / len(title_lengths) if title_lengths else 0
+
+        engagement_benchmarks = {
+            "avg_engagement_rate": round(sum(engagement_rates) / len(engagement_rates), 4)
+            if engagement_rates
+            else 0.0,
+            "median_engagement_rate": round(median(engagement_rates), 4)
+            if engagement_rates
+            else 0.0,
+            "top_quartile_engagement_rate": round(upper_quartile, 4),
+            "avg_velocity_per_hour": round(avg_velocity, 4),
+        }
+
+        posting_patterns = {
+            "total_videos_with_publish_time": sum(1 for v in videos if v.get("published_at_valid")),
+            "best_posting_windows": posting_windows,
+            "top_weekdays": self._top_posting_days(videos),
+        }
 
         return {
             "avg_views": int(avg_views),
@@ -405,19 +707,149 @@ class YouTubeResearcher:
             "top_video_views": sorted_by_views[0].get("view_count") if sorted_by_views else 0,
             "total_videos_analyzed": len(videos),
             "total_competitors": len(competitors),
-            "recommendation": self._get_recommendation(avg_views, avg_title_length),
+            "competition_score": competition_score,
+            "competition_tier": self._competition_tier(competition_score),
+            "engagement_benchmarks": engagement_benchmarks,
+            "best_posting_windows": posting_windows,
+            "posting_patterns": posting_patterns,
+            "recommendation": self._get_recommendation(
+                avg_views=avg_views,
+                avg_title_length=avg_title_length,
+                competition_score=competition_score,
+                avg_engagement=engagement_benchmarks["avg_engagement_rate"],
+            ),
         }
 
-    def _get_recommendation(self, avg_views: float, avg_title_length: float) -> str:
+    def _calculate_competition_score(
+        self,
+        videos: list[dict[str, Any]],
+        competitors: list[dict[str, Any]],
+    ) -> float:
+        """Estimate topic competition on a 0-100 scale."""
+        if not videos:
+            return 0.0
+
+        avg_views = sum(self._safe_int(v.get("view_count")) for v in videos) / len(videos)
+        max_views = max(self._safe_int(v.get("view_count")) for v in videos)
+        avg_competitor_subscribers = (
+            sum(self._safe_int(c.get("subscriber_count")) for c in competitors) / len(competitors)
+            if competitors
+            else 0.0
+        )
+        large_competitor_ratio = (
+            sum(1 for c in competitors if self._safe_int(c.get("subscriber_count")) >= 100_000)
+            / len(competitors)
+            if competitors
+            else 0.0
+        )
+
+        normalized_views = min(avg_views / 250_000, 1.0)
+        normalized_competitor_count = min(len(competitors) / 10, 1.0)
+        normalized_subscribers = min(avg_competitor_subscribers / 1_000_000, 1.0)
+        normalized_top_video_ratio = min((max_views / max(avg_views, 1.0)) / 10, 1.0)
+
+        weighted_score = (
+            normalized_views * 0.35
+            + normalized_competitor_count * 0.30
+            + normalized_subscribers * 0.20
+            + normalized_top_video_ratio * 0.10
+            + large_competitor_ratio * 0.05
+        )
+        return round(min(max(weighted_score * 100, 0.0), 100.0), 2)
+
+    def _competition_tier(self, competition_score: float) -> str:
+        """Convert competition score to a stable label for UI display."""
+        if competition_score >= 70:
+            return "high"
+        if competition_score >= 40:
+            return "medium"
+        return "low"
+
+    def _best_posting_windows(
+        self,
+        videos: list[dict[str, Any]],
+        limit: int = 3,
+    ) -> list[dict[str, Any]]:
+        """Return best UTC posting windows based on historical publish-time concentration."""
+        parsed_times = [
+            self._parse_published_at(video.get("published_at"))
+            for video in videos
+            if video.get("published_at")
+        ]
+        valid_times = [timestamp for timestamp in parsed_times if timestamp is not None]
+        if not valid_times:
+            return []
+
+        total = len(valid_times)
+        hour_counts = Counter(timestamp.hour for timestamp in valid_times)
+        hour_weekday_counts: dict[int, Counter[str]] = {}
+        for timestamp in valid_times:
+            hour_weekday_counts.setdefault(timestamp.hour, Counter())[timestamp.strftime("%A")] += 1
+
+        windows = []
+        for hour, count in hour_counts.most_common(limit):
+            weekday_counter = hour_weekday_counts.get(hour, Counter())
+            strongest_weekday = weekday_counter.most_common(1)[0][0] if weekday_counter else "Any"
+
+            windows.append(
+                {
+                    "window": f"{hour:02d}:00-{hour:02d}:59 UTC",
+                    "hour_utc": hour,
+                    "videos_published": count,
+                    "share_of_posts": round(count / total, 4),
+                    "strongest_weekday": strongest_weekday,
+                }
+            )
+
+        return windows
+
+    def _top_posting_days(
+        self,
+        videos: list[dict[str, Any]],
+        limit: int = 3,
+    ) -> list[dict[str, Any]]:
+        """Return most common UTC weekdays for publish times."""
+        weekdays: list[str] = []
+        for video in videos:
+            published_at = self._parse_published_at(video.get("published_at"))
+            if published_at is not None:
+                weekdays.append(published_at.strftime("%A"))
+
+        if not weekdays:
+            return []
+
+        counts = Counter(weekdays)
+        total = len(weekdays)
+        return [
+            {
+                "weekday": weekday,
+                "videos_published": count,
+                "share_of_posts": round(count / total, 4),
+            }
+            for weekday, count in counts.most_common(limit)
+        ]
+
+    def _get_recommendation(
+        self,
+        avg_views: float,
+        avg_title_length: float,
+        competition_score: float,
+        avg_engagement: float,
+    ) -> str:
         """Generate a recommendation based on insights."""
         recommendations = []
 
-        if avg_views > 100000:
+        if competition_score >= 70:
             recommendations.append("This is a high-competition topic with viral potential.")
-        elif avg_views > 10000:
+        elif competition_score >= 40:
             recommendations.append("Good engagement potential with moderate competition.")
         else:
             recommendations.append("Lower competition - good opportunity for growth.")
+
+        if avg_engagement >= 0.08:
+            recommendations.append("Engagement is strong; prioritize clips with explicit hooks.")
+        elif avg_engagement < 0.03:
+            recommendations.append("Engagement is low; sharpen intros and tighten pacing.")
 
         if avg_title_length > 60:
             recommendations.append("Consider shorter, punchier titles (under 60 chars).")

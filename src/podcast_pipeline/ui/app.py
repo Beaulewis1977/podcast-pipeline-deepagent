@@ -106,6 +106,87 @@ def load_jobs_list() -> list[dict[str, Any]]:
         return []
 
 
+def _build_research_panel_data(research_payload: dict[str, Any]) -> dict[str, Any]:
+    """Transform research artifact data into UI-friendly display values."""
+    insights = research_payload.get("insights", {}) or {}
+    engagement = insights.get("engagement_benchmarks", {}) or {}
+
+    raw_posting_windows = insights.get("best_posting_windows", [])
+    posting_windows: list[str] = []
+    for item in raw_posting_windows:
+        if not isinstance(item, dict):
+            continue
+        window = item.get("window")
+        videos_published = item.get("videos_published")
+        if window and videos_published is not None:
+            posting_windows.append(f"{window} ({videos_published} videos)")
+        elif window:
+            posting_windows.append(str(window))
+
+    competition_score = insights.get("competition_score")
+    if isinstance(competition_score, (int, float)):
+        competition_score = float(competition_score)
+    else:
+        competition_score = None
+
+    return {
+        "query": research_payload.get("query", "N/A"),
+        "competition_score": competition_score,
+        "competition_tier": insights.get("competition_tier"),
+        "avg_engagement_rate": engagement.get("avg_engagement_rate"),
+        "avg_velocity_per_hour": engagement.get("avg_velocity_per_hour"),
+        "keywords": [
+            str(keyword) for keyword in research_payload.get("suggested_keywords", [])[:10]
+        ],
+        "posting_windows": posting_windows,
+    }
+
+
+def _build_clip_score_rows(viral_payload: dict[str, Any], limit: int = 10) -> list[dict[str, Any]]:
+    """Build sorted clip score rows with legacy-field fallbacks."""
+
+    def _to_score(value: Any, default: float = 0.0) -> float:
+        try:
+            score = float(value)
+        except (TypeError, ValueError):
+            return default
+        return min(max(score, 0.0), 10.0)
+
+    rows: list[dict[str, Any]] = []
+    for item in viral_payload.get("clip_scores", []) or []:
+        if not isinstance(item, dict):
+            continue
+        clip = item.get("clip", {}) or {}
+        legacy_score = item.get("score", {}) or {}
+
+        ai_score = _to_score(item.get("ai_score", clip.get("virality_score", 0)))
+        detector_score = _to_score(item.get("detector_score", legacy_score.get("overall_score", 0)))
+        combined_score = item.get("combined_score")
+        if combined_score is None:
+            combined_score = min(max((ai_score * 0.45) + (detector_score * 0.55), 0.0), 10.0)
+        combined_score = _to_score(combined_score)
+
+        reasons = item.get("reasons")
+        if not isinstance(reasons, list) or not reasons:
+            reasons = legacy_score.get("reasons", []) if isinstance(legacy_score, dict) else []
+        reason_text = "; ".join(str(reason) for reason in reasons[:2]) if reasons else ""
+
+        rows.append(
+            {
+                "Start (s)": clip.get("start_seconds", 0),
+                "End (s)": clip.get("end_seconds", 0),
+                "AI Score": round(ai_score, 2),
+                "Detector Score": round(detector_score, 2),
+                "Combined Score": round(combined_score, 2),
+                "Reasons": reason_text,
+                "Description": clip.get("description", ""),
+            }
+        )
+
+    rows.sort(key=lambda row: row["Combined Score"], reverse=True)
+    return rows[:limit]
+
+
 # ============================================================================
 # Dashboard Page
 # ============================================================================
@@ -640,13 +721,38 @@ def render_marketing_editor(job_dir: Path) -> None:
             if research_path.exists():
                 try:
                     research = json.loads(research_path.read_text())
+                    panel_data = _build_research_panel_data(research)
                     st.markdown("**Research Query:**")
-                    st.caption(research.get("query", "N/A"))
+                    st.caption(panel_data["query"])
 
-                    keywords = research.get("suggested_keywords", [])
+                    if panel_data["competition_score"] is not None:
+                        competition_tier = panel_data.get("competition_tier") or "unrated"
+                        st.markdown("**Competition Score:**")
+                        st.caption(
+                            f"{panel_data['competition_score']:.1f}/100 ({competition_tier} competition)"
+                        )
+
+                    avg_engagement = panel_data.get("avg_engagement_rate")
+                    avg_velocity = panel_data.get("avg_velocity_per_hour")
+                    if avg_engagement is not None or avg_velocity is not None:
+                        st.markdown("**Engagement Benchmarks:**")
+                        metrics = []
+                        if avg_engagement is not None:
+                            metrics.append(f"avg engagement: {float(avg_engagement):.4f}")
+                        if avg_velocity is not None:
+                            metrics.append(f"avg velocity/hr: {float(avg_velocity):.2f}")
+                        st.caption(" • ".join(metrics))
+
+                    keywords = panel_data["keywords"]
                     if keywords:
-                        st.markdown("**Trending Keywords:**")
-                        st.write(", ".join(keywords[:10]))
+                        st.markdown("**Top Weighted Keywords:**")
+                        st.write(", ".join(keywords))
+
+                    posting_windows = panel_data["posting_windows"]
+                    if posting_windows:
+                        st.markdown("**Best Posting Windows (UTC):**")
+                        for window in posting_windows[:3]:
+                            st.caption(window)
 
                     competitors = research.get("competitor_channels", [])
                     if competitors:
@@ -681,20 +787,8 @@ def render_marketing_editor(job_dir: Path) -> None:
 
                     clip_scores = viral.get("clip_scores", [])
                     if clip_scores:
-                        st.markdown("**Per-Clip Viral Scores:**")
-                        table_rows = []
-                        for item in clip_scores[:10]:
-                            clip = item.get("clip", {})
-                            score = item.get("score", {})
-                            table_rows.append(
-                                {
-                                    "Start (s)": clip.get("start_seconds", 0),
-                                    "End (s)": clip.get("end_seconds", 0),
-                                    "Score": score.get("overall_score", 0),
-                                    "Description": clip.get("description", ""),
-                                }
-                            )
-                        st.table(table_rows)
+                        st.markdown("**Per-Clip Score Breakdown:**")
+                        st.table(_build_clip_score_rows(viral, limit=10))
                 except Exception as e:
                     st.warning(f"Failed to load viral signals: {e}")
 

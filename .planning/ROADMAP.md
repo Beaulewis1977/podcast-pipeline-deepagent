@@ -54,6 +54,7 @@ Plans:
 **Goal:** Research signals materially improve title/thumbnail/clip recommendations.
 
 **Dependencies:** Phase 1
+**Status:** Code complete (verified 2026-02-04) — UAT in progress (see 02-UAT.md)
 
 **Scope / Requirements:**
 - Add engagement rate + velocity metrics to YouTube research output
@@ -67,6 +68,15 @@ Plans:
 **Success Criteria:**
 1. Research artifacts are produced per job and visible in the UI
 2. Viral clip ranking reflects combined AI + research signals
+
+**Plans:** 5 plans
+
+Plans:
+- [x] 02-01-PLAN.md — Research metrics foundation (engagement/velocity/competition/posting)
+- [x] 02-02-PLAN.md — Viral detector signal expansion + scoring updates
+- [x] 02-03-PLAN.md — Weighted keyword extraction + YouTube API caching
+- [x] 02-04-PLAN.md — Analyze-stage combined clip re-ranking
+- [x] 02-05-PLAN.md — UI visibility for research and combined viral scoring
 
 ---
 

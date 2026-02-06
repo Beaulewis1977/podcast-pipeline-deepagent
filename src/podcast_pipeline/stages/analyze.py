@@ -24,6 +24,8 @@ class AnalyzeStage(Stage):
     """Analyze video content using AI providers."""
 
     name = "analyze"
+    ai_score_weight = 0.45
+    detector_score_weight = 0.55
 
     def __init__(self, config: Config):
         super().__init__(config)
@@ -216,6 +218,19 @@ class AnalyzeStage(Stage):
         fallback = Path(job.input_file).stem or job.job_id
         return fallback, []
 
+    def _normalize_score(self, value: Any, default: float = 5.0) -> float:
+        """Normalize potentially-missing score inputs to bounded floats."""
+        try:
+            score = float(value)
+        except (TypeError, ValueError):
+            return default
+        return min(max(score, 0.0), 10.0)
+
+    def _combined_score(self, ai_score: float, detector_score: float) -> float:
+        """Blend provider and detector scores into one bounded value."""
+        combined = ai_score * self.ai_score_weight + detector_score * self.detector_score_weight
+        return min(max(combined, 0.0), 10.0)
+
     def _run_viral_signals(
         self,
         analysis_result: AnalysisResult,
@@ -233,12 +248,32 @@ class AnalyzeStage(Stage):
             clip_scores = []
             for clip in analysis_data.get("viral_clips", []) or []:
                 score = detector.score_clip(clip, transcript_data, signals)
+                score_payload = score.model_dump()
+                ai_score = self._normalize_score(clip.get("virality_score"))
+                detector_score = self._normalize_score(score.overall_score, default=0.0)
+                combined_score = self._combined_score(ai_score, detector_score)
+                reason_snippets = [str(reason) for reason in score_payload.get("reasons", [])[:3]]
                 clip_scores.append(
                     {
                         "clip": clip,
-                        "score": score.model_dump(),
+                        "score": score_payload,
+                        "ai_score": round(ai_score, 2),
+                        "detector_score": round(detector_score, 2),
+                        "combined_score": round(combined_score, 2),
+                        "reasons": reason_snippets,
+                        "score_components": {
+                            "ai_weight": self.ai_score_weight,
+                            "detector_weight": self.detector_score_weight,
+                        },
                     }
                 )
+
+            clip_scores.sort(
+                key=lambda item: (item["combined_score"], item["detector_score"]),
+                reverse=True,
+            )
+            for rank, item in enumerate(clip_scores, start=1):
+                item["rank"] = rank
 
             def _serialize_signal(obj: Any) -> dict[str, Any]:
                 """Safely serialize dataclass or Pydantic model to dict."""
@@ -254,6 +289,10 @@ class AnalyzeStage(Stage):
                 "generated_at": datetime.now(UTC).isoformat(),
                 "signals": [_serialize_signal(signal) for signal in signals],
                 "clip_scores": clip_scores,
+                "score_weights": {
+                    "ai_weight": self.ai_score_weight,
+                    "detector_weight": self.detector_score_weight,
+                },
             }
 
             viral_path = job_dir / "analysis" / "viral_signals.json"
