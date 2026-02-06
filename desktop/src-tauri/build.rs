@@ -24,6 +24,9 @@ fn main() {
 
     // --- Sidecar binary validation ---
 
+    // Always register this so Cargo re-runs when the env var is added/removed.
+    println!("cargo:rerun-if-env-changed=SKIP_SIDECAR_CHECK");
+
     // Skip validation when SKIP_SIDECAR_CHECK is set (CI, dev iteration).
     if env::var("SKIP_SIDECAR_CHECK").is_ok() {
         println!("cargo:warning=SKIP_SIDECAR_CHECK set - skipping sidecar binary validation");
@@ -100,5 +103,4 @@ fn main() {
             binaries_dir.join(format!("{name}-{target}{ext}")).display()
         );
     }
-    println!("cargo:rerun-if-env-changed=SKIP_SIDECAR_CHECK");
 }

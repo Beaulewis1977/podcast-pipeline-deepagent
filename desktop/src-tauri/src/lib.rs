@@ -32,24 +32,24 @@ async fn start_sidecar(
     app: tauri::AppHandle,
     state: State<'_, SidecarState>,
 ) -> Result<SidecarStatus, String> {
+    // Hold the lock through check → spawn → assign to prevent double-spawn races.
+    let mut pid_guard = state.pid.lock().map_err(|e| e.to_string())?;
+
     // Check if already running (verify the process is still alive)
-    {
-        let mut pid_guard = state.pid.lock().map_err(|e| e.to_string())?;
-        if let Some(pid) = *pid_guard {
-            #[cfg(unix)]
-            let alive = unsafe { libc::kill(pid as i32, 0) == 0 };
-            #[cfg(not(unix))]
-            let alive = true; // Rely on health endpoint for Windows liveness
-            if alive {
-                return Ok(SidecarStatus {
-                    running: true,
-                    pid: Some(pid),
-                    port: BACKEND_PORT,
-                });
-            }
-            // Process died unexpectedly; clear stale PID and fall through to restart
-            *pid_guard = None;
+    if let Some(pid) = *pid_guard {
+        #[cfg(unix)]
+        let alive = unsafe { libc::kill(pid as i32, 0) == 0 };
+        #[cfg(not(unix))]
+        let alive = true; // Rely on health endpoint for Windows liveness
+        if alive {
+            return Ok(SidecarStatus {
+                running: true,
+                pid: Some(pid),
+                port: BACKEND_PORT,
+            });
         }
+        // Process died unexpectedly; clear stale PID and fall through to restart
+        *pid_guard = None;
     }
 
     let shell = app.shell();
@@ -63,11 +63,7 @@ async fn start_sidecar(
         .map_err(|e| format!("Failed to spawn sidecar: {e}"))?;
 
     let child_pid = child.pid();
-
-    {
-        let mut pid_guard = state.pid.lock().map_err(|e| e.to_string())?;
-        *pid_guard = Some(child_pid);
-    }
+    *pid_guard = Some(child_pid);
 
     Ok(SidecarStatus {
         running: true,
@@ -86,26 +82,33 @@ async fn stop_sidecar(
     let mut pid_guard = state.pid.lock().map_err(|e| e.to_string())?;
 
     if let Some(pid) = *pid_guard {
-        // Use SIGTERM via kill on Unix; on Windows this sends TerminateProcess
+        // Use SIGTERM via kill on Unix; on Windows this sends TerminateProcess.
+        // Only clear the tracked PID when termination succeeds.
         #[cfg(unix)]
         {
             // SAFETY: pid is a valid process ID obtained from child.pid() during
             // spawn, and SIGTERM is a standard signal that is always safe to send.
             let ret = unsafe { libc::kill(pid as i32, libc::SIGTERM) };
             if ret != 0 {
-                eprintln!(
-                    "Failed to terminate sidecar PID {pid}: {}",
-                    std::io::Error::last_os_error()
-                );
+                let err = std::io::Error::last_os_error();
+                return Err(format!("Failed to terminate sidecar PID {pid}: {err}"));
             }
         }
         #[cfg(not(unix))]
         {
-            if let Err(e) = std::process::Command::new("taskkill")
+            match std::process::Command::new("taskkill")
                 .args(["/PID", &pid.to_string(), "/F"])
                 .status()
             {
-                eprintln!("Failed to terminate sidecar PID {pid}: {e}");
+                Ok(status) if status.success() => {}
+                Ok(status) => {
+                    return Err(format!(
+                        "taskkill exited with {status} for sidecar PID {pid}"
+                    ));
+                }
+                Err(e) => {
+                    return Err(format!("Failed to run taskkill for sidecar PID {pid}: {e}"));
+                }
             }
         }
 
