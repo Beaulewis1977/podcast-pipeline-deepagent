@@ -109,9 +109,63 @@ def load_jobs_list() -> list[dict[str, Any]]:
 # ============================================================================
 # Dashboard Page
 # ============================================================================
+def render_resumable_jobs() -> None:
+    """Show resumable jobs banner if any interrupted jobs exist."""
+    client = get_service_client()
+    try:
+        resumable = client.list_resumable_jobs()
+    except ServiceError:
+        return
+
+    if not resumable.jobs:
+        return
+
+    st.warning(
+        f"**Recovery:** {len(resumable.jobs)} interrupted "
+        f"{'job' if len(resumable.jobs) == 1 else 'jobs'} found"
+    )
+
+    for job in resumable.jobs:
+        with st.container():
+            col1, col2, col3 = st.columns([3, 2, 1])
+            with col1:
+                st.markdown(f"**{job.job_id}**")
+                st.caption(
+                    f"Resume from: **{job.resume_stage}** | "
+                    f"Done: {', '.join(job.completed_stages) or 'none'}"
+                )
+            with col2:
+                if job.failed_stages:
+                    st.caption(f"Failed: {', '.join(job.failed_stages)}")
+                if job.interrupted:
+                    st.caption("(interrupted)")
+            with col3:
+                if st.button("Resume", key=f"resume_{job.job_id}"):
+                    resume_job_via_service(job.job_id, job.resume_stage)
+
+    st.divider()
+
+
+def resume_job_via_service(job_id: str, from_stage: str) -> None:
+    """Resume an interrupted job through the backend service."""
+    client = get_service_client()
+    with st.spinner(f"Resuming {job_id} from {from_stage}..."):
+        try:
+            result = client.resume_job(job_id, from_stage=from_stage)
+            st.success(f"Resumed: {result.message}")
+            st.rerun()
+        except ServiceUnavailableError:
+            st.error("Backend service is not running. Start it with: `podcast-pipeline service`")
+        except ServiceError as exc:
+            st.error(f"Resume failed: {exc}")
+
+
 def render_dashboard() -> None:
     """Render main dashboard with job list and status."""
     st.header("📊 Dashboard")
+
+    # Show resumable jobs banner if any exist
+    render_resumable_jobs()
 
     col1, col2 = st.columns([3, 1])
     with col1:
