@@ -143,9 +143,14 @@ h2 {
     border-color 0.2s;
 }
 
-.btn:hover {
+.btn:hover:not(:disabled) {
   background: var(--bg-secondary);
   border-color: var(--accent);
+}
+
+.btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .btn:disabled {
@@ -158,7 +163,7 @@ h2 {
   border-color: var(--accent);
 }
 
-.btn-primary:hover {
+.btn-primary:hover:not(:disabled) {
   background: var(--accent-hover);
 }
 

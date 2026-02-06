@@ -328,7 +328,7 @@ async def resume_job(job_id: str, body: ResumeJobRequest, request: Request) -> R
             )
         return ResumeJobResponse(
             job_id=job_id,
-            status="running",
+            status="complete",
             message=f"Resumed from {resume_stage}",
         )
     except Exception as exc:

@@ -56,8 +56,11 @@ class RuntimeMeta:
         """Atomically write runtime.json into the job directory."""
         runtime_file = job_dir / "runtime.json"
         tmp = runtime_file.with_suffix(".tmp")
-        tmp.write_text(json.dumps(self.to_dict(), indent=2))
-        tmp.rename(runtime_file)
+        try:
+            tmp.write_text(json.dumps(self.to_dict(), indent=2))
+            tmp.rename(runtime_file)
+        except OSError:
+            logger.exception("runtime_meta_save_failed", job_dir=str(job_dir))
 
     @classmethod
     def load(cls, job_dir: Path) -> "RuntimeMeta | None":
@@ -65,7 +68,11 @@ class RuntimeMeta:
         runtime_file = job_dir / "runtime.json"
         if not runtime_file.exists():
             return None
-        data = json.loads(runtime_file.read_text())
+        try:
+            data = json.loads(runtime_file.read_text())
+        except (json.JSONDecodeError, OSError):
+            logger.warning("runtime_meta_load_failed", path=str(runtime_file))
+            return None
         return cls(
             job_id=data["job_id"],
             pid=data["pid"],

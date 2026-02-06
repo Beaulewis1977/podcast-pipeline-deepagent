@@ -49,7 +49,7 @@ fn main() {
         format!("{arch}-{vendor}-{os_label}")
     });
 
-    let ext = if cfg!(target_os = "windows") {
+    let ext = if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
         ".exe"
     } else {
         ""

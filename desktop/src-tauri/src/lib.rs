@@ -81,16 +81,20 @@ async fn stop_sidecar(
         // Use SIGTERM via kill on Unix; on Windows this sends TerminateProcess
         #[cfg(unix)]
         {
+            // SAFETY: pid is a valid process ID obtained from child.pid() during
+            // spawn, and SIGTERM is a standard signal that is always safe to send.
             unsafe {
                 libc::kill(pid as i32, libc::SIGTERM);
             }
         }
         #[cfg(not(unix))]
         {
-            // Fallback: platform-specific termination
-            let _ = std::process::Command::new("taskkill")
+            if let Err(e) = std::process::Command::new("taskkill")
                 .args(["/PID", &pid.to_string(), "/F"])
-                .spawn();
+                .status()
+            {
+                eprintln!("Failed to terminate sidecar PID {pid}: {e}");
+            }
         }
 
         *pid_guard = None;

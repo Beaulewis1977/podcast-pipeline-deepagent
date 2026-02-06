@@ -264,8 +264,8 @@ def resolve_model(model_name: str | None = None) -> ModelInfo:
 def _dir_has_model_files(path: Path) -> bool:
     """Check whether a directory contains faster-whisper model artifacts."""
     # faster-whisper CTranslate2 models contain a model.bin file
-    expected_files = ["model.bin", "config.json"]
-    return any((path / f).is_file() for f in expected_files)
+    required_files = ["model.bin", "config.json"]
+    return all((path / f).is_file() for f in required_files)
 
 
 def _dir_size(path: Path) -> int:
@@ -276,7 +276,7 @@ def _dir_size(path: Path) -> int:
             if f.is_file():
                 total += f.stat().st_size
     except OSError:
-        pass
+        pass  # Gracefully handle permission/access errors during size calculation
     return total
 
 

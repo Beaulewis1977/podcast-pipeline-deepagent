@@ -17,7 +17,7 @@
  */
 
 import { existsSync, copyFileSync, chmodSync, mkdirSync, readdirSync } from "node:fs";
-import { resolve, basename, join } from "node:path";
+import { resolve, join } from "node:path";
 import { execSync } from "node:child_process";
 import { platform, arch } from "node:os";
 import { fileURLToPath } from "node:url";
