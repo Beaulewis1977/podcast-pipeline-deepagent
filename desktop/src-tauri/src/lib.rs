@@ -40,7 +40,15 @@ async fn start_sidecar(
         #[cfg(unix)]
         let alive = unsafe { libc::kill(pid as i32, 0) == 0 };
         #[cfg(not(unix))]
-        let alive = true; // Rely on health endpoint for Windows liveness
+        let alive = std::process::Command::new("tasklist")
+            .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV"])
+            .output()
+            .ok()
+            .map(|out| {
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                stdout.contains(&format!("\"{pid}\""))
+            })
+            .unwrap_or(false);
         if alive {
             return Ok(SidecarStatus {
                 running: true,
