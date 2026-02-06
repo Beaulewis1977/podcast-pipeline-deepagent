@@ -91,7 +91,8 @@ async fn stop_sidecar(
 
     if let Some(pid) = *pid_guard {
         // Use SIGTERM via kill on Unix; on Windows this sends TerminateProcess.
-        // Only clear the tracked PID when termination succeeds.
+        // Only clear the tracked PID when termination succeeds or the
+        // process is already gone (ESRCH / not found).
         #[cfg(unix)]
         {
             // SAFETY: pid is a valid process ID obtained from child.pid() during
@@ -99,7 +100,10 @@ async fn stop_sidecar(
             let ret = unsafe { libc::kill(pid as i32, libc::SIGTERM) };
             if ret != 0 {
                 let err = std::io::Error::last_os_error();
-                return Err(format!("Failed to terminate sidecar PID {pid}: {err}"));
+                // ESRCH = no such process — already exited, treat as success
+                if err.raw_os_error() != Some(libc::ESRCH) {
+                    return Err(format!("Failed to terminate sidecar PID {pid}: {err}"));
+                }
             }
         }
         #[cfg(not(unix))]
@@ -110,9 +114,21 @@ async fn stop_sidecar(
             {
                 Ok(status) if status.success() => {}
                 Ok(status) => {
-                    return Err(format!(
-                        "taskkill exited with {status} for sidecar PID {pid}"
-                    ));
+                    // taskkill failed — check if process is already gone
+                    let still_alive = std::process::Command::new("tasklist")
+                        .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV"])
+                        .output()
+                        .ok()
+                        .map(|out| {
+                            let stdout = String::from_utf8_lossy(&out.stdout);
+                            stdout.contains(&format!("\"{pid}\""))
+                        })
+                        .unwrap_or(false);
+                    if still_alive {
+                        return Err(format!(
+                            "taskkill exited with {status} for sidecar PID {pid}"
+                        ));
+                    }
                 }
                 Err(e) => {
                     return Err(format!("Failed to run taskkill for sidecar PID {pid}: {e}"));
