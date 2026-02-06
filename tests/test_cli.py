@@ -1,10 +1,18 @@
 """Tests for the CLI module."""
 
+import re
+
 from typer.testing import CliRunner
 
 from podcast_pipeline.cli import app
 
 runner = CliRunner()
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _strip_ansi(text: str) -> str:
+    return _ANSI_RE.sub("", text)
 
 
 def test_version():
@@ -80,6 +88,7 @@ def test_service_help():
     """Test 'service' command shows help with host/port options."""
     result = runner.invoke(app, ["service", "--help"])
     assert result.exit_code == 0
-    assert "--host" in result.output
-    assert "--port" in result.output
-    assert "sidecar" in result.output.lower() or "service" in result.output.lower()
+    output = _strip_ansi(result.output)
+    assert "--host" in output
+    assert "--port" in output
+    assert "sidecar" in output.lower() or "service" in output.lower()
