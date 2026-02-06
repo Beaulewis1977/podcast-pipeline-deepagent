@@ -1,7 +1,7 @@
 # Roadmap: Podcast Pipeline
 
 **Created:** 2026-01-29
-**Last Updated:** 2026-02-04
+**Last Updated:** 2026-02-05
 **Milestone:** v1.0 (Streamlit-first)
 **Phases:** 3
 
@@ -70,11 +70,13 @@ Plans:
 
 ---
 
-### Phase 3: Polishing + Desktop Distribution
+### Phase 3: Polishing + Desktop Distribution -- COMPLETE
 
 **Goal:** Package the pipeline into a reliable desktop app (Rust + Tauri v2) with a Python backend service.
 
 **Dependencies:** Phase 2
+
+**Status:** Complete (2026-02-05)
 
 **Scope / Requirements:**
 - Build a backend job runner service reused by Streamlit and desktop
@@ -87,15 +89,15 @@ Plans:
 1. Desktop app can run a full job with no manual setup on a clean machine
 2. Job resume works after app restart
 
-**Plans:** 6 plans
+**Plans:** 6/6 complete
 
 Plans:
-- [ ] 03-01-PLAN.md — Backend service contract + supervisor
-- [ ] 03-02-PLAN.md — Tauri shell + sidecar lifecycle
-- [ ] 03-03-PLAN.md — Streamlit migration to service client
-- [ ] 03-04-PLAN.md — FFmpeg/model asset packaging
-- [ ] 03-05-PLAN.md — Crash recovery + resume orchestration
-- [ ] 03-06-PLAN.md — Installer matrix + smoke validation
+- [x] 03-01-PLAN.md — Backend service contract + supervisor
+- [x] 03-02-PLAN.md — Tauri shell + sidecar lifecycle
+- [x] 03-03-PLAN.md — Streamlit migration to service client
+- [x] 03-04-PLAN.md — FFmpeg/model asset packaging
+- [x] 03-05-PLAN.md — Crash recovery + resume orchestration
+- [x] 03-06-PLAN.md — Installer matrix + smoke validation
 
 ---
 
