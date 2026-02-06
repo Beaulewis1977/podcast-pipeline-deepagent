@@ -32,15 +32,23 @@ async fn start_sidecar(
     app: tauri::AppHandle,
     state: State<'_, SidecarState>,
 ) -> Result<SidecarStatus, String> {
-    // Check if already running
+    // Check if already running (verify the process is still alive)
     {
-        let pid_guard = state.pid.lock().map_err(|e| e.to_string())?;
-        if pid_guard.is_some() {
-            return Ok(SidecarStatus {
-                running: true,
-                pid: *pid_guard,
-                port: BACKEND_PORT,
-            });
+        let mut pid_guard = state.pid.lock().map_err(|e| e.to_string())?;
+        if let Some(pid) = *pid_guard {
+            #[cfg(unix)]
+            let alive = unsafe { libc::kill(pid as i32, 0) == 0 };
+            #[cfg(not(unix))]
+            let alive = true; // Rely on health endpoint for Windows liveness
+            if alive {
+                return Ok(SidecarStatus {
+                    running: true,
+                    pid: Some(pid),
+                    port: BACKEND_PORT,
+                });
+            }
+            // Process died unexpectedly; clear stale PID and fall through to restart
+            *pid_guard = None;
         }
     }
 
@@ -83,8 +91,12 @@ async fn stop_sidecar(
         {
             // SAFETY: pid is a valid process ID obtained from child.pid() during
             // spawn, and SIGTERM is a standard signal that is always safe to send.
-            unsafe {
-                libc::kill(pid as i32, libc::SIGTERM);
+            let ret = unsafe { libc::kill(pid as i32, libc::SIGTERM) };
+            if ret != 0 {
+                eprintln!(
+                    "Failed to terminate sidecar PID {pid}: {}",
+                    std::io::Error::last_os_error()
+                );
             }
         }
         #[cfg(not(unix))]
@@ -108,6 +120,9 @@ async fn stop_sidecar(
 }
 
 /// Get current sidecar status without changing state.
+///
+/// Reports stored PID state. Use the backend health endpoint for
+/// authoritative liveness verification.
 #[tauri::command]
 async fn sidecar_status(
     state: State<'_, SidecarState>,

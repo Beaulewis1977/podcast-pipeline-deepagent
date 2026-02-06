@@ -84,7 +84,7 @@ def test_list_command():
     assert result.exit_code == 0
 
 
-def test_service_help():
+def test_service_help() -> None:
     """Test 'service' command shows help with host/port options."""
     result = runner.invoke(app, ["service", "--help"])
     assert result.exit_code == 0

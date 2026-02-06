@@ -44,7 +44,7 @@ jobs:
           - platform: macos-latest
             target: aarch64-apple-darwin
             backend_ext: ""
-          - platform: macos-14
+          - platform: macos-15-intel
             target: x86_64-apple-darwin
             backend_ext: ""
           - platform: windows-latest
@@ -117,7 +117,7 @@ jobs:
             target: aarch64-apple-darwin
             args: "--target aarch64-apple-darwin"
             ext: ""
-          - platform: macos-14
+          - platform: macos-15-intel
             target: x86_64-apple-darwin
             args: "--target x86_64-apple-darwin"
             ext: ""
@@ -190,27 +190,8 @@ jobs:
           BACKEND_BIN: src-tauri/binaries/podcast-backend-${{ matrix.settings.target }}${{ matrix.settings.ext }}
         run: node scripts/prepare-sidecars.mjs
 
-      # --- Code signing env (macOS) ---
-      - name: Configure macOS signing
-        if: startsWith(matrix.settings.platform, 'macos')
-        env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: echo "macOS signing configured via secrets"
-
-      # --- Code signing env (Windows) ---
-      - name: Configure Windows signing
-        if: matrix.settings.platform == 'windows-latest'
-        env:
-          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
-          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
-        run: echo "Windows signing configured via secrets"
-
       # --- Build with Tauri ---
+      # Code signing secrets are passed directly to the tauri-action step below.
       - name: Build Tauri application
         uses: tauri-apps/tauri-action@v0
         env:
@@ -266,6 +247,9 @@ jobs:
             script: desktop/scripts/smoke-test-desktop.sh
           - platform: macos-latest
             target: aarch64-apple-darwin
+            script: desktop/scripts/smoke-test-desktop.sh
+          - platform: macos-15-intel
+            target: x86_64-apple-darwin
             script: desktop/scripts/smoke-test-desktop.sh
           - platform: windows-latest
             target: x86_64-pc-windows-msvc

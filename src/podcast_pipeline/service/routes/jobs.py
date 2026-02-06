@@ -99,7 +99,7 @@ async def create_job(body: CreateJobRequest, request: Request) -> CreateJobRespo
 
     try:
         job = pipeline.create_job(video_path, name=body.name)
-    except Exception as exc:
+    except (FileNotFoundError, OSError, ValueError) as exc:
         logger.exception("create_job_failed", error=str(exc))
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -187,7 +187,7 @@ async def run_job(job_id: str, body: RunJobRequest, request: Request) -> RunJobR
             status="complete",
             message=f"Ran {len(results)} stage(s) successfully",
         )
-    except Exception as exc:
+    except (FileNotFoundError, OSError, ValueError) as exc:
         logger.exception("run_job_failed", job_id=job_id, error=str(exc))
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -331,6 +331,6 @@ async def resume_job(job_id: str, body: ResumeJobRequest, request: Request) -> R
             status="complete",
             message=f"Resumed from {resume_stage}",
         )
-    except Exception as exc:
+    except (FileNotFoundError, OSError, ValueError) as exc:
         logger.exception("resume_job_failed", job_id=job_id, error=str(exc))
         raise HTTPException(status_code=500, detail=str(exc)) from exc

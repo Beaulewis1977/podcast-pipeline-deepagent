@@ -43,6 +43,7 @@ class RuntimeMeta:
         self.status = status
 
     def to_dict(self) -> dict[str, Any]:
+        """Return a dict of all public fields for JSON serialisation."""
         return {
             "job_id": self.job_id,
             "pid": self.pid,
@@ -125,8 +126,16 @@ class Supervisor:
             self._run_with_heartbeat(job, stage=stage, until_stage=until_stage),
         )
         self._active[job.job_id] = task
-        # Automatically clean up entry when task finishes
-        task.add_done_callback(lambda _t: self._active.pop(job.job_id, None))
+
+        # Clean up entry when task finishes, but only if the mapping still
+        # points to *this* task (a rapid restart may have replaced it).
+        job_id = job.job_id
+
+        def _cleanup(finished_task: asyncio.Task[None]) -> None:
+            if self._active.get(job_id) is finished_task:
+                del self._active[job_id]
+
+        task.add_done_callback(_cleanup)
         return True
 
     def active_jobs(self) -> list[str]:
@@ -166,8 +175,10 @@ class Supervisor:
                 lambda: self.pipeline.run(job, stage=stage, until_stage=until_stage),
             )
             meta.status = "complete"
-        except Exception:
-            logger.exception("background_run_failed", job_id=job.job_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.exception("background_run_failed", job_id=job.job_id, error=str(exc))
             meta.status = "failed"
         finally:
             heartbeat_task.cancel()

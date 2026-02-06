@@ -92,7 +92,13 @@ fn main() {
         panic!("{msg}");
     }
 
-    // Re-run this check when binaries dir changes.
-    println!("cargo:rerun-if-changed=binaries");
+    // Re-run this check when binaries dir or individual sidecar files change.
+    println!("cargo:rerun-if-changed={}", binaries_dir.display());
+    for &(name, _) in SIDECARS {
+        println!(
+            "cargo:rerun-if-changed={}",
+            binaries_dir.join(format!("{name}-{target}{ext}")).display()
+        );
+    }
     println!("cargo:rerun-if-env-changed=SKIP_SIDECAR_CHECK");
 }
