@@ -512,6 +512,8 @@ def render_timeline_editor(job_id: str, job_dir: Path) -> None:
     if review_path.exists():
         with contextlib.suppress(Exception):
             decisions = ReviewDecisions.model_validate_json(review_path.read_text())
+    if decisions is None:
+        decisions = ReviewDecisions()
 
     # Content Cuts Section
     st.markdown("#### Content Cuts")
@@ -520,7 +522,7 @@ def render_timeline_editor(job_id: str, job_dir: Path) -> None:
     if not content_cuts:
         st.info("No content cuts suggested.")
     else:
-        approved_cuts = decisions.approved_content_cuts if decisions else []
+        approved_cuts = list(decisions.approved_content_cuts)
 
         for i, cut in enumerate(content_cuts):
             with st.container():
@@ -544,55 +546,71 @@ def render_timeline_editor(job_id: str, job_dir: Path) -> None:
                 with col4:
                     st.caption(f"Cut #{i + 1}")
 
+        decisions.approved_content_cuts = sorted(set(approved_cuts))
+
     st.divider()
 
     # Filler Words Section
     st.markdown("#### Filler Words")
+    filler_path = job_dir / "analysis" / "filler_cuts.json"
     transcript_path = job_dir / "analysis" / "transcript.json"
 
-    if transcript_path.exists():
-        try:
+    fillers: list[dict[str, Any]] = []
+    try:
+        if filler_path.exists():
+            raw_fillers = json.loads(filler_path.read_text())
+            if isinstance(raw_fillers, list):
+                fillers = [f for f in raw_fillers if isinstance(f, dict)]
+        elif transcript_path.exists():
             transcript = json.loads(transcript_path.read_text())
-            fillers = transcript.get("filler_words", [])
+            transcript_fillers = (
+                transcript.get("filler_cuts") or transcript.get("filler_words") or []
+            )
+            if isinstance(transcript_fillers, list):
+                fillers = [f for f in transcript_fillers if isinstance(f, dict)]
+    except Exception as e:
+        st.error(f"Failed to load filler cuts: {e}")
 
-            if not fillers:
-                st.success("No filler words detected!")
-            else:
-                st.info(f"Found {len(fillers)} filler words")
+    if not fillers:
+        st.success("No filler words detected!")
+    else:
+        st.info(f"Found {len(fillers)} filler words")
 
-                # Show summary of fillers
-                with st.expander(f"View {len(fillers)} filler words"):
-                    approved_fillers = (
-                        decisions.approved_filler_cuts if decisions else list(range(len(fillers)))
+        with st.expander(f"View {len(fillers)} filler words"):
+            approved_fillers = list(decisions.approved_filler_cuts or list(range(len(fillers))))
+
+            select_all = st.checkbox(
+                "Select All Fillers",
+                value=len(approved_fillers) == len(fillers),
+                key="select_all_fillers",
+            )
+
+            if select_all:
+                approved_fillers = list(range(len(fillers)))
+
+            for j, filler in enumerate(fillers[:50]):  # Show first 50
+                col1, col2, col3 = st.columns([1, 2, 2])
+                with col1:
+                    selected = st.checkbox(
+                        "✓",
+                        value=j in approved_fillers,
+                        key=f"filler_{j}",
+                        label_visibility="collapsed",
                     )
+                    if selected and j not in approved_fillers:
+                        approved_fillers.append(j)
+                    elif not selected and j in approved_fillers:
+                        approved_fillers.remove(j)
+                with col2:
+                    st.caption(f'"{filler.get("word", "")}"')
+                with col3:
+                    start = filler.get("start_seconds", filler.get("start", ""))
+                    st.caption(f"{start}")
 
-                    select_all = st.checkbox(
-                        "Select All Fillers",
-                        value=len(approved_fillers) == len(fillers),
-                        key="select_all_fillers",
-                    )
+            if len(fillers) > 50:
+                st.caption(f"... and {len(fillers) - 50} more")
 
-                    if select_all:
-                        approved_fillers = list(range(len(fillers)))
-
-                    for j, filler in enumerate(fillers[:50]):  # Show first 50
-                        col1, col2, col3 = st.columns([1, 2, 2])
-                        with col1:
-                            st.checkbox(
-                                "✓",
-                                value=j in approved_fillers,
-                                key=f"filler_{j}",
-                                label_visibility="collapsed",
-                            )
-                        with col2:
-                            st.caption(f'"{filler.get("word", "")}"')
-                        with col3:
-                            st.caption(f"{filler.get('start', '')}")
-
-                    if len(fillers) > 50:
-                        st.caption(f"... and {len(fillers) - 50} more")
-        except Exception as e:
-            st.error(f"Failed to load transcript: {e}")
+            decisions.approved_filler_cuts = sorted(set(approved_fillers))
 
     # Save changes button
     if st.button("💾 Save Timeline Changes", key="save_timeline"):
@@ -873,7 +891,22 @@ def render_marketing_editor(job_dir: Path) -> None:
 
     with col2:
         if st.button("🔄 Regenerate Marketing Copy", key="regen_marketing"):
-            st.info("Regenerating marketing copy... (This would call AI in production)")
+            job_id = job_dir.name
+            client = get_service_client()
+            with st.spinner("Regenerating analysis and marketing copy..."):
+                try:
+                    result = client.resume_job(job_id, from_stage="analyze")
+                    if result.status in {"complete", "running"}:
+                        st.success("Regenerated. Reloading latest analysis...")
+                        st.rerun()
+                    else:
+                        st.error(f"Regeneration failed: {result.message}")
+                except ServiceUnavailableError:
+                    st.error(
+                        "Backend service is not running. Start it with: `podcast-pipeline service`"
+                    )
+                except ServiceError as exc:
+                    st.error(f"Regeneration error: {exc}")
 
 
 def render_export_panel(job_id: str, job_dir: Path) -> None:

@@ -164,7 +164,11 @@ async def reconcile_jobs(request: Request) -> dict[str, int]:
 
 
 @router.post("/{job_id}/run", response_model=RunJobResponse)
-async def run_job(job_id: str, body: RunJobRequest, request: Request) -> RunJobResponse:
+async def run_job(
+    job_id: str,
+    request: Request,
+    body: RunJobRequest | None = None,
+) -> RunJobResponse:
     """Trigger a synchronous pipeline run for a job.
 
     For background (non-blocking) execution see the supervisor module,
@@ -174,7 +178,12 @@ async def run_job(job_id: str, body: RunJobRequest, request: Request) -> RunJobR
     job = _load_job_or_404(pipeline, job_id)
 
     try:
-        results = pipeline.run(job, stage=body.stage, until_stage=body.until_stage)
+        request_body = body or RunJobRequest()
+        results = pipeline.run(
+            job,
+            stage=request_body.stage,
+            until_stage=request_body.until_stage,
+        )
         failed = [name for name, r in results.items() if not r.success]
         if failed:
             return RunJobResponse(
@@ -199,7 +208,9 @@ async def run_job(job_id: str, body: RunJobRequest, request: Request) -> RunJobR
 
 @router.post("/{job_id}/run/background", response_model=BackgroundRunResponse)
 async def run_job_background(
-    job_id: str, body: BackgroundRunRequest, request: Request
+    job_id: str,
+    request: Request,
+    body: BackgroundRunRequest | None = None,
 ) -> BackgroundRunResponse:
     """Start a non-blocking pipeline run via the supervisor.
 
@@ -210,7 +221,12 @@ async def run_job_background(
     supervisor = _get_supervisor(request)
     job = _load_job_or_404(pipeline, job_id)
 
-    accepted = supervisor.start_run(job, stage=body.stage, until_stage=body.until_stage)
+    request_body = body or BackgroundRunRequest()
+    accepted = supervisor.start_run(
+        job,
+        stage=request_body.stage,
+        until_stage=request_body.until_stage,
+    )
     if not accepted:
         raise HTTPException(
             status_code=409,

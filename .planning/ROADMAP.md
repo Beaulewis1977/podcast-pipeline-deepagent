@@ -1,9 +1,9 @@
 # Roadmap: Podcast Pipeline
 
 **Created:** 2026-01-29
-**Last Updated:** 2026-02-05
+**Last Updated:** 2026-02-12
 **Milestone:** v1.0 (Streamlit-first)
-**Phases:** 3
+**Phases:** 4
 
 ## Overview
 
@@ -108,6 +108,47 @@ Plans:
 - [x] 03-04-PLAN.md — FFmpeg/model asset packaging
 - [x] 03-05-PLAN.md — Crash recovery + resume orchestration
 - [x] 03-06-PLAN.md — Installer matrix + smoke validation
+
+---
+
+### Phase 4: Post-release hardening
+
+**Goal:** Harden runtime correctness, security, and output quality so production behavior is truthful, resilient, and operator-safe across Streamlit and desktop surfaces.
+**Depends on:** Phase 3
+**Plans:** 10 plans
+
+**Scope / Requirements:**
+- Enforce strict stage validation and deterministic run orchestration invariants
+- Add job-level locking/state-sync boundaries to prevent concurrent mutation corruption
+- Align run/resume contracts across service schemas, routes, and typed client behavior
+- Fix Streamlit truthfulness gaps (full-run semantics, metadata path, marketing workflow persistence)
+- Add strict model validation for edit-plan/analysis/transcript/job/config ranges and state bounds
+- Harden provider behavior: explicit parse failures, bounded retries, degraded-mode signaling
+- Add service auth and global exception handling plus supervisor timeout/reconciliation reliability
+- Fix render truthfulness: partial failure semantics, output verification, and quality-control wiring
+- Implement concrete output quality backbone work (enhancements, thumbnail artifacts, stronger research derivation/cache)
+- Raise confidence gates with dedicated runtime-critical tests and stronger coverage thresholds
+
+**Success Criteria:**
+1. Job lifecycle operations fail fast and truthfully for invalid, concurrent, or degraded conditions
+2. UI actions (Streamlit + desktop) accurately reflect backend behavior and persisted workflow state
+3. Render/research/provider outputs are quality-hardened with explicit failure/degraded signaling
+4. Runtime-critical behavior is protected by dedicated tests and stricter quality gates
+
+Plans:
+- [ ] 04-01-PLAN.md — Runtime invariants: stage validation + job lock + state sync
+- [ ] 04-02-PLAN.md — Service run/resume contract parity + client hardening
+- [ ] 04-03-PLAN.md — Streamlit workflow truthfulness fixes
+- [ ] 04-04-PLAN.md — Model and config validation hardening
+- [ ] 04-05-PLAN.md — Provider reliability and degraded-mode semantics
+- [ ] 04-06-PLAN.md — Service security, supervisor timeout, and reconciliation hardening
+- [ ] 04-07-PLAN.md — Render truthfulness + quality-control wiring + preflight checks
+- [ ] 04-08-PLAN.md — Output quality backbone: enhancement, thumbnails, research cache/query
+- [ ] 04-09-PLAN.md — Desktop lifecycle controls + Streamlit timeline editing UX completion
+- [ ] 04-10-PLAN.md — Confidence gates: runtime-critical tests, coverage thresholds, docs alignment
+
+**Details:**
+Plans are ordered in 5 execution waves to prioritize P0 runtime correctness first, then reliability/security, then output quality and UX completion, and finally confidence gates.
 
 ---
 

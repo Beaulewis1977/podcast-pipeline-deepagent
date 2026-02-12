@@ -39,7 +39,6 @@ export type BackendStatus = "disconnected" | "connecting" | "connected";
 /** Response shape from the backend GET /health endpoint. */
 export interface HealthResponse {
   status: string;
-  version: string | null;
 }
 
 /** Sidecar status returned by Rust commands. */
@@ -53,19 +52,26 @@ export interface SidecarStatus {
 export interface JobSummary {
   job_id: string;
   status: string;
-  current_stage: string | null;
-  created_at: string;
+  created: string;
+  stages: Record<string, string>;
 }
 
 /** Request body for POST /jobs. */
 export interface CreateJobRequest {
-  input_path: string;
+  video_path: string;
 }
 
 /** Response shape from POST /jobs. */
 export interface CreateJobResponse {
   job_id: string;
-  jobs_dir: string;
+  status: string;
+  input_file: string;
+  created_at: string;
+}
+
+/** Response shape from GET /jobs. */
+interface ListJobsResponse {
+  jobs: JobSummary[];
 }
 
 // ---------------------------------------------------------------------------
@@ -146,14 +152,15 @@ export async function listJobs(): Promise<JobSummary[]> {
   if (!res.ok) {
     throw new Error(`Failed to list jobs: ${res.status} ${res.statusText}`);
   }
-  return res.json();
+  const payload: ListJobsResponse = await res.json();
+  return payload.jobs ?? [];
 }
 
 /** Create a new job on the backend. */
 export async function createJob(
-  input_path: string,
+  videoPath: string,
 ): Promise<CreateJobResponse> {
-  const body: CreateJobRequest = { input_path };
+  const body: CreateJobRequest = { video_path: videoPath };
   const res = await fetch(`${BASE_URL}/jobs`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -169,6 +176,8 @@ export async function createJob(
 export async function runJob(jobId: string): Promise<void> {
   const res = await fetch(`${BASE_URL}/jobs/${encodeURIComponent(jobId)}/run`, {
     method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({}),
   });
   if (!res.ok) {
     throw new Error(`Failed to run job: ${res.status} ${res.statusText}`);

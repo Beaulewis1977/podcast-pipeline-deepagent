@@ -19,7 +19,6 @@ import {
 
 function App() {
   const [status, setStatus] = useState<BackendStatus>("disconnected");
-  const [version, setVersion] = useState<string | null>(null);
   const [sidecar, setSidecar] = useState<SidecarStatus | null>(null);
   const [jobs, setJobs] = useState<JobSummary[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -33,7 +32,6 @@ function App() {
     const health = await checkHealth();
     if (health !== null) {
       setStatus("connected");
-      setVersion(health.version);
       setError(null);
     } else {
       setStatus("disconnected");
@@ -113,7 +111,6 @@ function App() {
         setSidecar(result.sidecar);
         if (result.health !== null) {
           setStatus("connected");
-          setVersion(result.health.version);
           setError(null);
         } else {
           setStatus("disconnected");
@@ -130,7 +127,6 @@ function App() {
         const health = await checkHealth();
         if (!cancelled && health !== null) {
           setStatus("connected");
-          setVersion(health.version);
           setError(null);
         } else if (!cancelled) {
           setStatus("disconnected");
@@ -178,7 +174,6 @@ function App() {
     const health = await checkHealth();
     if (health !== null) {
       setStatus("connected");
-      setVersion(health.version);
     } else {
       setStatus("disconnected");
       setError("Backend unreachable");
@@ -283,13 +278,6 @@ function App() {
             </span>
           </div>
         )}
-        {version && (
-          <div className="status-row">
-            <span className="status-dot connected" />
-            <span className="status-label">Version</span>
-            <span className="status-value">{version}</span>
-          </div>
-        )}
         {error && (
           <div className="status-row">
             <span className="status-dot disconnected" />
@@ -323,7 +311,13 @@ function App() {
                 <div className="job-item-header">
                   <span className="job-id">{job.job_id}</span>
                   <span className="job-stage">
-                    {job.current_stage ?? job.status}
+                    {(() => {
+                      const active = Object.entries(job.stages ?? {}).find(
+                        ([, stageStatus]) =>
+                          stageStatus === "running" || stageStatus === "waiting",
+                      );
+                      return active?.[0] ?? job.status;
+                    })()}
                   </span>
                 </div>
                 <div
@@ -333,7 +327,7 @@ function App() {
                   }}
                 >
                   {job.status} &middot;{" "}
-                  {new Date(job.created_at).toLocaleString()}
+                  {new Date(job.created).toLocaleString()}
                 </div>
               </li>
             ))}
