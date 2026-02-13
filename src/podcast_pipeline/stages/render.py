@@ -58,29 +58,54 @@ class RenderStage(Stage):
 
         outputs: list[str] = []
         errors: list[str] = []
+        platform_results: dict[str, dict[str, Any]] = {}
 
         # Export for each selected platform
-        for platform in decisions.export_platforms:
+        selected_platforms = list(dict.fromkeys(decisions.export_platforms))
+        for platform in selected_platforms:
             self.logger.info("rendering_platform", platform=platform)
 
             try:
                 spec = self._get_platform_spec(platform)
                 if spec is None:
-                    self.logger.warning("unknown_platform", platform=platform)
+                    error_msg = f"{platform}: Unsupported platform"
+                    errors.append(error_msg)
+                    platform_results[platform] = {
+                        "status": "failed",
+                        "outputs": [],
+                        "error": error_msg,
+                    }
+                    self.logger.error("render_platform_failed", platform=platform, error=error_msg)
                     continue
 
                 out = self._render_platform(
                     job_dir, input_video, platform, spec, decisions, video_info, edit_plan
                 )
                 outputs.extend(out)
+                platform_results[platform] = {"status": "success", "outputs": out}
+                self.logger.info(
+                    "render_platform_complete",
+                    platform=platform,
+                    outputs=out,
+                )
 
             except FFmpegError as e:
                 error_msg = f"{platform}: FFmpeg error - {e}"
                 errors.append(error_msg)
+                platform_results[platform] = {
+                    "status": "failed",
+                    "outputs": [],
+                    "error": error_msg,
+                }
                 self.logger.exception("render_failed", platform=platform, error=str(e))
             except Exception as e:
                 error_msg = f"{platform}: {e}"
                 errors.append(error_msg)
+                platform_results[platform] = {
+                    "status": "failed",
+                    "outputs": [],
+                    "error": error_msg,
+                }
                 self.logger.exception("render_failed", platform=platform)
 
         # Generate marketing copy document
@@ -95,19 +120,46 @@ class RenderStage(Stage):
         clip_outputs = self._export_clips(job_dir, input_video, edit_plan)
         outputs.extend(clip_outputs)
 
-        self.logger.info("render_complete", outputs=outputs, errors=errors)
+        failed_platforms = [
+            platform
+            for platform, details in platform_results.items()
+            if details.get("status") != "success"
+        ]
+        if failed_platforms and len(failed_platforms) == len(platform_results):
+            render_status = "failed"
+        elif failed_platforms:
+            render_status = "degraded"
+        else:
+            render_status = "complete"
 
-        if errors and not outputs:
+        self.logger.info(
+            "render_complete",
+            status=render_status,
+            outputs=outputs,
+            errors=errors,
+            platform_results=platform_results,
+        )
+
+        if failed_platforms:
             return StageResult(
                 success=False,
-                error="; ".join(errors),
+                error=f"Platform export failures: {', '.join(failed_platforms)}",
                 outputs=outputs,
+                data={
+                    "status": render_status,
+                    "errors": errors,
+                    "platform_results": platform_results,
+                },
             )
 
         return StageResult(
             success=True,
             outputs=outputs,
-            data={"errors": errors} if errors else {},
+            data={
+                "status": render_status,
+                "errors": errors,
+                "platform_results": platform_results,
+            },
         )
 
     def _get_platform_spec(self, platform: str) -> PlatformSpec | None:

@@ -4,7 +4,27 @@ import json
 from pathlib import Path
 
 from podcast_pipeline.config import PlatformSpec, load_config
+from podcast_pipeline.models.job import Job
 from podcast_pipeline.stages.render import RenderStage
+from podcast_pipeline.utils.ffmpeg import FFmpegError
+
+
+def _create_review_ready_job(tmp_path: Path, platforms: list[str]) -> Job:
+    """Create a review-approved job directory layout for render tests."""
+    review_dir = tmp_path / "review"
+    review_dir.mkdir(parents=True, exist_ok=True)
+    review_state = {
+        "review_complete": True,
+        "export_platforms": platforms,
+    }
+    (review_dir / "review_state.json").write_text(json.dumps(review_state))
+
+    input_dir = tmp_path / "input"
+    input_dir.mkdir(parents=True, exist_ok=True)
+    input_path = input_dir / "raw.mp4"
+    input_path.write_bytes(b"fake-video")
+
+    return Job(job_id="render-test-job", input_file=str(input_path))
 
 
 class TestPlatformSpecs:
@@ -230,3 +250,69 @@ class TestMarketingDocGeneration:
         assert "YouTube" in content
         assert "TikTok" in content
         assert "Test Title 1" in content
+
+
+class TestRenderStatusSemantics:
+    """Tests for top-level render status and platform result details."""
+
+    def test_partial_failure_marks_render_failed(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        """Any required platform failure should fail the render stage."""
+        config = load_config()
+        stage = RenderStage(config)
+        job = _create_review_ready_job(tmp_path, ["youtube", "spotify"])
+
+        monkeypatch.setattr(
+            "podcast_pipeline.stages.render.get_video_info",
+            lambda _input: {"width": 1920, "height": 1080, "duration": 30.0, "fps": 30.0},
+        )
+        monkeypatch.setattr(stage, "_generate_marketing_doc", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr(stage, "_export_clips", lambda *_args, **_kwargs: [])
+
+        def _fake_render_platform(
+            _job_dir: Path,
+            _input_video: Path,
+            platform: str,
+            *_args,
+            **_kwargs,
+        ) -> list[str]:
+            if platform == "youtube":
+                raise FFmpegError("simulated ffmpeg failure")
+            return [f"output/{platform}/final.mp4"]
+
+        monkeypatch.setattr(stage, "_render_platform", _fake_render_platform)
+
+        result = stage.run(job, tmp_path)
+
+        assert result.success is False
+        assert result.data["status"] == "degraded"
+        assert "youtube" in (result.error or "")
+        assert result.data["platform_results"]["youtube"]["status"] == "failed"
+        assert result.data["platform_results"]["spotify"]["status"] == "success"
+
+    def test_platform_status_reports_unsupported_targets(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        """Unsupported selected platforms should be surfaced as explicit failures."""
+        config = load_config()
+        stage = RenderStage(config)
+        job = _create_review_ready_job(tmp_path, ["unknown_platform"])
+
+        monkeypatch.setattr(
+            "podcast_pipeline.stages.render.get_video_info",
+            lambda _input: {"width": 1920, "height": 1080, "duration": 30.0, "fps": 30.0},
+        )
+        monkeypatch.setattr(stage, "_generate_marketing_doc", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr(stage, "_export_clips", lambda *_args, **_kwargs: [])
+
+        result = stage.run(job, tmp_path)
+
+        assert result.success is False
+        assert result.data["status"] == "failed"
+        assert result.data["platform_results"]["unknown_platform"]["status"] == "failed"
+        assert "Unsupported platform" in result.data["platform_results"]["unknown_platform"]["error"]
