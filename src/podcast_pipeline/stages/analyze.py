@@ -81,7 +81,7 @@ class AnalyzeStage(Stage):
         used_provider: str | None = None
         used_model: str | None = None
 
-        for provider in self.providers:
+        for provider_index, provider in enumerate(self.providers):
             if not provider.is_available():
                 self.logger.info(
                     "provider_unavailable",
@@ -98,15 +98,30 @@ class AnalyzeStage(Stage):
                 result = provider.analyze(proxy_path, transcript_data)
                 used_provider = provider.name
                 used_model = getattr(provider, "model", "unknown")
+                degraded_mode = self._build_degraded_mode_metadata(
+                    provider=provider,
+                    provider_index=provider_index,
+                )
+                analysis_payload = result.model_dump()
+                metadata_payload = analysis_payload.setdefault("metadata", {})
+                metadata_payload["degraded_mode"] = degraded_mode
 
                 # Save analysis result
                 analysis_path = job_dir / "analysis" / "analysis.json"
                 analysis_path.parent.mkdir(parents=True, exist_ok=True)
-                analysis_path.write_text(result.model_dump_json(indent=2))
+                analysis_path.write_text(json.dumps(analysis_payload, indent=2))
 
                 # Update job with provider info
                 job.stages[self.name].provider = used_provider
                 job.stages[self.name].model = used_model
+
+                if degraded_mode["enabled"]:
+                    self.logger.warning(
+                        "analysis_degraded_mode",
+                        provider=used_provider,
+                        model=used_model,
+                        reason=degraded_mode["reason"],
+                    )
 
                 self.logger.info(
                     "analysis_complete",
@@ -136,7 +151,8 @@ class AnalyzeStage(Stage):
                     data={
                         "provider": used_provider,
                         "model": used_model,
-                        "analysis": result.model_dump(),
+                        "degraded_mode": degraded_mode,
+                        "analysis": analysis_payload,
                     },
                 )
 
@@ -160,6 +176,30 @@ class AnalyzeStage(Stage):
             success=False,
             error=f"All providers failed. Last error: {last_error}",
         )
+
+    def _build_degraded_mode_metadata(
+        self,
+        provider: GeminiProvider | KimiProvider,
+        provider_index: int,
+    ) -> dict[str, Any]:
+        """Build degraded-mode metadata for transcript-only provider outputs."""
+        supports_video = getattr(provider, "supports_video", True)
+        if supports_video:
+            return {
+                "enabled": False,
+                "reason": None,
+                "provider": provider.name,
+                "model": getattr(provider, "model", "unknown"),
+            }
+
+        is_fallback = provider_index > 0
+        reason = "fallback_provider_transcript_only" if is_fallback else "provider_transcript_only"
+        return {
+            "enabled": True,
+            "reason": reason,
+            "provider": provider.name,
+            "model": getattr(provider, "model", "unknown"),
+        }
 
     def _run_research(
         self,
