@@ -27,6 +27,23 @@ The desktop app bundles a Tauri v2 shell with three sidecar binaries:
 
 All sidecars are renamed to target-triple format (e.g., `podcast-backend-x86_64-unknown-linux-gnu`) by `desktop/scripts/prepare-sidecars.mjs` so Tauri resolves them at runtime.
 
+### Service auth and run/resume contract
+
+Desktop lifecycle controls call the local FastAPI service contract directly:
+
+- `POST /jobs/{job_id}/run` supports `until_stage` plus optional `quality_controls`
+- `POST /jobs/{job_id}/resume` defaults to resume-through-completion unless `until_stage` is set
+- `background=true` enables non-blocking resume for longer jobs
+
+Auth policy is environment-driven:
+
+- `PODCAST_PIPELINE_SERVICE_ENV=production` enforces API key auth
+- `PODCAST_PIPELINE_SERVICE_API_KEY` is required in production
+- Clients must send `X-API-Key` when auth is enabled
+
+Analyze fallback behavior is surfaced in artifacts at
+`jobs/<job_id>/analysis/analysis.json` under `metadata.degraded_mode` so desktop troubleshooting can distinguish transcript-only fallback from full multimodal analysis.
+
 ## Release Workflow
 
 ### Automated (GitHub Actions)
@@ -235,13 +252,24 @@ The recovery system handles this automatically:
 If automatic recovery fails:
 ```bash
 # Manual reconciliation via API
-curl -X POST http://127.0.0.1:8787/jobs/reconcile
+curl -X POST http://127.0.0.1:8787/jobs/reconcile \
+  -H "X-API-Key: $PODCAST_PIPELINE_SERVICE_API_KEY"
 
 # List resumable jobs
-curl http://127.0.0.1:8787/jobs/resumable
+curl http://127.0.0.1:8787/jobs/resumable \
+  -H "X-API-Key: $PODCAST_PIPELINE_SERVICE_API_KEY"
 
-# Resume a specific job
-curl -X POST http://127.0.0.1:8787/jobs/{job_id}/resume
+# Resume a specific job through completion (default)
+curl -X POST http://127.0.0.1:8787/jobs/{job_id}/resume \
+  -H "X-API-Key: $PODCAST_PIPELINE_SERVICE_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"background":false}'
+
+# Resume from a specific stage and stop early
+curl -X POST http://127.0.0.1:8787/jobs/{job_id}/resume \
+  -H "X-API-Key: $PODCAST_PIPELINE_SERVICE_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"from_stage":"analyze","until_stage":"review","background":true}'
 ```
 
 ### Backend fails to start
