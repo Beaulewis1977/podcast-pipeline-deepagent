@@ -16,7 +16,9 @@ Usage::
 
 from __future__ import annotations
 
+from contextlib import suppress
 from datetime import datetime
+from typing import Any
 
 import httpx
 from pydantic import BaseModel, Field
@@ -32,6 +34,8 @@ logger = get_logger(__name__)
 DEFAULT_BASE_URL = "http://127.0.0.1:8787"
 DEFAULT_TIMEOUT_SECONDS = 30.0
 DEFAULT_RETRIES = 2
+DEFAULT_RUN_TIMEOUT_SECONDS = 900.0
+DEFAULT_RESUME_TIMEOUT_SECONDS = 900.0
 
 
 class HealthStatus(BaseModel):
@@ -55,6 +59,9 @@ class RunResult(BaseModel):
     job_id: str
     status: str
     message: str
+    started: bool = True
+    completed: bool = False
+    rejected: bool = False
 
 
 class BackgroundRunResult(BaseModel):
@@ -110,6 +117,9 @@ class ResumeResult(BaseModel):
     job_id: str
     status: str
     message: str
+    started: bool = True
+    completed: bool = False
+    rejected: bool = False
 
 
 class ResumableJobItem(BaseModel):
@@ -150,10 +160,67 @@ class ServiceUnavailableError(ServiceError):
 class ServiceResponseError(ServiceError):
     """Raised when the backend returns an unexpected HTTP status."""
 
-    def __init__(self, status_code: int, detail: str) -> None:
+    def __init__(self, status_code: int, detail: Any) -> None:
         self.status_code = status_code
         self.detail = detail
         super().__init__(f"Service error {status_code}: {detail}")
+
+
+class ServiceBadRequestError(ServiceResponseError):
+    """Raised for HTTP 400 responses."""
+
+
+class ServiceUnauthorizedError(ServiceResponseError):
+    """Raised for HTTP 401 responses."""
+
+
+class ServiceForbiddenError(ServiceResponseError):
+    """Raised for HTTP 403 responses."""
+
+
+class ServiceNotFoundError(ServiceResponseError):
+    """Raised for HTTP 404 responses."""
+
+
+class ServiceConflictError(ServiceResponseError):
+    """Raised for HTTP 409 responses."""
+
+
+class ServiceValidationError(ServiceResponseError):
+    """Raised for HTTP 422 responses."""
+
+
+class ServiceTimeoutError(ServiceError):
+    """Raised when a request exceeds the configured timeout."""
+
+    def __init__(
+        self,
+        base_url: str,
+        *,
+        method: str,
+        path: str,
+        timeout_seconds: float,
+        cause: Exception | None = None,
+    ) -> None:
+        self.base_url = base_url
+        self.method = method
+        self.path = path
+        self.timeout_seconds = timeout_seconds
+        self.cause = cause
+        super().__init__(
+            f"Service request timed out after {timeout_seconds:.1f}s: "
+            f"{method.upper()} {base_url}{path}"
+        )
+
+
+STATUS_ERROR_MAP: dict[int, type[ServiceResponseError]] = {
+    400: ServiceBadRequestError,
+    401: ServiceUnauthorizedError,
+    403: ServiceForbiddenError,
+    404: ServiceNotFoundError,
+    409: ServiceConflictError,
+    422: ServiceValidationError,
+}
 
 
 # ---------------------------------------------------------------------------
@@ -172,6 +239,10 @@ class ServiceClient:
         Request timeout in seconds (default 30).
     retries:
         Number of retries on connection errors (default 2).
+    run_timeout:
+        Timeout for synchronous ``run_job`` requests (defaults to 900s minimum).
+    resume_timeout:
+        Timeout for synchronous ``resume_job`` requests (defaults to 900s minimum).
     """
 
     def __init__(
@@ -179,17 +250,22 @@ class ServiceClient:
         base_url: str = DEFAULT_BASE_URL,
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
         retries: int = DEFAULT_RETRIES,
+        run_timeout: float | None = None,
+        resume_timeout: float | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.retries = retries
+        self.run_timeout = run_timeout or max(timeout, DEFAULT_RUN_TIMEOUT_SECONDS)
+        self.resume_timeout = resume_timeout or max(timeout, DEFAULT_RESUME_TIMEOUT_SECONDS)
+        self._http_client: httpx.Client | None = None
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
     def _client(self) -> httpx.Client:
-        """Create a short-lived httpx client with configured timeout."""
+        """Create a configured HTTPX client for this backend."""
         transport = httpx.HTTPTransport(retries=self.retries)
         return httpx.Client(
             base_url=self.base_url,
@@ -197,16 +273,41 @@ class ServiceClient:
             transport=transport,
         )
 
+    def _get_client(self) -> httpx.Client:
+        """Create and cache a persistent HTTPX client."""
+        if self._http_client is None:
+            self._http_client = self._client()
+        return self._http_client
+
+    def close(self) -> None:
+        """Close the persistent HTTPX client if it exists."""
+        if self._http_client is not None:
+            self._http_client.close()
+            self._http_client = None
+
+    def __enter__(self) -> ServiceClient:
+        self._get_client()
+        return self
+
+    def __exit__(self, *_exc_info: object) -> None:
+        self.close()
+
+    def __del__(self) -> None:
+        with suppress(Exception):
+            self.close()
+
     @staticmethod
     def _raise_for_status(resp: httpx.Response) -> None:
         """Raise ``ServiceResponseError`` for non-2xx responses."""
         if resp.is_success:
             return
         try:
-            detail = resp.json().get("detail", resp.text)
+            payload = resp.json()
+            detail = payload.get("detail", payload)
         except Exception:
             detail = resp.text
-        raise ServiceResponseError(resp.status_code, str(detail))
+        error_cls = STATUS_ERROR_MAP.get(resp.status_code, ServiceResponseError)
+        raise error_cls(resp.status_code, detail)
 
     def _request(
         self,
@@ -214,16 +315,29 @@ class ServiceClient:
         path: str,
         *,
         json: dict[str, object] | None = None,
+        timeout: float | None = None,
     ) -> httpx.Response:
         """Execute a request with connection-error wrapping.
 
-        Converts ``httpx.ConnectError`` / ``httpx.TimeoutException`` into
-        ``ServiceUnavailableError`` so callers get a clean typed exception.
+        Converts connectivity and timeout errors into typed client errors.
         """
+        timeout_seconds = timeout if timeout is not None else self.timeout
         try:
-            with self._client() as client:
-                resp = client.request(method, path, json=json)
-        except (httpx.ConnectError, httpx.TimeoutException) as exc:
+            resp = self._get_client().request(
+                method,
+                path,
+                json=json,
+                timeout=timeout_seconds,
+            )
+        except httpx.TimeoutException as exc:
+            raise ServiceTimeoutError(
+                self.base_url,
+                method=method,
+                path=path,
+                timeout_seconds=float(timeout_seconds),
+                cause=exc,
+            ) from exc
+        except httpx.ConnectError as exc:
             raise ServiceUnavailableError(self.base_url, cause=exc) from exc
         return resp
 
@@ -279,7 +393,12 @@ class ServiceClient:
             payload["stage"] = stage
         if until_stage is not None:
             payload["until_stage"] = until_stage
-        resp = self._request("POST", f"/jobs/{job_id}/run", json=payload)
+        resp = self._request(
+            "POST",
+            f"/jobs/{job_id}/run",
+            json=payload,
+            timeout=self.run_timeout,
+        )
         self._raise_for_status(resp)
         return RunResult.model_validate(resp.json())
 
@@ -296,7 +415,12 @@ class ServiceClient:
             payload["stage"] = stage
         if until_stage is not None:
             payload["until_stage"] = until_stage
-        resp = self._request("POST", f"/jobs/{job_id}/run/background", json=payload)
+        resp = self._request(
+            "POST",
+            f"/jobs/{job_id}/run/background",
+            json=payload,
+            timeout=self.timeout,
+        )
         self._raise_for_status(resp)
         return BackgroundRunResult.model_validate(resp.json())
 
@@ -305,12 +429,22 @@ class ServiceClient:
         job_id: str,
         *,
         from_stage: str | None = None,
+        until_stage: str | None = None,
+        background: bool = False,
     ) -> ResumeResult:
         """Resume a paused/failed job (POST /jobs/{id}/resume)."""
-        payload: dict[str, object] = {}
+        payload: dict[str, object] = {"background": background}
         if from_stage is not None:
             payload["from_stage"] = from_stage
-        resp = self._request("POST", f"/jobs/{job_id}/resume", json=payload)
+        if until_stage is not None:
+            payload["until_stage"] = until_stage
+        timeout = self.timeout if background else self.resume_timeout
+        resp = self._request(
+            "POST",
+            f"/jobs/{job_id}/resume",
+            json=payload,
+            timeout=timeout,
+        )
         self._raise_for_status(resp)
         return ResumeResult.model_validate(resp.json())
 

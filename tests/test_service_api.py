@@ -9,9 +9,11 @@ import tempfile
 from collections.abc import Generator
 from pathlib import Path
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from podcast_pipeline.clients.service_client import ServiceClient, ServiceConflictError
 from podcast_pipeline.config import Config
 from podcast_pipeline.models.job import StageStatus
 from podcast_pipeline.pipeline import Pipeline
@@ -396,6 +398,171 @@ class TestResumeToCompletion:
         assert payload["completed"] is True
         assert payload["rejected"] is False
         assert "no incomplete stages" in payload["message"]
+
+
+# ---------------------------------------------------------------------------
+# Service client parity + timeout behavior (Phase 04-02 Task 3)
+# ---------------------------------------------------------------------------
+
+
+class TestServiceClientResumeTimeout:
+    """Client-side run/resume parity, timeout, and status-mapping tests."""
+
+    def test_service_client_resume_timeout_payload_parity(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """resume_job sends from_stage/until_stage/background parity fields."""
+        client = ServiceClient(base_url="http://testserver", timeout=5.0, resume_timeout=45.0)
+        captured: dict[str, object] = {}
+
+        def _fake_request(
+            method: str,
+            path: str,
+            *,
+            json: dict[str, object] | None = None,
+            timeout: float | None = None,
+        ) -> httpx.Response:
+            captured["method"] = method
+            captured["path"] = path
+            captured["json"] = json
+            captured["timeout"] = timeout
+            return httpx.Response(
+                200,
+                json={
+                    "job_id": "job-1",
+                    "status": "running",
+                    "message": "ok",
+                    "started": True,
+                    "completed": False,
+                    "rejected": False,
+                },
+                request=httpx.Request(method, f"http://testserver{path}"),
+            )
+
+        monkeypatch.setattr(client, "_request", _fake_request)
+        result = client.resume_job(
+            "job-1",
+            from_stage="analyze",
+            until_stage="review",
+            background=True,
+        )
+        assert result.status == "running"
+        assert captured == {
+            "method": "POST",
+            "path": "/jobs/job-1/resume",
+            "json": {"background": True, "from_stage": "analyze", "until_stage": "review"},
+            "timeout": 5.0,
+        }
+
+    def test_service_client_resume_timeout_uses_long_timeout_for_blocking_resume(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """Blocking resume requests use the endpoint-specific timeout."""
+        client = ServiceClient(base_url="http://testserver", timeout=3.0, resume_timeout=77.0)
+        captured: dict[str, object] = {}
+
+        def _fake_request(
+            method: str,
+            path: str,
+            *,
+            json: dict[str, object] | None = None,
+            timeout: float | None = None,
+        ) -> httpx.Response:
+            captured["method"] = method
+            captured["path"] = path
+            captured["json"] = json
+            captured["timeout"] = timeout
+            return httpx.Response(
+                200,
+                json={
+                    "job_id": "job-1",
+                    "status": "complete",
+                    "message": "done",
+                    "started": True,
+                    "completed": True,
+                    "rejected": False,
+                },
+                request=httpx.Request(method, f"http://testserver{path}"),
+            )
+
+        monkeypatch.setattr(client, "_request", _fake_request)
+        result = client.resume_job("job-1", from_stage="transcribe")
+        assert result.status == "complete"
+        assert captured["json"] == {"background": False, "from_stage": "transcribe"}
+        assert captured["timeout"] == 77.0
+
+    def test_service_client_resume_timeout_maps_conflict_status(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """HTTP 409 responses map to ServiceConflictError."""
+        client = ServiceClient(base_url="http://testserver")
+
+        def _fake_request(
+            method: str,
+            path: str,
+            *,
+            json: dict[str, object] | None = None,
+            timeout: float | None = None,
+        ) -> httpx.Response:
+            _ = (json, timeout)
+            return httpx.Response(
+                409,
+                json={"detail": f"{path} already has an active run"},
+                request=httpx.Request(method, f"http://testserver{path}"),
+            )
+
+        monkeypatch.setattr(client, "_request", _fake_request)
+        with pytest.raises(ServiceConflictError) as exc_info:
+            client.resume_job("job-1", from_stage="analyze", background=True)
+        assert exc_info.value.status_code == 409
+        assert "active run" in str(exc_info.value)
+
+    def test_service_client_resume_timeout_reuses_persistent_http_client(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """resume_job requests reuse a single cached HTTPX client."""
+        client = ServiceClient(base_url="http://testserver", timeout=5.0)
+        client_factory_calls = 0
+        request_calls = 0
+
+        def _handler(request: httpx.Request) -> httpx.Response:
+            nonlocal request_calls
+            request_calls += 1
+            return httpx.Response(
+                200,
+                json={
+                    "job_id": "job-1",
+                    "status": "running",
+                    "message": "ok",
+                    "started": True,
+                    "completed": False,
+                    "rejected": False,
+                },
+                request=request,
+            )
+
+        transport = httpx.MockTransport(_handler)
+
+        def _fake_client_factory() -> httpx.Client:
+            nonlocal client_factory_calls
+            client_factory_calls += 1
+            return httpx.Client(
+                transport=transport,
+                base_url="http://testserver",
+                timeout=client.timeout,
+            )
+
+        monkeypatch.setattr(client, "_client", _fake_client_factory)
+        client.resume_job("job-1", from_stage="analyze", background=True)
+        client.resume_job("job-1", from_stage="analyze", background=True)
+        client.close()
+
+        assert client_factory_calls == 1
+        assert request_calls == 2
 
 
 # ---------------------------------------------------------------------------
