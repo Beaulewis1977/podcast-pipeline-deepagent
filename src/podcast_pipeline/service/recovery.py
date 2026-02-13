@@ -33,6 +33,7 @@ Usage::
 
 from __future__ import annotations
 
+import asyncio
 import os
 from pathlib import Path
 
@@ -47,6 +48,7 @@ logger = get_logger(__name__)
 
 # Maximum heartbeat age (seconds) before a runtime is considered stale.
 _STALE_HEARTBEAT_SECONDS = 30.0
+DEFAULT_RECONCILE_INTERVAL_SECONDS = 30.0
 
 
 class ResumableJob(BaseModel):
@@ -140,6 +142,39 @@ def reconcile_all_jobs(jobs_dir: Path) -> int:
             if reconcile_job(entry):
                 corrected += 1
     return corrected
+
+
+def run_reconcile_cycle(jobs_dir: Path) -> dict[str, int]:
+    """Reconcile all jobs and return corrected/resumable summary."""
+    corrected = reconcile_all_jobs(jobs_dir)
+    resumable = list_resumable_jobs(jobs_dir)
+    return {"corrected": corrected, "resumable": len(resumable)}
+
+
+async def periodic_reconcile(
+    jobs_dir: Path,
+    *,
+    interval_seconds: float = DEFAULT_RECONCILE_INTERVAL_SECONDS,
+    stop_event: asyncio.Event | None = None,
+) -> None:
+    """Run reconciliation repeatedly until cancelled or stop_event is set."""
+    if interval_seconds <= 0:
+        raise ValueError("interval_seconds must be > 0")
+
+    while True:
+        if stop_event is not None and stop_event.is_set():
+            return
+        await asyncio.sleep(interval_seconds)
+        if stop_event is not None and stop_event.is_set():
+            return
+
+        summary = run_reconcile_cycle(jobs_dir)
+        if summary["corrected"] > 0:
+            logger.info(
+                "periodic_reconcile_corrected",
+                corrected=summary["corrected"],
+                resumable=summary["resumable"],
+            )
 
 
 def _first_incomplete_stage(job: Job) -> str | None:
@@ -253,6 +288,9 @@ def prepare_resume(
     job_dir = jobs_dir / job_id
     job = Job.load(job_dir)
 
+    if from_stage is not None:
+        Job.validate_stage_name(from_stage)
+
     if from_stage is None:
         from_stage = _first_incomplete_stage(job)
     if from_stage is None:
@@ -280,11 +318,10 @@ def startup_reconcile(jobs_dir: Path) -> dict[str, int]:
     A dict with keys ``corrected`` (number of jobs fixed) and
     ``resumable`` (number of jobs available for resume).
     """
-    corrected = reconcile_all_jobs(jobs_dir)
-    resumable = list_resumable_jobs(jobs_dir)
+    summary = run_reconcile_cycle(jobs_dir)
     logger.info(
         "startup_reconcile_complete",
-        corrected=corrected,
-        resumable=len(resumable),
+        corrected=summary["corrected"],
+        resumable=summary["resumable"],
     )
-    return {"corrected": corrected, "resumable": len(resumable)}
+    return summary

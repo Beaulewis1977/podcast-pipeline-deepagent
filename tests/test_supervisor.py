@@ -4,13 +4,24 @@ from __future__ import annotations
 
 import asyncio
 import time
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from fastapi.testclient import TestClient
 
+from podcast_pipeline.config import Config
 from podcast_pipeline.models.job import Job, StageStatus
+from podcast_pipeline.pipeline import Pipeline
+from podcast_pipeline.service.app import (
+    SERVICE_API_KEY_ENV_VAR,
+    SERVICE_DEV_AUTH_BYPASS_ENV_VAR,
+    SERVICE_ENVIRONMENT_ENV_VAR,
+    create_app,
+)
+from podcast_pipeline.service.recovery import periodic_reconcile, prepare_resume, run_reconcile_cycle
 from podcast_pipeline.service.supervisor import RuntimeMeta, Supervisor
 
 
@@ -37,6 +48,30 @@ def _create_job(jobs_dir: Path, job_id: str = "job-001") -> Job:
     job = Job(job_id=job_id, input_file="/tmp/video.mp4")  # noqa: S108
     job.save(jobs_dir)
     return job
+
+
+def _write_runtime(
+    jobs_dir: Path,
+    job_id: str,
+    *,
+    status: str = "running",
+    heartbeat_age_seconds: float = 0.0,
+    pid: int = 99999,
+    last_known_stage: str | None = None,
+) -> RuntimeMeta:
+    """Persist a runtime.json record with controlled heartbeat age."""
+    now = datetime.now(UTC)
+    heartbeat = now - timedelta(seconds=heartbeat_age_seconds)
+    meta = RuntimeMeta(
+        job_id=job_id,
+        pid=pid,
+        started_at=now.isoformat(),
+        heartbeat=heartbeat.isoformat(),
+        status=status,
+        last_known_stage=last_known_stage,
+    )
+    meta.save(jobs_dir / job_id)
+    return meta
 
 
 async def _wait_for(predicate, timeout_seconds: float = 1.0) -> None:
@@ -135,3 +170,107 @@ async def test_duplicate_guard_recovers_after_timeout(tmp_path: Path) -> None:
     await _wait_for(lambda: not supervisor.is_running(job.job_id))
     assert supervisor.start_run(job) is True
     await _wait_for(lambda: not supervisor.is_running(job.job_id))
+
+
+def test_reconcile_cycle_corrects_stale_runtime_reconcile(tmp_path: Path) -> None:
+    """A reconcile cycle corrects stale runtime journals and reports resumable work."""
+    job = _create_job(tmp_path)
+    live = Job.load(tmp_path / job.job_id)
+    live.update_stage("ingest", StageStatus.COMPLETE)
+    live.update_stage("transcribe", StageStatus.RUNNING)
+    live.save(tmp_path)
+    _write_runtime(tmp_path, job.job_id, heartbeat_age_seconds=120, status="running")
+
+    summary = run_reconcile_cycle(tmp_path)
+
+    assert summary["corrected"] == 1
+    assert summary["resumable"] == 1
+    runtime = RuntimeMeta.load(tmp_path / job.job_id)
+    assert runtime is not None
+    assert runtime.status == "interrupted"
+
+
+@pytest.mark.asyncio
+async def test_periodic_reconcile_updates_stale_runtime_reconcile(tmp_path: Path) -> None:
+    """Periodic reconciliation catches stale runs without manual API calls."""
+    job = _create_job(tmp_path)
+    live = Job.load(tmp_path / job.job_id)
+    live.update_stage("ingest", StageStatus.COMPLETE)
+    live.update_stage("transcribe", StageStatus.RUNNING)
+    live.save(tmp_path)
+    _write_runtime(tmp_path, job.job_id, heartbeat_age_seconds=120, status="running")
+
+    stop_event = asyncio.Event()
+    task = asyncio.create_task(
+        periodic_reconcile(
+            tmp_path,
+            interval_seconds=0.01,
+            stop_event=stop_event,
+        )
+    )
+
+    def _runtime_interrupted() -> bool:
+        runtime = RuntimeMeta.load(tmp_path / job.job_id)
+        return runtime is not None and runtime.status == "interrupted"
+
+    await _wait_for(_runtime_interrupted)
+    stop_event.set()
+    await task
+
+    runtime = RuntimeMeta.load(tmp_path / job.job_id)
+    assert runtime is not None
+    assert runtime.status == "interrupted"
+
+
+def test_prepare_resume_rejects_invalid_stage_resume_validation(tmp_path: Path) -> None:
+    """Invalid resume stage names fail before state mutation is persisted."""
+    job = _create_job(tmp_path)
+    live = Job.load(tmp_path / job.job_id)
+    live.update_stage("ingest", StageStatus.COMPLETE)
+    live.update_stage("transcribe", StageStatus.FAILED)
+    live.save(tmp_path)
+    baseline = Job.load(tmp_path / job.job_id)
+
+    with pytest.raises(ValueError, match="Unknown stage"):
+        prepare_resume(tmp_path, job.job_id, from_stage="invalid-stage")
+
+    reloaded = Job.load(tmp_path / job.job_id)
+    assert set(reloaded.stages.keys()) == set(baseline.stages.keys())
+    assert reloaded.stages["transcribe"].status == baseline.stages["transcribe"].status
+
+
+def test_runtime_diagnostics_reports_orphaned_jobs_reconcile(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """System diagnostics expose stale and orphaned runtime metadata."""
+    monkeypatch.setenv(SERVICE_ENVIRONMENT_ENV_VAR, "development")
+    monkeypatch.setenv(SERVICE_DEV_AUTH_BYPASS_ENV_VAR, "true")
+    monkeypatch.delenv(SERVICE_API_KEY_ENV_VAR, raising=False)
+
+    app = create_app()
+    with TestClient(app) as client:
+        config = Config()
+        config.paths.jobs_dir = tmp_path
+        config.paths.jobs_dir.mkdir(parents=True, exist_ok=True)
+        pipeline = Pipeline(config)
+        app.state.config = config
+        app.state.pipeline = pipeline
+        app.state.supervisor = Supervisor(pipeline)
+
+        _create_job(tmp_path, job_id="job-orphan")
+        _write_runtime(
+            tmp_path,
+            "job-orphan",
+            status="running",
+            heartbeat_age_seconds=120,
+            last_known_stage="transcribe",
+        )
+
+        response = client.get("/system/runtime")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["active_jobs"] == []
+    assert "job-orphan" in payload["stale_jobs"]
+    assert "job-orphan" in payload["orphaned_jobs"]

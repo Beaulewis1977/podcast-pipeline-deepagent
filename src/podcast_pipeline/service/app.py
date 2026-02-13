@@ -14,8 +14,9 @@ Usage::
     app = create_app()
 """
 
+import asyncio
 from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 import hmac
 import os
 from dataclasses import dataclass
@@ -28,7 +29,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from podcast_pipeline import __version__
 from podcast_pipeline.config import Config, load_config
 from podcast_pipeline.pipeline import Pipeline
-from podcast_pipeline.service.recovery import startup_reconcile
+from podcast_pipeline.service.recovery import periodic_reconcile, startup_reconcile
 from podcast_pipeline.service.schemas import HealthResponse
 from podcast_pipeline.service.supervisor import Supervisor
 from podcast_pipeline.utils.logging import get_logger
@@ -41,7 +42,9 @@ DEFAULT_PORT = 8787
 SERVICE_ENVIRONMENT_ENV_VAR = "PODCAST_PIPELINE_SERVICE_ENV"
 SERVICE_API_KEY_ENV_VAR = "PODCAST_PIPELINE_SERVICE_API_KEY"
 SERVICE_DEV_AUTH_BYPASS_ENV_VAR = "PODCAST_PIPELINE_SERVICE_ALLOW_UNAUTHENTICATED_DEV"
+SERVICE_RECONCILE_INTERVAL_ENV_VAR = "PODCAST_PIPELINE_SERVICE_RECONCILE_INTERVAL_SECONDS"
 SERVICE_API_KEY_HEADER_NAME = "X-API-Key"
+DEFAULT_RECONCILE_INTERVAL_SECONDS = 30.0
 
 
 def _parse_bool_env(raw: str | None, *, default: bool) -> bool:
@@ -49,6 +52,16 @@ def _parse_bool_env(raw: str | None, *, default: bool) -> bool:
     if raw is None:
         return default
     return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _parse_positive_float_env(raw: str | None, *, default: float) -> float:
+    """Parse positive float environment values with fallback default."""
+    if raw is None:
+        return default
+    value = float(raw.strip())
+    if value <= 0:
+        raise ValueError("Expected a positive float value")
+    return value
 
 
 @dataclass(frozen=True)
@@ -135,14 +148,30 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.pipeline = pipeline
     app.state.supervisor = Supervisor(pipeline)
     app.state.service_auth_policy = _load_service_auth_policy()
+    reconcile_interval_seconds = _parse_positive_float_env(
+        os.getenv(SERVICE_RECONCILE_INTERVAL_ENV_VAR),
+        default=DEFAULT_RECONCILE_INTERVAL_SECONDS,
+    )
+    app.state.reconcile_interval_seconds = reconcile_interval_seconds
     startup_reconcile(config.paths.jobs_dir)
+    app.state.reconcile_task = asyncio.create_task(
+        periodic_reconcile(
+            config.paths.jobs_dir,
+            interval_seconds=reconcile_interval_seconds,
+        )
+    )
     logger.info(
         "service_started",
         version=__version__,
         environment=app.state.service_auth_policy.environment,
         auth_required=app.state.service_auth_policy.auth_required,
+        reconcile_interval_seconds=reconcile_interval_seconds,
     )
     yield
+    reconcile_task = app.state.reconcile_task
+    reconcile_task.cancel()
+    with suppress(asyncio.CancelledError):
+        await reconcile_task
     logger.info("service_stopped")
 
 
