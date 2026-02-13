@@ -1,8 +1,8 @@
 # Project State: Podcast Pipeline
 
 **Last updated:** 2026-02-13
-**Current phase:** Phase 4 in progress (1/10 plans complete)
-**Overall progress:** 67% (18/27 plans complete)
+**Current phase:** Phase 4 in progress (2/10 plans complete)
+**Overall progress:** 70% (19/27 plans complete)
 
 ## Project Reference
 
@@ -15,11 +15,11 @@ See: `.planning/PROJECT.md`
 
 ```
 Phase:    3 of 4 complete (Phase 4 execution in progress)
-Plan:     18 completed overall; 1/10 complete in Phase 4
+Plan:     19 completed overall; 2/10 complete in Phase 4
 Status:   Executing Phase 4 hardening plans
-Last activity: 2026-02-13 - Completed 04-01-PLAN.md
+Last activity: 2026-02-13 - Completed 04-04-PLAN.md
 
-Progress: [████████████████░░░░░░░░] 67% (18/27 plans complete)
+Progress: [█████████████████░░░░░░░] 70% (19/27 plans complete)
 ```
 
 **Next Phase:** Phase 4 - Post-release hardening (`04-02-PLAN.md`)
@@ -31,13 +31,13 @@ Progress: [████████████████░░░░░░░
 | 1 | Wiring + Stability | Complete | 6/6 | 100% |
 | 2 | Research + Viral Integration | Complete | 5/5 | 100% |
 | 3 | Polishing + Desktop Distribution | Complete | 6/6 | 100% |
-| 4 | Post-release hardening | In progress | 1/10 | 10% |
+| 4 | Post-release hardening | In progress | 2/10 | 20% |
 
 ## Performance Metrics
 
 | Metric | Value |
 |--------|-------|
-| Plans completed | 18 |
+| Plans completed | 19 |
 | Requirements done | 35/83 (21 partial) |
 | Phases complete | 3/4 |
 | Estimated completion | In progress |
@@ -84,12 +84,16 @@ Progress: [████████████████░░░░░░░
 | Use stdlib O_EXCL lock files for job-scoped run exclusivity | Avoids new dependencies while enforcing deterministic same-job concurrency guardrails | 2026-02-13 |
 | Validate stage names in job mutation APIs | Prevents invalid stage keys from corrupting canonical state transitions | 2026-02-13 |
 | Reload job state from disk before each stage dispatch | Prevents stale in-memory state from overwriting newer persisted job state | 2026-02-13 |
+| Reject zero-duration/overlapping filler-content cuts at model boundary | Prevents render-time silent cleanup and forces malformed edit plans to fail early | 2026-02-13 |
+| Enforce string↔seconds timestamp consistency in analysis models with 1s tolerance | Stops contradictory clip/cut timestamps from propagating into downstream ranking/render logic | 2026-02-13 |
+| Validate provider-model compatibility and safe service host/port in config models | Prevents invalid runtime configuration from reaching service/client startup paths | 2026-02-13 |
 
 ### Roadmap Evolution
 
 - Phase 4 added: Post-release hardening
 - Phase 4 planned: research complete + 10 plan files created
 - Phase 4 execution started: completed 04-01 runtime invariants hardening
+- Phase 4 execution continued: completed 04-04 model/config validation hardening
 
 ### Technical Notes
 
@@ -124,16 +128,17 @@ Progress: [████████████████░░░░░░░
 - 2026-02-12: Added Phase 4 (Post-release hardening) to roadmap
 - 2026-02-12: Planned Phase 4 with integrated research and 10 execution plans
 - 2026-02-13: Completed 04-01-PLAN.md (stage validation + per-job lock + state reload)
+- 2026-02-13: Completed 04-04-PLAN.md (strict model/config invariants + dedicated validation suites)
 
 ## Session Continuity
 
 ### Last session
 
-Executed `04-01-PLAN.md`, added strict stage validation, introduced per-job orchestration locking with state reload boundaries, and landed dedicated concurrency regression tests.
+Executed `04-04-PLAN.md`, hardened edit/analysis/transcript/job/config model boundaries, and added dedicated edit-plan/model validation regression suites.
 
 ### Stopped at
 
-Completed `04-01-PLAN.md`; next action is execute `04-02-PLAN.md`.
+Completed `04-04-PLAN.md`; next action is execute `04-02-PLAN.md`.
 
 ### Resume file
 
