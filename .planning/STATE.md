@@ -1,8 +1,8 @@
 # Project State: Podcast Pipeline
 
 **Last updated:** 2026-02-13
-**Current phase:** Phase 4 in progress (4/10 plans complete)
-**Overall progress:** 78% (21/27 plans complete)
+**Current phase:** Phase 4 in progress (5/10 plans complete)
+**Overall progress:** 81% (22/27 plans complete)
 
 ## Project Reference
 
@@ -15,11 +15,11 @@ See: `.planning/PROJECT.md`
 
 ```
 Phase:    3 of 4 complete (Phase 4 execution in progress)
-Plan:     21 completed overall; 4/10 complete in Phase 4
+Plan:     22 completed overall; 5/10 complete in Phase 4
 Status:   Executing Phase 4 hardening plans
-Last activity: 2026-02-13 - Completed 04-05-PLAN.md
+Last activity: 2026-02-13 - Completed 04-06-PLAN.md
 
-Progress: [███████████████████░░░░░] 78% (21/27 plans complete)
+Progress: [████████████████████░░░░░] 81% (22/27 plans complete)
 ```
 
 **Next Phase:** Phase 4 - Post-release hardening (`04-03-PLAN.md`)
@@ -31,13 +31,13 @@ Progress: [███████████████████░░░░
 | 1 | Wiring + Stability | Complete | 6/6 | 100% |
 | 2 | Research + Viral Integration | Complete | 5/5 | 100% |
 | 3 | Polishing + Desktop Distribution | Complete | 6/6 | 100% |
-| 4 | Post-release hardening | In progress | 4/10 | 40% |
+| 4 | Post-release hardening | In progress | 5/10 | 50% |
 
 ## Performance Metrics
 
 | Metric | Value |
 |--------|-------|
-| Plans completed | 21 |
+| Plans completed | 22 |
 | Requirements done | 35/83 (21 partial) |
 | Phases complete | 3/4 |
 | Estimated completion | In progress |
@@ -93,6 +93,10 @@ Progress: [███████████████████░░░░
 | Provider parse/schema failures raise explicit typed errors with structured details | Prevents silent empty-analysis "success" payloads and preserves actionable diagnostics | 2026-02-13 |
 | Analyze outputs embed metadata.degraded_mode for transcript-only provider execution | Makes fallback degradation explicit to operators and downstream artifact consumers | 2026-02-13 |
 | Gemini upload IDs are reused per proxy path with structured 429 classification | Reduces repeated upload overhead and keeps retry semantics deterministic/testable | 2026-02-13 |
+| Production mode enforces API key auth on /jobs endpoints with explicit development bypass controls | Protects job-control surface in production while preserving local developer ergonomics | 2026-02-13 |
+| Global exception handlers sanitize unhandled and HTTP 5xx responses to internal_error payloads | Prevents stack traces and internal error strings from leaking to API clients | 2026-02-13 |
+| Supervisor runtime metadata records timeout state and infers last_known_stage from persisted job state | Makes hung/background progression observable and recoverable from runtime journal data | 2026-02-13 |
+| Lifespan-managed periodic reconciliation plus /system/runtime diagnostics monitor stale/orphaned runs | Provides proactive correction and operator visibility between manual recovery calls | 2026-02-13 |
 
 ### Roadmap Evolution
 
@@ -102,6 +106,7 @@ Progress: [███████████████████░░░░
 - Phase 4 execution continued: completed 04-04 model/config validation hardening
 - Phase 4 execution continued: completed 04-02 run/resume contract hardening
 - Phase 4 execution continued: completed 04-05 provider reliability hardening
+- Phase 4 execution continued: completed 04-06 service runtime hardening (auth gate + timeout heartbeats + reconciliation diagnostics)
 
 ### Technical Notes
 
@@ -139,16 +144,17 @@ Progress: [███████████████████░░░░
 - 2026-02-13: Completed 04-04-PLAN.md (strict model/config invariants + dedicated validation suites)
 - 2026-02-13: Completed 04-02-PLAN.md (typed run/resume contracts + continuation semantics + service client parity hardening)
 - 2026-02-13: Completed 04-05-PLAN.md (provider parse failure hardening + degraded fallback signaling + Gemini upload/retry reliability tests)
+- 2026-02-13: Completed 04-06-PLAN.md (production auth gate + sanitized errors + supervisor timeout heartbeat + periodic reconciliation diagnostics)
 
 ## Session Continuity
 
 ### Last session
 
-Executed `04-05-PLAN.md`, enforced strict provider parse failures, added degraded-mode fallback metadata, and covered upload/retry behavior with dedicated provider tests.
+Executed `04-06-PLAN.md`, enforced production-mode service auth gates, sanitized exception boundaries, added supervisor timeout/heartbeat resilience, and introduced periodic reconciliation diagnostics.
 
 ### Stopped at
 
-Completed `04-05-PLAN.md`; next action is execute `04-03-PLAN.md`.
+Completed `04-06-PLAN.md`; next action is execute `04-03-PLAN.md`.
 
 ### Resume file
 
