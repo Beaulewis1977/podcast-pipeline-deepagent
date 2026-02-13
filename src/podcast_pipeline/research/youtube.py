@@ -5,6 +5,7 @@ import json
 import re
 from collections import Counter
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from statistics import median
 from typing import Any, cast
 
@@ -96,17 +97,21 @@ class YouTubeResearcher:
         self,
         api_key: str | None = None,
         cache_ttl_seconds: int = DEFAULT_CACHE_TTL_SECONDS,
+        cache_path: str | Path | None = None,
     ) -> None:
         """Initialize YouTube researcher.
 
         Args:
             api_key: YouTube Data API key
             cache_ttl_seconds: In-memory TTL for normalized API response caching
+            cache_path: Optional path for persisting cache entries across restarts
         """
         self.api_key = api_key
         self._client: httpx.Client | None = None
         self.cache_ttl_seconds = max(int(cache_ttl_seconds), 0)
         self._cache: dict[str, dict[str, Any]] = {}
+        self._cache_path: Path | None = Path(cache_path) if cache_path else None
+        self._load_persistent_cache()
 
     @property
     def client(self) -> httpx.Client:
@@ -165,15 +170,12 @@ class YouTubeResearcher:
         cached_at = entry.get("cached_at")
         if not isinstance(cached_at, datetime):
             self._cache.pop(key, None)
+            self._persist_cache()
             return None
 
-        if self.cache_ttl_seconds == 0:
+        if self._cache_entry_expired(cached_at):
             self._cache.pop(key, None)
-            return None
-
-        age_seconds = (self._utcnow() - cached_at).total_seconds()
-        if age_seconds > self.cache_ttl_seconds:
-            self._cache.pop(key, None)
+            self._persist_cache()
             return None
 
         return copy.deepcopy(entry.get("payload"))
@@ -184,6 +186,86 @@ class YouTubeResearcher:
             "cached_at": self._utcnow(),
             "payload": self._json_safe_copy(payload),
         }
+        self._persist_cache()
+
+    def _cache_entry_expired(self, cached_at: datetime) -> bool:
+        """Determine whether a cache entry has exceeded the configured TTL."""
+        if self.cache_ttl_seconds == 0:
+            return True
+        age_seconds = (self._utcnow() - cached_at).total_seconds()
+        return age_seconds > self.cache_ttl_seconds
+
+    def _load_persistent_cache(self) -> None:
+        """Load persisted cache entries if configured."""
+        if self._cache_path is None or not self._cache_path.exists():
+            return
+
+        try:
+            raw_payload = json.loads(self._cache_path.read_text())
+        except (OSError, ValueError) as e:
+            logger.warning("youtube_cache_load_failed", path=str(self._cache_path), error=str(e))
+            return
+
+        if not isinstance(raw_payload, dict):
+            return
+
+        loaded_cache: dict[str, dict[str, Any]] = {}
+        trimmed_entries = False
+        for key, entry in raw_payload.items():
+            if not isinstance(key, str) or not isinstance(entry, dict):
+                trimmed_entries = True
+                continue
+
+            cached_at_raw = entry.get("cached_at")
+            if not isinstance(cached_at_raw, str):
+                trimmed_entries = True
+                continue
+
+            try:
+                parsed = datetime.fromisoformat(cached_at_raw)
+            except ValueError:
+                trimmed_entries = True
+                continue
+
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=UTC)
+            parsed = parsed.astimezone(UTC)
+
+            if self._cache_entry_expired(parsed):
+                trimmed_entries = True
+                continue
+
+            loaded_cache[key] = {
+                "cached_at": parsed,
+                "payload": self._json_safe_copy(entry.get("payload")),
+            }
+
+        self._cache = loaded_cache
+        if trimmed_entries:
+            self._persist_cache()
+
+    def _persist_cache(self) -> None:
+        """Persist cache entries to disk when persistent mode is enabled."""
+        if self._cache_path is None:
+            return
+
+        serialized_cache = {}
+        for key, entry in self._cache.items():
+            cached_at = entry.get("cached_at")
+            if not isinstance(cached_at, datetime):
+                continue
+            serialized_cache[key] = {
+                "cached_at": cached_at.astimezone(UTC).isoformat(),
+                "payload": self._json_safe_copy(entry.get("payload")),
+            }
+
+        temp_path = self._cache_path.with_suffix(f"{self._cache_path.suffix}.tmp")
+        try:
+            self._cache_path.parent.mkdir(parents=True, exist_ok=True)
+            temp_path.write_text(json.dumps(serialized_cache, indent=2))
+            temp_path.replace(self._cache_path)
+        except OSError as e:
+            logger.warning("youtube_cache_persist_failed", path=str(self._cache_path), error=str(e))
 
     def _json_safe_copy(self, payload: Any) -> Any:
         """Round-trip through JSON when possible to guarantee safe serialization."""

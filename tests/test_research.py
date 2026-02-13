@@ -1,5 +1,6 @@
 """Tests for YouTube research and viral clip detection."""
 
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 from podcast_pipeline.research.viral_detector import EngagementSignal, ViralClipDetector, ViralScore
@@ -104,6 +105,113 @@ class TestYouTubeResearcher:
         researcher = YouTubeResearcher()
         insights = researcher._generate_insights([], [])
         assert insights == {}
+
+    @patch("httpx.Client.get")
+    def test_cache_persist_reuses_results_after_restart(
+        self,
+        mock_get: MagicMock,
+        tmp_path,
+    ) -> None:
+        """Persistent cache should survive researcher recreation when TTL is valid."""
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "items": [
+                {
+                    "id": {"videoId": "abc123"},
+                    "snippet": {
+                        "title": "Persistent Test",
+                        "description": "desc",
+                        "channelTitle": "Channel",
+                        "channelId": "UC1",
+                        "publishedAt": "2026-01-10T00:00:00Z",
+                        "thumbnails": {"high": {"url": "https://example.com/thumb.jpg"}},
+                    },
+                }
+            ]
+        }
+        mock_response.raise_for_status = MagicMock()
+        mock_get.return_value = mock_response
+
+        cache_path = tmp_path / "youtube-cache.json"
+        researcher = YouTubeResearcher(
+            api_key="test-key",
+            cache_ttl_seconds=300,
+            cache_path=cache_path,
+        )
+        with patch.object(researcher, "_get_video_stats", return_value={"abc123": {"view_count": 5}}):
+            researcher.search_videos("cache persist query", max_results=1)
+        researcher.close()
+
+        assert cache_path.exists()
+        mock_get.reset_mock()
+
+        restarted = YouTubeResearcher(
+            api_key="test-key",
+            cache_ttl_seconds=300,
+            cache_path=cache_path,
+        )
+        with patch.object(restarted, "_get_video_stats") as restarted_stats:
+            cached_results = restarted.search_videos("cache persist query", max_results=1)
+        restarted.close()
+
+        assert len(cached_results) == 1
+        assert mock_get.call_count == 0
+        restarted_stats.assert_not_called()
+
+    @patch("httpx.Client.get")
+    def test_cache_persist_ttl_expiry_forces_refresh_after_restart(
+        self,
+        mock_get: MagicMock,
+        tmp_path,
+    ) -> None:
+        """Expired persisted entries should be evicted and refreshed after restart."""
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "items": [
+                {
+                    "id": {"videoId": "abc123"},
+                    "snippet": {
+                        "title": "TTL Test",
+                        "description": "desc",
+                        "channelTitle": "Channel",
+                        "channelId": "UC1",
+                        "publishedAt": "2026-01-10T00:00:00Z",
+                        "thumbnails": {"high": {"url": "https://example.com/thumb.jpg"}},
+                    },
+                }
+            ]
+        }
+        mock_response.raise_for_status = MagicMock()
+        mock_get.return_value = mock_response
+
+        cache_path = tmp_path / "youtube-cache.json"
+        base_time = datetime(2026, 1, 10, 12, 0, tzinfo=UTC)
+
+        with patch.object(YouTubeResearcher, "_utcnow", return_value=base_time):
+            researcher = YouTubeResearcher(
+                api_key="test-key",
+                cache_ttl_seconds=30,
+                cache_path=cache_path,
+            )
+            with patch.object(researcher, "_get_video_stats", return_value={"abc123": {"view_count": 5}}):
+                researcher.search_videos("cache ttl query", max_results=1)
+            researcher.close()
+
+        mock_get.reset_mock()
+        with patch.object(YouTubeResearcher, "_utcnow", return_value=base_time + timedelta(seconds=45)):
+            restarted = YouTubeResearcher(
+                api_key="test-key",
+                cache_ttl_seconds=30,
+                cache_path=cache_path,
+            )
+            with patch.object(
+                restarted, "_get_video_stats", return_value={"abc123": {"view_count": 5}}
+            ) as restarted_stats:
+                restarted.search_videos("cache ttl query", max_results=1)
+            restarted.close()
+
+        assert mock_get.call_count == 1
+        assert restarted_stats.call_count == 1
 
 
 class TestResearchQueryDerivation:
