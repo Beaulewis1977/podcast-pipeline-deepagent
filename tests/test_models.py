@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from podcast_pipeline.models.analysis import (
     AnalysisResult,
@@ -84,6 +85,19 @@ class TestTranscript:
         assert cut.word == "um"
         assert cut.end - cut.start == pytest.approx(0.3)
 
+    def test_word_confidence_out_of_bounds_rejected(self):
+        """Word confidence must stay within [0, 1]."""
+        with pytest.raises(ValidationError):
+            Word(word="oops", start=0.0, end=0.4, confidence=1.2)
+
+        with pytest.raises(ValidationError):
+            Word(word="oops", start=0.0, end=0.4, confidence=-0.1)
+
+    def test_segment_backwards_range_rejected(self):
+        """Segment end must be after start."""
+        with pytest.raises(ValidationError):
+            Segment(start=3.0, end=2.0, text="invalid")
+
 
 class TestAnalysis:
     """Tests for analysis models."""
@@ -111,6 +125,41 @@ class TestAnalysis:
             suggested_hook="Must watch this!",
         )
         assert clip.virality_score == 8
+
+    def test_content_cut_backwards_seconds_rejected(self):
+        """Content cuts reject backwards seconds ranges."""
+        with pytest.raises(ValidationError):
+            ContentCut(
+                start="02:45",
+                end="02:15",
+                start_seconds=165.0,
+                end_seconds=135.0,
+                reason="Invalid",
+            )
+
+    def test_viral_clip_string_seconds_mismatch_rejected(self):
+        """Viral clips reject mismatched string and numeric timestamps."""
+        with pytest.raises(ValidationError):
+            ViralClip(
+                start="01:00",
+                end="01:30",
+                start_seconds=0.0,
+                end_seconds=90.0,
+                description="Mismatch",
+                virality_score=6,
+            )
+
+    def test_viral_clip_invalid_time_format_rejected(self):
+        """Viral clips require MM:SS or HH:MM:SS time strings."""
+        with pytest.raises(ValidationError):
+            ViralClip(
+                start="1m30s",
+                end="2m00s",
+                start_seconds=90.0,
+                end_seconds=120.0,
+                description="Bad format",
+                virality_score=6,
+            )
 
     def test_analysis_result_model(self):
         """Test full AnalysisResult model."""
