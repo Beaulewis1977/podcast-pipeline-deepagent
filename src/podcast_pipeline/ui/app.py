@@ -1099,7 +1099,7 @@ def render_export_panel(job_id: str, job_dir: Path) -> None:
     col1, col2 = st.columns(2)
 
     with col1:
-        st.select_slider(
+        video_quality = st.select_slider(
             "Video Quality",
             options=["draft", "standard", "high", "ultra"],
             value="standard",
@@ -1107,11 +1107,16 @@ def render_export_panel(job_id: str, job_dir: Path) -> None:
         )
 
     with col2:
-        st.checkbox(
+        audio_normalize = st.checkbox(
             "Normalize Audio Loudness",
             value=True,
             key="audio_normalize",
         )
+
+    quality_controls = {
+        "video_quality": video_quality,
+        "audio_normalize": bool(audio_normalize),
+    }
 
     st.divider()
 
@@ -1135,10 +1140,10 @@ def render_export_panel(job_id: str, job_dir: Path) -> None:
                 # Mark review complete
                 approve_review(job_dir, new_selected)
                 # Run render via service
-                run_stage_via_service(job_id, "render")
+                run_stage_via_service(job_id, "render", quality_controls=quality_controls)
         elif st.button("🎬 Export Now", key="export_now"):
             update_export_platforms(job_dir, new_selected)
-            run_stage_via_service(job_id, "render")
+            run_stage_via_service(job_id, "render", quality_controls=quality_controls)
 
     with col2:
         if not review_complete:
@@ -1163,13 +1168,20 @@ def render_export_panel(job_id: str, job_dir: Path) -> None:
 # ============================================================================
 # Helper Functions
 # ============================================================================
-def run_stage_via_service(job_id: str, stage_name: str) -> None:
+def run_stage_via_service(
+    job_id: str,
+    stage_name: str,
+    quality_controls: dict[str, Any] | None = None,
+) -> None:
     """Run a pipeline stage through the backend service."""
     client = get_service_client()
 
     with st.spinner(f"Running {stage_name} stage..."):
         try:
-            result = client.run_job(job_id, stage=stage_name)
+            run_kwargs: dict[str, Any] = {"stage": stage_name}
+            if quality_controls is not None:
+                run_kwargs["quality_controls"] = quality_controls
+            result = client.run_job(job_id, **run_kwargs)
             if result.status == "complete":
                 st.success(f"{stage_name.title()} stage completed!")
                 st.rerun()

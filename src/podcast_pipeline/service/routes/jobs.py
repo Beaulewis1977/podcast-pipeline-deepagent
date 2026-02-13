@@ -28,6 +28,7 @@ from podcast_pipeline.service.schemas import (
     ResumeJobRequest,
     ResumeJobResponse,
     RunJobRequest,
+    RunQualityControls,
     RunJobResponse,
     StageDetail,
 )
@@ -57,6 +58,24 @@ def _load_job_or_404(pipeline: Pipeline, job_id: str) -> Job:
         return pipeline.load_job(job_id)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=f"Job not found: {job_id}") from exc
+
+
+def _persist_run_quality_controls(
+    pipeline: Pipeline,
+    job: Job,
+    controls: RunQualityControls | None,
+) -> None:
+    """Persist optional run quality controls into job config."""
+    if controls is None:
+        return
+
+    job.config["render_quality_controls"] = controls.model_dump()
+    job.save(pipeline.config.paths.jobs_dir)
+    logger.info(
+        "run_quality_controls_persisted",
+        job_id=job.job_id,
+        controls=job.config["render_quality_controls"],
+    )
 
 
 def _job_to_detail(job: Job) -> JobDetailResponse:
@@ -179,6 +198,7 @@ async def run_job(
 
     try:
         request_body = body or RunJobRequest()
+        _persist_run_quality_controls(pipeline, job, request_body.quality_controls)
         results = pipeline.run(
             job,
             stage=request_body.stage,

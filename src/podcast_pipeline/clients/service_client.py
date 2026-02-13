@@ -386,6 +386,7 @@ class ServiceClient:
         *,
         stage: str | None = None,
         until_stage: str | None = None,
+        quality_controls: dict[str, object] | None = None,
     ) -> RunResult:
         """Trigger a synchronous pipeline run (POST /jobs/{id}/run)."""
         payload: dict[str, object] = {}
@@ -393,6 +394,8 @@ class ServiceClient:
             payload["stage"] = stage
         if until_stage is not None:
             payload["until_stage"] = until_stage
+        if quality_controls is not None:
+            payload["quality_controls"] = quality_controls
         resp = self._request(
             "POST",
             f"/jobs/{job_id}/run",

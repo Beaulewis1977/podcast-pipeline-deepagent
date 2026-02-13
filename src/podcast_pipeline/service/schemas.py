@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field, model_validator
 STAGE_ORDER = ("ingest", "transcribe", "analyze", "review", "render")
 STAGE_INDEX = {stage_name: index for index, stage_name in enumerate(STAGE_ORDER)}
 StageName = Literal["ingest", "transcribe", "analyze", "review", "render"]
+VideoQuality = Literal["draft", "standard", "high", "ultra"]
 
 
 def _validate_stage_window(
@@ -63,11 +64,28 @@ class CreateJobResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class RunQualityControls(BaseModel):
+    """Runtime quality controls applied during render."""
+
+    video_quality: VideoQuality = Field(
+        default="standard",
+        description="Video quality profile to apply during render exports",
+    )
+    audio_normalize: bool = Field(
+        default=True,
+        description="Whether render should normalize final audio loudness",
+    )
+
+
 class RunJobRequest(BaseModel):
     """POST /jobs/{job_id}/run request body."""
 
     stage: StageName | None = Field(None, description="Specific stage to run")
     until_stage: StageName | None = Field(None, description="Run up to and including this stage")
+    quality_controls: RunQualityControls | None = Field(
+        default=None,
+        description="Optional render quality controls persisted for this run",
+    )
 
     @model_validator(mode="after")
     def validate_stage_window(self) -> "RunJobRequest":

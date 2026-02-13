@@ -14,6 +14,18 @@ from podcast_pipeline.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
+VIDEO_QUALITY_PRESET = {
+    "draft": "veryfast",
+    "high": "slow",
+    "ultra": "veryslow",
+}
+VIDEO_QUALITY_BITRATE_FACTOR = {
+    "draft": 0.65,
+    "standard": 1.0,
+    "high": 1.2,
+    "ultra": 1.4,
+}
+
 
 class RenderStage(Stage):
     """Render final exports for all platforms."""
@@ -44,6 +56,7 @@ class RenderStage(Stage):
             )
 
         edit_plan = self._load_edit_plan(job_dir)
+        quality_controls = self._resolve_quality_controls(job)
 
         # Get input video
         input_video = self._find_input_video(job_dir)
@@ -59,6 +72,7 @@ class RenderStage(Stage):
         outputs: list[str] = []
         errors: list[str] = []
         platform_results: dict[str, dict[str, Any]] = {}
+        self.logger.info("render_quality_controls", controls=quality_controls)
 
         # Export for each selected platform
         selected_platforms = list(dict.fromkeys(decisions.export_platforms))
@@ -78,15 +92,37 @@ class RenderStage(Stage):
                     self.logger.error("render_platform_failed", platform=platform, error=error_msg)
                     continue
 
+                runtime_spec = self._apply_video_quality_profile(
+                    spec,
+                    video_quality=quality_controls["video_quality"],
+                )
                 out = self._render_platform(
-                    job_dir, input_video, platform, spec, decisions, video_info, edit_plan
+                    job_dir,
+                    input_video,
+                    platform,
+                    runtime_spec,
+                    decisions,
+                    video_info,
+                    edit_plan,
+                    normalize_audio=quality_controls["audio_normalize"],
                 )
                 outputs.extend(out)
-                platform_results[platform] = {"status": "success", "outputs": out}
+                platform_results[platform] = {
+                    "status": "success",
+                    "outputs": out,
+                    "settings": {
+                        "video_quality": quality_controls["video_quality"],
+                        "audio_normalize": quality_controls["audio_normalize"],
+                        "preset": runtime_spec.preset,
+                        "video_bitrate": runtime_spec.video_bitrate,
+                        "audio_bitrate": runtime_spec.audio_bitrate,
+                    },
+                }
                 self.logger.info(
                     "render_platform_complete",
                     platform=platform,
                     outputs=out,
+                    settings=platform_results[platform]["settings"],
                 )
 
             except FFmpegError as e:
@@ -96,6 +132,10 @@ class RenderStage(Stage):
                     "status": "failed",
                     "outputs": [],
                     "error": error_msg,
+                    "settings": {
+                        "video_quality": quality_controls["video_quality"],
+                        "audio_normalize": quality_controls["audio_normalize"],
+                    },
                 }
                 self.logger.exception("render_failed", platform=platform, error=str(e))
             except Exception as e:
@@ -105,6 +145,10 @@ class RenderStage(Stage):
                     "status": "failed",
                     "outputs": [],
                     "error": error_msg,
+                    "settings": {
+                        "video_quality": quality_controls["video_quality"],
+                        "audio_normalize": quality_controls["audio_normalize"],
+                    },
                 }
                 self.logger.exception("render_failed", platform=platform)
 
@@ -149,6 +193,7 @@ class RenderStage(Stage):
                     "status": render_status,
                     "errors": errors,
                     "platform_results": platform_results,
+                    "quality_controls": quality_controls,
                 },
             )
 
@@ -159,8 +204,72 @@ class RenderStage(Stage):
                 "status": render_status,
                 "errors": errors,
                 "platform_results": platform_results,
+                "quality_controls": quality_controls,
             },
         )
+
+    def _resolve_quality_controls(self, job: Job) -> dict[str, Any]:
+        """Resolve render quality controls from persisted job config."""
+        raw_controls = job.config.get("render_quality_controls", {})
+        controls = raw_controls if isinstance(raw_controls, dict) else {}
+
+        raw_quality = str(controls.get("video_quality", "standard")).lower()
+        if raw_quality not in VIDEO_QUALITY_BITRATE_FACTOR:
+            self.logger.warning("invalid_video_quality_control", value=raw_quality)
+            raw_quality = "standard"
+
+        raw_audio_normalize = controls.get("audio_normalize", True)
+        if isinstance(raw_audio_normalize, bool):
+            audio_normalize = raw_audio_normalize
+        else:
+            audio_normalize = str(raw_audio_normalize).strip().lower() in {
+                "1",
+                "true",
+                "yes",
+                "on",
+            }
+
+        return {
+            "video_quality": raw_quality,
+            "audio_normalize": audio_normalize,
+        }
+
+    def _apply_video_quality_profile(self, spec: PlatformSpec, video_quality: str) -> PlatformSpec:
+        """Derive runtime encoding settings from the selected quality profile."""
+        if video_quality == "standard":
+            return spec
+
+        tuned_spec = spec.model_copy(deep=True)
+        bitrate_factor = VIDEO_QUALITY_BITRATE_FACTOR[video_quality]
+        tuned_spec.audio_bitrate = self._scale_bitrate(spec.audio_bitrate, bitrate_factor)
+        if not tuned_spec.audio_only:
+            tuned_spec.video_bitrate = self._scale_bitrate(spec.video_bitrate, bitrate_factor)
+            tuned_spec.preset = VIDEO_QUALITY_PRESET[video_quality]
+        return tuned_spec
+
+    def _scale_bitrate(self, bitrate: str, factor: float) -> str:
+        """Scale bitrate strings like 8M/320k while preserving units."""
+        normalized = bitrate.strip()
+        if len(normalized) < 2:
+            return bitrate
+
+        unit = normalized[-1]
+        if unit.lower() not in {"k", "m"}:
+            return bitrate
+
+        try:
+            value = float(normalized[:-1])
+        except ValueError:
+            return bitrate
+
+        scaled_value = value * factor
+        if unit.lower() == "k":
+            scaled_value = max(32.0, scaled_value)
+            value_text = str(int(round(scaled_value)))
+        else:
+            scaled_value = max(0.1, scaled_value)
+            value_text = f"{scaled_value:.2f}".rstrip("0").rstrip(".")
+        return f"{value_text}{unit}"
 
     def _get_platform_spec(self, platform: str) -> PlatformSpec | None:
         """Get platform spec by name."""
@@ -196,6 +305,7 @@ class RenderStage(Stage):
         decisions: ReviewDecisions,
         video_info: dict[str, Any],
         edit_plan: EditPlan | None,
+        normalize_audio: bool,
     ) -> list[str]:
         """Render export for a specific platform."""
         output_dir = job_dir / "output" / platform
@@ -203,7 +313,7 @@ class RenderStage(Stage):
 
         # Audio-only platforms
         if spec.audio_only:
-            return self._render_audio_only(output_dir, input_video, platform, spec)
+            return self._render_audio_only(output_dir, input_video, platform, spec, normalize_audio)
 
         # Video platforms
         return self._render_video(
@@ -214,6 +324,7 @@ class RenderStage(Stage):
             decisions,
             video_info,
             edit_plan,
+            normalize_audio,
         )
 
     def _render_audio_only(
@@ -222,6 +333,7 @@ class RenderStage(Stage):
         input_video: Path,
         platform: str,
         spec: PlatformSpec,
+        normalize_audio: bool,
     ) -> list[str]:
         """Render audio-only export (Spotify, Apple Podcasts)."""
         ext = {"mp3": "mp3", "m4a": "m4a", "aac": "m4a"}.get(spec.container, "mp3")
@@ -244,8 +356,10 @@ class RenderStage(Stage):
 
         run_ffmpeg(args)
 
-        # Normalize loudness
-        self._normalize_loudness(output_file, spec.loudness_lufs)
+        if normalize_audio:
+            self._normalize_loudness(output_file, spec.loudness_lufs)
+        else:
+            self.logger.info("loudness_normalization_disabled", platform=platform)
 
         self.logger.info(f"{platform}_rendered", output=str(output_file))
         return [str(output_file.relative_to(output_dir.parent.parent))]
@@ -259,6 +373,7 @@ class RenderStage(Stage):
         decisions: ReviewDecisions,
         video_info: dict[str, Any],
         edit_plan: EditPlan | None,
+        normalize_audio: bool,
     ) -> list[str]:
         """Render video export with aspect ratio conversion."""
         output_file = output_dir / f"final.{spec.container}"
@@ -354,8 +469,10 @@ class RenderStage(Stage):
 
         run_ffmpeg(args)
 
-        # Normalize audio loudness
-        self._normalize_loudness(output_file, spec.loudness_lufs)
+        if normalize_audio:
+            self._normalize_loudness(output_file, spec.loudness_lufs)
+        else:
+            self.logger.info("loudness_normalization_disabled", platform=platform)
 
         self.logger.info(f"{platform}_rendered", output=str(output_file))
         return [str(output_file.relative_to(output_dir.parent.parent))]
