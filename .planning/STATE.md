@@ -1,28 +1,28 @@
 # Project State: Podcast Pipeline
 
 **Last updated:** 2026-02-13
-**Current phase:** Phase 4 in progress (8/10 plans complete)
-**Overall progress:** 93% (25/27 plans complete)
+**Current phase:** Phase 4 in progress (9/10 plans complete)
+**Overall progress:** 96% (26/27 plans complete)
 
 ## Project Reference
 
 See: `.planning/PROJECT.md`
 
 **Core value:** Turn raw podcast recording into multi-platform content without editing software or manual copywriting.
-**Current focus:** Execute Phase 4 hardening plans in wave order.
+**Current focus:** Execute final Phase 4 hardening plan and close post-release hardening wave.
 
 ## Current Position
 
 ```
 Phase:    3 of 4 complete (Phase 4 execution in progress)
-Plan:     25 completed overall; 8/10 complete in Phase 4
+Plan:     26 completed overall; 9/10 complete in Phase 4
 Status:   Executing Phase 4 hardening plans
-Last activity: 2026-02-13 - Completed 04-08-PLAN.md
+Last activity: 2026-02-13 - Completed 04-09-PLAN.md
 
-Progress: [███████████████████████░░] 93% (25/27 plans complete)
+Progress: [████████████████████████░] 96% (26/27 plans complete)
 ```
 
-**Next Phase:** Phase 4 - Post-release hardening (`04-09-PLAN.md`)
+**Next Phase:** Phase 4 - Post-release hardening (`04-10-PLAN.md`)
 
 ## Phase Status
 
@@ -31,13 +31,13 @@ Progress: [███████████████████████
 | 1 | Wiring + Stability | Complete | 6/6 | 100% |
 | 2 | Research + Viral Integration | Complete | 5/5 | 100% |
 | 3 | Polishing + Desktop Distribution | Complete | 6/6 | 100% |
-| 4 | Post-release hardening | In progress | 8/10 | 80% |
+| 4 | Post-release hardening | In progress | 9/10 | 90% |
 
 ## Performance Metrics
 
 | Metric | Value |
 |--------|-------|
-| Plans completed | 25 |
+| Plans completed | 26 |
 | Requirements done | 35/83 (21 partial) |
 | Phases complete | 3/4 |
 | Estimated completion | In progress |
@@ -106,6 +106,9 @@ Progress: [███████████████████████
 | Render enhancement chain is FFmpeg-native with explicit loudnorm fallback behavior | Keeps output quality deterministic even when optional normalization dependencies are unavailable | 2026-02-13 |
 | Research query derivation uses deterministic metadata+transcript weighting with explicit fallback source labels | Prevents weak filename defaults from silently driving research quality | 2026-02-13 |
 | YouTube API cache persistence is opt-in via cache_path with TTL pruning on load/lookup | Reduces repeated quota spikes across restarts without forcing global cache side effects | 2026-02-13 |
+| Desktop lifecycle controls route through typed backend methods including service-backed delete actions | Converts desktop from monitor-only surface into full operator control plane | 2026-02-13 |
+| Streamlit timeline edits persist as validated range edits into regenerated review/edit_plan artifacts | Enables true editorial timeline control instead of checkbox-only cut approvals | 2026-02-13 |
+| Recovery UX surfaces /system/runtime diagnostics with on-demand /jobs/reconcile actions across desktop and Streamlit | Makes stale/orphaned runtime state visible and operator-actionable without filesystem inspection | 2026-02-13 |
 
 ### Roadmap Evolution
 
@@ -119,6 +122,7 @@ Progress: [███████████████████████
 - Phase 4 execution continued: completed 04-03 UI truthfulness hardening (full-run semantics + metadata path fix + review-governed marketing flow)
 - Phase 4 execution continued: completed 04-07 render truthfulness and quality wiring hardening (platform failure contract + quality payload wiring + preflight/output checks)
 - Phase 4 execution continued: completed 04-08 output quality backbone hardening (render enhancement + thumbnail artifacts + transcript-grounded research query/cache hardening)
+- Phase 4 execution continued: completed 04-09 operator UX hardening (desktop full lifecycle controls, Streamlit timeline range editing, cross-surface recovery diagnostics + reconcile controls)
 
 ### Technical Notes
 
@@ -160,16 +164,17 @@ Progress: [███████████████████████
 - 2026-02-13: Completed 04-03-PLAN.md (truthful full-run UI action, canonical metadata/timeline loading, review-governed marketing save/regenerate flow)
 - 2026-02-13: Completed 04-07-PLAN.md (render truthful partial-failure semantics, quality-control run payload wiring, ingest/render preflight and artifact verification guardrails)
 - 2026-02-13: Completed 04-08-PLAN.md (concrete render enhancement + thumbnail artifacts, transcript-grounded research query derivation, persistent TTL cache restart behavior)
+- 2026-02-13: Completed 04-09-PLAN.md (desktop full lifecycle control plane, validated timeline edit persistence, runtime diagnostics/reconcile controls in desktop + Streamlit)
 
 ## Session Continuity
 
 ### Last session
 
-2026-02-13 01:58 UTC — Executed `04-08-PLAN.md`, implemented concrete render enhancement and thumbnail artifact generation, upgraded transcript-grounded research query derivation, and added persistent TTL cache restart semantics.
+2026-02-13 02:20 UTC — Executed `04-09-PLAN.md`, implemented desktop lifecycle controls, Streamlit timeline edit persistence, and cross-surface recovery/reconcile diagnostics.
 
 ### Stopped at
 
-Completed `04-08-PLAN.md`; next action is execute `04-09-PLAN.md`.
+Completed `04-09-PLAN.md`; next action is execute `04-10-PLAN.md`.
 
 ### Resume file
 
