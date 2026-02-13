@@ -7,6 +7,7 @@ from pathlib import Path
 from podcast_pipeline.config import PlatformSpec, load_config
 from podcast_pipeline.models.job import Job
 from podcast_pipeline.stages.render import RenderStage
+from podcast_pipeline.stages.review import ReviewDecisions
 from podcast_pipeline.utils.ffmpeg import FFmpegError
 
 
@@ -251,6 +252,127 @@ class TestMarketingDocGeneration:
         assert "YouTube" in content
         assert "TikTok" in content
         assert "Test Title 1" in content
+
+
+class TestRenderEnhancementAndThumbnailOutputs:
+    """Tests for enhancement and thumbnail artifact behavior."""
+
+    def test_audio_enhancement_chain_includes_denoise_eq_and_limiter(self) -> None:
+        """Enhancement filter chain should include denoise, EQ, and limiting steps."""
+        config = load_config()
+        stage = RenderStage(config)
+
+        filters = stage._build_audio_enhancement_filters()
+
+        assert any("afftdn" in item for item in filters)
+        assert any("equalizer" in item for item in filters)
+        assert any("alimiter" in item for item in filters)
+
+    def test_audio_enhancement_chain_respects_noise_reduction_off(self) -> None:
+        """Enhancement chain should skip denoise filter when config disables it."""
+        config = load_config()
+        config.audio.noise_reduction = "off"
+        stage = RenderStage(config)
+
+        filters = stage._build_audio_enhancement_filters()
+        assert all("afftdn" not in item for item in filters)
+        assert any("acompressor" in item for item in filters)
+
+    def test_thumbnail_export_generates_images_and_manifest(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        """Thumbnail export should create concrete image artifacts and manifest metadata."""
+        config = load_config()
+        stage = RenderStage(config)
+        input_video = tmp_path / "input" / "raw.mp4"
+        input_video.parent.mkdir(parents=True, exist_ok=True)
+        input_video.write_bytes(b"video-bytes")
+
+        analysis_dir = tmp_path / "analysis"
+        analysis_dir.mkdir(parents=True, exist_ok=True)
+        (analysis_dir / "analysis.json").write_text(
+            json.dumps(
+                {
+                    "thumbnail_frames": [
+                        {
+                            "timestamp": "00:10",
+                            "timestamp_seconds": 10.0,
+                            "visual_description": "Guest reaction shot",
+                            "suggested_text_overlay": "Big reveal",
+                            "emotion": "surprised",
+                        },
+                        {
+                            "timestamp": "00:45",
+                            "timestamp_seconds": 45.0,
+                            "visual_description": "Host emphasizing key idea",
+                            "suggested_text_overlay": "Do this now",
+                            "emotion": "excited",
+                        },
+                    ]
+                }
+            )
+        )
+
+        def _fake_ffmpeg(args: list[str]) -> None:
+            output_path = Path(args[-1])
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_bytes(b"thumbnail-bytes")
+
+        monkeypatch.setattr("podcast_pipeline.stages.render.run_ffmpeg", _fake_ffmpeg)
+
+        outputs, result = stage._export_thumbnail_assets(
+            job_dir=tmp_path,
+            input_video=input_video,
+            video_info={"duration": 90.0},
+            decisions=ReviewDecisions(review_complete=True, selected_thumbnail=1),
+        )
+
+        assert result["status"] == "complete"
+        assert result["generated"] == 2
+        assert any(path.endswith("thumbnail_01.jpg") for path in outputs)
+        assert any(path.endswith("manifest.json") for path in outputs)
+
+        manifest_path = tmp_path / "output" / "thumbnails" / "manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        assert manifest["generated"] == 2
+        assert manifest["thumbnails"][0]["is_selected"] is True
+
+    def test_thumbnail_export_uses_duration_fallback_for_sparse_analysis(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        """Sparse thumbnail metadata should still produce deterministic fallback images."""
+        config = load_config()
+        stage = RenderStage(config)
+        input_video = tmp_path / "input" / "raw.mp4"
+        input_video.parent.mkdir(parents=True, exist_ok=True)
+        input_video.write_bytes(b"video-bytes")
+
+        analysis_dir = tmp_path / "analysis"
+        analysis_dir.mkdir(parents=True, exist_ok=True)
+        (analysis_dir / "analysis.json").write_text(json.dumps({"thumbnail_frames": []}))
+
+        def _fake_ffmpeg(args: list[str]) -> None:
+            output_path = Path(args[-1])
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_bytes(b"thumbnail-bytes")
+
+        monkeypatch.setattr("podcast_pipeline.stages.render.run_ffmpeg", _fake_ffmpeg)
+
+        outputs, result = stage._export_thumbnail_assets(
+            job_dir=tmp_path,
+            input_video=input_video,
+            video_info={"duration": 120.0},
+            decisions=ReviewDecisions(review_complete=True),
+        )
+
+        assert result["status"] == "complete"
+        assert result["source"] == "duration_fallback"
+        assert result["generated"] == 4
+        assert any(path.endswith("manifest.json") for path in outputs)
 
 
 class TestRenderStatusSemantics:

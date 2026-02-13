@@ -117,6 +117,8 @@ class ThumbnailCandidate(BaseModel):
     visual_description: str = ""
     suggested_text_overlay: str = ""
     emotion: str = ""
+    confidence_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    source_label: str | None = None
 
     @field_validator("timestamp")
     @classmethod
