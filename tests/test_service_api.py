@@ -16,6 +16,7 @@ from podcast_pipeline.config import Config
 from podcast_pipeline.pipeline import Pipeline
 from podcast_pipeline.service.app import create_app
 from podcast_pipeline.service.supervisor import Supervisor
+from podcast_pipeline.stages.base import StageResult
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -188,6 +189,103 @@ class TestRunRoute:
             data = resp.json()
             assert data["job_id"] == seeded_job
             assert "status" in data
+
+
+# ---------------------------------------------------------------------------
+# Run/resume schema validation and contract semantics (Phase 04-02 Task 1)
+# ---------------------------------------------------------------------------
+
+
+class TestRunResumeSchema:
+    """Validation and response-contract tests for run/resume payloads."""
+
+    def test_run_schema_rejects_invalid_stage(self, service_client: TestClient, seeded_job: str):
+        """Invalid run stage values return structured validation errors."""
+        resp = service_client.post(
+            f"/jobs/{seeded_job}/run",
+            json={"stage": "not-a-stage"},
+        )
+        assert resp.status_code == 422
+        detail = resp.json()["detail"]
+        assert isinstance(detail, list)
+        assert any(entry.get("loc", [])[-1] == "stage" for entry in detail)
+
+    def test_run_schema_rejects_until_before_stage(
+        self,
+        service_client: TestClient,
+        seeded_job: str,
+    ):
+        """until_stage before stage fails request-model validation."""
+        resp = service_client.post(
+            f"/jobs/{seeded_job}/run",
+            json={"stage": "review", "until_stage": "analyze"},
+        )
+        assert resp.status_code == 422
+        detail = resp.json()["detail"]
+        assert isinstance(detail, list)
+        assert any(
+            "until_stage must be the same as or after stage" in entry["msg"] for entry in detail
+        )
+
+    def test_run_schema_response_includes_execution_flags(
+        self,
+        service_client: TestClient,
+        seeded_job: str,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """Run responses explicitly report started/completed/rejected flags."""
+
+        def _fake_run(*_args, **_kwargs):
+            return {"ingest": StageResult(success=True)}
+
+        monkeypatch.setattr(service_client.app.state.pipeline, "run", _fake_run)
+        resp = service_client.post(
+            f"/jobs/{seeded_job}/run",
+            json={"stage": "ingest"},
+        )
+        assert resp.status_code == 200
+        payload = resp.json()
+        assert payload["started"] is True
+        assert payload["completed"] is True
+        assert payload["rejected"] is False
+
+    def test_resume_schema_rejects_invalid_stage(self, service_client: TestClient, seeded_job: str):
+        """Invalid resume from_stage values return structured validation errors."""
+        resp = service_client.post(
+            f"/jobs/{seeded_job}/resume",
+            json={"from_stage": "bad-stage"},
+        )
+        assert resp.status_code == 422
+        detail = resp.json()["detail"]
+        assert isinstance(detail, list)
+        assert any(entry.get("loc", [])[-1] == "from_stage" for entry in detail)
+
+    def test_resume_schema_accepts_background_and_until_stage(
+        self,
+        service_client: TestClient,
+        seeded_job: str,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """Resume schema accepts parity controls and forwards them to supervisor."""
+        captured: dict[str, str | None] = {}
+
+        def _fake_start_run(*_args, stage: str | None = None, until_stage: str | None = None):
+            captured["stage"] = stage
+            captured["until_stage"] = until_stage
+            return True
+
+        monkeypatch.setattr(service_client.app.state.supervisor, "start_run", _fake_start_run)
+        resp = service_client.post(
+            f"/jobs/{seeded_job}/resume",
+            json={"from_stage": "transcribe", "until_stage": "render", "background": True},
+        )
+        assert resp.status_code == 200
+        payload = resp.json()
+        assert payload["status"] == "running"
+        assert payload["started"] is True
+        assert payload["completed"] is False
+        assert payload["rejected"] is False
+        assert captured == {"stage": "transcribe", "until_stage": "render"}
 
 
 # ---------------------------------------------------------------------------

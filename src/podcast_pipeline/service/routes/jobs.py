@@ -185,16 +185,23 @@ async def run_job(
             until_stage=request_body.until_stage,
         )
         failed = [name for name, r in results.items() if not r.success]
+        started = len(results) > 0
         if failed:
             return RunJobResponse(
                 job_id=job_id,
                 status="failed",
                 message=f"Stages failed: {', '.join(failed)}",
+                started=started,
+                completed=False,
+                rejected=False,
             )
         return RunJobResponse(
             job_id=job_id,
             status="complete",
             message=f"Ran {len(results)} stage(s) successfully",
+            started=started,
+            completed=True,
+            rejected=False,
         )
     except (FileNotFoundError, OSError, ValueError) as exc:
         logger.exception("run_job_failed", job_id=job_id, error=str(exc))
@@ -295,14 +302,28 @@ async def resume_job(job_id: str, body: ResumeJobRequest, request: Request) -> R
     try:
         job = prepare_resume(jobs_dir, job_id, from_stage=body.from_stage)
     except ValueError as exc:
+        if "no incomplete stages to resume" not in str(exc):
+            raise HTTPException(
+                status_code=422,
+                detail=[
+                    {
+                        "loc": ["body", "from_stage"],
+                        "msg": str(exc),
+                        "type": "value_error",
+                    }
+                ],
+            ) from exc
         return ResumeJobResponse(
             job_id=job_id,
             status="complete",
             message=str(exc),
+            started=False,
+            completed=True,
+            rejected=False,
         )
 
     # Determine which stage we are resuming from.
-    resume_stage = body.from_stage
+    resume_stage: str | None = body.from_stage
     if resume_stage is None:
         for stage_name in Pipeline.STAGE_ORDER:
             stage_obj = job.stages.get(stage_name)
@@ -315,12 +336,19 @@ async def resume_job(job_id: str, body: ResumeJobRequest, request: Request) -> R
             job_id=job_id,
             status="complete",
             message="All stages already complete, nothing to resume",
+            started=False,
+            completed=True,
+            rejected=False,
         )
 
     # Background (non-blocking) resume via supervisor
     if body.background:
         supervisor = _get_supervisor(request)
-        accepted = supervisor.start_run(job, stage=resume_stage)
+        accepted = supervisor.start_run(
+            job,
+            stage=resume_stage,
+            until_stage=body.until_stage,
+        )
         if not accepted:
             raise HTTPException(
                 status_code=409,
@@ -330,22 +358,36 @@ async def resume_job(job_id: str, body: ResumeJobRequest, request: Request) -> R
             job_id=job_id,
             status="running",
             message=f"Background resume started from {resume_stage}",
+            started=True,
+            completed=False,
+            rejected=False,
         )
 
     # Synchronous (blocking) resume
     try:
-        results = pipeline.run(job, stage=resume_stage)
+        results = pipeline.run(
+            job,
+            stage=resume_stage,
+            until_stage=body.until_stage,
+        )
         failed = [name for name, r in results.items() if not r.success]
+        started = len(results) > 0
         if failed:
             return ResumeJobResponse(
                 job_id=job_id,
                 status="failed",
                 message=f"Resume failed at stage(s): {', '.join(failed)}",
+                started=started,
+                completed=False,
+                rejected=False,
             )
         return ResumeJobResponse(
             job_id=job_id,
             status="complete",
             message=f"Resumed from {resume_stage}",
+            started=started,
+            completed=True,
+            rejected=False,
         )
     except (FileNotFoundError, OSError, ValueError) as exc:
         logger.exception("resume_job_failed", job_id=job_id, error=str(exc))
