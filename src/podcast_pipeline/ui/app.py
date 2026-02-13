@@ -29,6 +29,7 @@ from podcast_pipeline.stages.review import (
 from podcast_pipeline.utils.logging import get_logger
 
 logger = get_logger(__name__)
+_MARKETING_METADATA_KEY = "__metadata__"
 
 # Page config must be first Streamlit command
 st.set_page_config(
@@ -129,6 +130,89 @@ def _load_ingest_metadata(job_dir: Path) -> dict[str, Any] | None:
         )
         return _read_metadata_json(legacy_path)
     return None
+
+
+def _load_review_decisions(job_dir: Path) -> ReviewDecisions:
+    """Load review decisions with safe fallback to defaults."""
+    review_path = job_dir / "review" / "review_state.json"
+    if not review_path.exists():
+        return ReviewDecisions()
+    try:
+        return ReviewDecisions.model_validate_json(review_path.read_text())
+    except Exception as exc:
+        logger.warning("review_state_load_failed", path=str(review_path), error=str(exc))
+        return ReviewDecisions()
+
+
+def _apply_marketing_review_edits(
+    analysis: dict[str, Any], decisions: ReviewDecisions
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Overlay review-state marketing edits on top of analysis defaults."""
+    base_marketing_raw = analysis.get("marketing", {})
+    base_metadata_raw = analysis.get("metadata", {})
+
+    base_marketing = (
+        {key: value for key, value in base_marketing_raw.items() if isinstance(value, dict)}
+        if isinstance(base_marketing_raw, dict)
+        else {}
+    )
+    base_metadata = base_metadata_raw.copy() if isinstance(base_metadata_raw, dict) else {}
+
+    merged_marketing: dict[str, dict[str, Any]] = {
+        key: value.copy() for key, value in base_marketing.items()
+    }
+    merged_metadata = base_metadata.copy()
+
+    for key, value in decisions.marketing_edits.items():
+        if not isinstance(value, dict):
+            continue
+        if key == _MARKETING_METADATA_KEY:
+            merged_metadata.update(value)
+            continue
+        existing = merged_marketing.get(key, {})
+        merged_marketing[key] = {**existing, **value}
+
+    return merged_marketing, merged_metadata
+
+
+def _topics_to_text(topics: Any) -> str:
+    """Convert metadata topics payload to text input form."""
+    if isinstance(topics, list):
+        return ", ".join(str(topic) for topic in topics if topic)
+    if isinstance(topics, str):
+        return topics
+    return ""
+
+
+def _save_marketing_edits_to_review_flow(
+    job_dir: Path,
+    decisions: ReviewDecisions,
+    edited_marketing: dict[str, Any],
+    summary: str,
+    topics: str,
+    mood: str,
+) -> None:
+    """Persist marketing edits in review state and regenerate edit plan."""
+    normalized: dict[str, dict[str, Any]] = {}
+    for key, value in edited_marketing.items():
+        if isinstance(value, dict):
+            normalized[key] = value
+
+    normalized[_MARKETING_METADATA_KEY] = {
+        "summary": summary.strip(),
+        "topics": [topic.strip() for topic in topics.split(",") if topic.strip()],
+        "mood": mood.strip(),
+    }
+    decisions.marketing_edits = normalized
+    save_review_decisions(job_dir, decisions)
+
+
+def _prepare_marketing_regeneration_review_state(job_dir: Path) -> None:
+    """Reset review-gated marketing edits before re-running analyze."""
+    decisions = _load_review_decisions(job_dir)
+    decisions.review_complete = False
+    decisions.marketing_edits = {}
+    save_review_decisions(job_dir, decisions)
 
 
 def format_timestamp(ts: datetime | None) -> str:
@@ -753,8 +837,8 @@ def render_marketing_editor(job_dir: Path) -> None:
         st.error(f"Failed to load analysis: {e}")
         return
 
-    marketing = analysis.get("marketing", {})
-    metadata = analysis.get("metadata", {})
+    decisions = _load_review_decisions(job_dir)
+    marketing, metadata = _apply_marketing_review_edits(analysis, decisions)
 
     # Episode info
     with st.expander("📋 Episode Information", expanded=True):
@@ -766,7 +850,7 @@ def render_marketing_editor(job_dir: Path) -> None:
         )
         topics = st.text_input(
             "Topics (comma-separated)",
-            value=", ".join(metadata.get("topics", [])),
+            value=_topics_to_text(metadata.get("topics")),
             key="edit_topics",
         )
         mood = st.text_input(
@@ -929,14 +1013,15 @@ def render_marketing_editor(job_dir: Path) -> None:
     col1, col2 = st.columns([1, 4])
     with col1:
         if st.button("💾 Save Marketing Copy", key="save_marketing"):
-            # Update analysis file with edited marketing
-            analysis["marketing"] = {**marketing, **edited_marketing}
-            analysis["metadata"]["summary"] = summary
-            analysis["metadata"]["topics"] = [t.strip() for t in topics.split(",")]
-            analysis["metadata"]["mood"] = mood
-
-            analysis_path.write_text(json.dumps(analysis, indent=2))
-            st.success("Marketing copy saved!")
+            _save_marketing_edits_to_review_flow(
+                job_dir,
+                decisions,
+                edited_marketing,
+                summary,
+                topics,
+                mood,
+            )
+            st.success("Marketing copy saved to review workflow!")
 
     with col2:
         if st.button("🔄 Regenerate Marketing Copy", key="regen_marketing"):
@@ -944,9 +1029,14 @@ def render_marketing_editor(job_dir: Path) -> None:
             client = get_service_client()
             with st.spinner("Regenerating analysis and marketing copy..."):
                 try:
-                    result = client.resume_job(job_id, from_stage="analyze")
+                    _prepare_marketing_regeneration_review_state(job_dir)
+                    result = client.resume_job(
+                        job_id,
+                        from_stage="analyze",
+                        until_stage="review",
+                    )
                     if result.status in {"complete", "running"}:
-                        st.success("Regenerated. Reloading latest analysis...")
+                        st.success("Regenerated through review workflow. Reloading latest analysis...")
                         st.rerun()
                     else:
                         st.error(f"Regeneration failed: {result.message}")

@@ -79,3 +79,68 @@ def test_ui_app_timeline_reads_metadata_for_duration_caption(tmp_path: Path) -> 
         render_timeline_editor("job-abc", tmp_path)
 
     mock_st.caption.assert_any_call("Source duration: 120.0s")
+
+
+def test_ui_app_marketing_review_flow_save_writes_review_state_only(tmp_path: Path) -> None:
+    """Saving marketing should persist through review artifacts, not analysis mutation."""
+    from podcast_pipeline.stages.review import ReviewDecisions
+    from podcast_pipeline.ui.app import _save_marketing_edits_to_review_flow
+
+    analysis_path = tmp_path / "analysis" / "analysis.json"
+    initial_analysis = {
+        "marketing": {"youtube": {"description": "Original description", "hashtags": ["#old"]}},
+        "metadata": {"summary": "Original summary", "topics": ["alpha"], "mood": "calm"},
+        "content_cuts": [],
+    }
+    _write_json(analysis_path, initial_analysis)
+    _write_json(tmp_path / "analysis" / "filler_cuts.json", [])
+
+    _save_marketing_edits_to_review_flow(
+        tmp_path,
+        ReviewDecisions(),
+        edited_marketing={"youtube": {"description": "Updated desc", "hashtags": ["#new"]}},
+        summary="Updated summary",
+        topics="topic-1, topic-2",
+        mood="energetic",
+    )
+
+    loaded_analysis = json.loads(analysis_path.read_text())
+    assert loaded_analysis["marketing"]["youtube"]["description"] == "Original description"
+
+    review_state_path = tmp_path / "review" / "review_state.json"
+    assert review_state_path.exists()
+    review_state = ReviewDecisions.model_validate_json(review_state_path.read_text())
+    assert review_state.marketing_edits["youtube"]["description"] == "Updated desc"
+    assert review_state.marketing_edits["__metadata__"]["summary"] == "Updated summary"
+    assert review_state.marketing_edits["__metadata__"]["topics"] == ["topic-1", "topic-2"]
+
+    assert (tmp_path / "review" / "edit_plan.json").exists()
+
+
+def test_ui_app_marketing_review_flow_regeneration_resets_review_state(tmp_path: Path) -> None:
+    """Regeneration should clear marketing edits and require re-review."""
+    from podcast_pipeline.stages.review import ReviewDecisions
+    from podcast_pipeline.ui.app import _prepare_marketing_regeneration_review_state
+
+    _write_json(
+        tmp_path / "analysis" / "analysis.json",
+        {"marketing": {}, "metadata": {}, "content_cuts": []},
+    )
+    _write_json(tmp_path / "analysis" / "filler_cuts.json", [])
+
+    seeded = ReviewDecisions(
+        review_complete=True,
+        marketing_edits={
+            "youtube": {"description": "edited"},
+            "__metadata__": {"summary": "edited summary"},
+        },
+    )
+    review_dir = tmp_path / "review"
+    review_dir.mkdir(parents=True, exist_ok=True)
+    (review_dir / "review_state.json").write_text(seeded.model_dump_json(indent=2))
+
+    _prepare_marketing_regeneration_review_state(tmp_path)
+
+    updated = ReviewDecisions.model_validate_json((review_dir / "review_state.json").read_text())
+    assert updated.review_complete is False
+    assert updated.marketing_edits == {}
