@@ -1,8 +1,8 @@
 # Project State: Podcast Pipeline
 
 **Last updated:** 2026-02-13
-**Current phase:** Phase 4 in progress (3/10 plans complete)
-**Overall progress:** 74% (20/27 plans complete)
+**Current phase:** Phase 4 in progress (4/10 plans complete)
+**Overall progress:** 78% (21/27 plans complete)
 
 ## Project Reference
 
@@ -15,11 +15,11 @@ See: `.planning/PROJECT.md`
 
 ```
 Phase:    3 of 4 complete (Phase 4 execution in progress)
-Plan:     20 completed overall; 3/10 complete in Phase 4
+Plan:     21 completed overall; 4/10 complete in Phase 4
 Status:   Executing Phase 4 hardening plans
-Last activity: 2026-02-13 - Completed 04-02-PLAN.md
+Last activity: 2026-02-13 - Completed 04-05-PLAN.md
 
-Progress: [██████████████████░░░░░░] 74% (20/27 plans complete)
+Progress: [███████████████████░░░░░] 78% (21/27 plans complete)
 ```
 
 **Next Phase:** Phase 4 - Post-release hardening (`04-03-PLAN.md`)
@@ -31,13 +31,13 @@ Progress: [██████████████████░░░░░
 | 1 | Wiring + Stability | Complete | 6/6 | 100% |
 | 2 | Research + Viral Integration | Complete | 5/5 | 100% |
 | 3 | Polishing + Desktop Distribution | Complete | 6/6 | 100% |
-| 4 | Post-release hardening | In progress | 3/10 | 30% |
+| 4 | Post-release hardening | In progress | 4/10 | 40% |
 
 ## Performance Metrics
 
 | Metric | Value |
 |--------|-------|
-| Plans completed | 20 |
+| Plans completed | 21 |
 | Requirements done | 35/83 (21 partial) |
 | Phases complete | 3/4 |
 | Estimated completion | In progress |
@@ -90,6 +90,9 @@ Progress: [██████████████████░░░░░
 | Run/resume schemas enforce typed stage windows with explicit started/completed/rejected outcomes | Keeps API responses truthful and invalid stage inputs as structured 422 errors | 2026-02-13 |
 | Resume defaults to continuation through final stage unless until_stage is provided | Aligns operational behavior with user expectation for one-call recovery continuation | 2026-02-13 |
 | Service client uses persistent HTTPX client plus endpoint-specific run/resume timeouts and typed HTTP status exceptions | Preserves backend parity while improving resilience for long-running pipeline requests | 2026-02-13 |
+| Provider parse/schema failures raise explicit typed errors with structured details | Prevents silent empty-analysis "success" payloads and preserves actionable diagnostics | 2026-02-13 |
+| Analyze outputs embed metadata.degraded_mode for transcript-only provider execution | Makes fallback degradation explicit to operators and downstream artifact consumers | 2026-02-13 |
+| Gemini upload IDs are reused per proxy path with structured 429 classification | Reduces repeated upload overhead and keeps retry semantics deterministic/testable | 2026-02-13 |
 
 ### Roadmap Evolution
 
@@ -98,6 +101,7 @@ Progress: [██████████████████░░░░░
 - Phase 4 execution started: completed 04-01 runtime invariants hardening
 - Phase 4 execution continued: completed 04-04 model/config validation hardening
 - Phase 4 execution continued: completed 04-02 run/resume contract hardening
+- Phase 4 execution continued: completed 04-05 provider reliability hardening
 
 ### Technical Notes
 
@@ -134,16 +138,17 @@ Progress: [██████████████████░░░░░
 - 2026-02-13: Completed 04-01-PLAN.md (stage validation + per-job lock + state reload)
 - 2026-02-13: Completed 04-04-PLAN.md (strict model/config invariants + dedicated validation suites)
 - 2026-02-13: Completed 04-02-PLAN.md (typed run/resume contracts + continuation semantics + service client parity hardening)
+- 2026-02-13: Completed 04-05-PLAN.md (provider parse failure hardening + degraded fallback signaling + Gemini upload/retry reliability tests)
 
 ## Session Continuity
 
 ### Last session
 
-Executed `04-02-PLAN.md`, aligned run/resume API contracts with continuation semantics, and hardened client timeout/status handling parity.
+Executed `04-05-PLAN.md`, enforced strict provider parse failures, added degraded-mode fallback metadata, and covered upload/retry behavior with dedicated provider tests.
 
 ### Stopped at
 
-Completed `04-02-PLAN.md`; next action is execute `04-03-PLAN.md`.
+Completed `04-05-PLAN.md`; next action is execute `04-03-PLAN.md`.
 
 ### Resume file
 
