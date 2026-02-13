@@ -255,3 +255,42 @@ def test_ui_app_review_state_timeline_save_writes_custom_edit_plan(tmp_path: Pat
     assert len(edit_plan["content_cuts"]) == 1
     assert edit_plan["content_cuts"][0]["start_seconds"] == 12.0
     assert edit_plan["content_cuts"][0]["end_seconds"] == 18.5
+
+
+def test_ui_app_recovery_summary_normalizes_runtime_payload() -> None:
+    """Recovery summary helper should normalize runtime diagnostics payloads."""
+    from podcast_pipeline.ui.app import _runtime_recovery_summary
+
+    summary = _runtime_recovery_summary(
+        {
+            "active_jobs": ["job-a", "job-b"],
+            "stale_jobs": ["job-stale"],
+            "orphaned_jobs": ["job-orphan"],
+            "jobs": [
+                {
+                    "job_id": "job-stale",
+                    "status": "interrupted",
+                    "last_known_stage": "analyze",
+                    "heartbeat_age_seconds": 88.5,
+                    "stale": True,
+                    "orphaned": False,
+                }
+            ],
+        }
+    )
+
+    assert summary["available"] is True
+    assert summary["active_runs"] == 2
+    assert summary["stale_jobs"] == ["job-stale"]
+    assert summary["orphaned_jobs"] == ["job-orphan"]
+    assert summary["job_rows"][0]["Job"] == "job-stale"
+
+
+def test_ui_app_reconcile_runtime_fetch_returns_none_on_http_error() -> None:
+    """Runtime diagnostics fetch should fail closed and return None."""
+    from podcast_pipeline.ui.app import _fetch_runtime_diagnostics
+
+    with patch("podcast_pipeline.ui.app.httpx.get", side_effect=RuntimeError("boom")):
+        payload = _fetch_runtime_diagnostics("http://127.0.0.1:8787", timeout_seconds=5.0)
+
+    assert payload is None

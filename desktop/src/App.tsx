@@ -13,6 +13,7 @@ import {
   type BackendStatus,
   type JobDetail,
   type JobSummary,
+  type RuntimeDiagnostics,
   type SidecarStatus,
   type StageName,
   bootBackend,
@@ -20,8 +21,10 @@ import {
   createJob,
   deleteJob,
   getJob,
+  getRuntimeDiagnostics,
   getSidecarStatus,
   listJobs,
+  reconcileJobs,
   resumeJob,
   runJob,
   stopSidecar,
@@ -50,6 +53,8 @@ function App() {
   const [recoveryStatus, setRecoveryStatus] = useState<RecoveryStatus | null>(
     null,
   );
+  const [runtimeDiagnostics, setRuntimeDiagnostics] =
+    useState<RuntimeDiagnostics | null>(null);
   const [createVideoPath, setCreateVideoPath] = useState("");
   const [createJobName, setCreateJobName] = useState("");
   const [runUntilByJob, setRunUntilByJob] = useState<
@@ -96,6 +101,18 @@ function App() {
       setRecoveryStatus(recovery);
     } catch {
       // Non-critical in monitor mode.
+    }
+  }, [status]);
+
+  const refreshRuntimeDiagnostics = useCallback(async () => {
+    if (status !== "connected") {
+      return;
+    }
+    try {
+      const diagnostics = await getRuntimeDiagnostics();
+      setRuntimeDiagnostics(diagnostics);
+    } catch {
+      setRuntimeDiagnostics(null);
     }
   }, [status]);
 
@@ -166,6 +183,7 @@ function App() {
         markInfo(message);
         await refreshJobsAndDetails();
         await refreshRecovery();
+        await refreshRuntimeDiagnostics();
       } catch (err) {
         markError(
           err instanceof Error ? err.message : "Operation failed unexpectedly",
@@ -174,7 +192,13 @@ function App() {
         setActiveAction(null);
       }
     },
-    [markError, markInfo, refreshJobsAndDetails, refreshRecovery],
+    [
+      markError,
+      markInfo,
+      refreshJobsAndDetails,
+      refreshRecovery,
+      refreshRuntimeDiagnostics,
+    ],
   );
 
   const openJobDetails = useCallback(
@@ -272,10 +296,27 @@ function App() {
       markInfo("Backend connection restored.");
       await refreshJobsAndDetails();
       await refreshRecovery();
+      await refreshRuntimeDiagnostics();
     } else {
       markError(`Backend unreachable at http://127.0.0.1:${BACKEND_PORT}`);
     }
-  }, [markError, markInfo, pollHealth, refreshJobsAndDetails, refreshRecovery]);
+  }, [
+    markError,
+    markInfo,
+    pollHealth,
+    refreshJobsAndDetails,
+    refreshRecovery,
+    refreshRuntimeDiagnostics,
+  ]);
+
+  const handleReconcile = useCallback(async () => {
+    await runAction("reconcile", async () => {
+      const corrected = await reconcileJobs();
+      return corrected === 0
+        ? "Reconcile complete: no stale runtime entries found."
+        : `Reconcile complete: corrected ${corrected} stale runtime entr${corrected === 1 ? "y" : "ies"}.`;
+    });
+  }, [runAction]);
 
   const refreshSidecarStatus = useCallback(async () => {
     try {
@@ -343,15 +384,17 @@ function App() {
     }
     void refreshJobsAndDetails();
     void refreshRecovery();
-  }, [refreshJobsAndDetails, refreshRecovery, status]);
+    void refreshRuntimeDiagnostics();
+  }, [refreshJobsAndDetails, refreshRecovery, refreshRuntimeDiagnostics, status]);
 
   useEffect(() => {
     const interval = setInterval(() => {
       void pollHealth();
       void refreshJobsAndDetails();
+      void refreshRuntimeDiagnostics();
     }, HEALTH_POLL_INTERVAL_MS);
     return () => clearInterval(interval);
-  }, [pollHealth, refreshJobsAndDetails]);
+  }, [pollHealth, refreshJobsAndDetails, refreshRuntimeDiagnostics]);
 
   useEffect(() => {
     const handleUnload = () => {
@@ -453,6 +496,60 @@ function App() {
           </ul>
         </section>
       )}
+
+      <section className="status-panel">
+        <div className="status-row">
+          <span className="status-dot connecting" />
+          <span className="status-label">Recovery</span>
+          <span className="status-value">
+            {runtimeDiagnostics
+              ? `${runtimeDiagnostics.active_jobs.length} active / ${runtimeDiagnostics.stale_jobs.length} stale / ${runtimeDiagnostics.orphaned_jobs.length} orphaned`
+              : "Runtime diagnostics unavailable"}
+          </span>
+        </div>
+        {runtimeDiagnostics && runtimeDiagnostics.jobs.length > 0 && (
+          <div style={{ marginTop: "0.75rem", display: "grid", gap: "0.35rem" }}>
+            {runtimeDiagnostics.jobs.map((job) => (
+              <div key={`runtime-${job.job_id}`} className="status-row">
+                <span
+                  className={`status-dot ${
+                    job.stale || job.orphaned ? "disconnected" : "connected"
+                  }`}
+                />
+                <span className="status-label">{job.job_id}</span>
+                <span className="status-value">
+                  {job.status}
+                  {job.last_known_stage ? ` @ ${job.last_known_stage}` : ""}
+                  {job.stale && " • stale"}
+                  {job.orphaned && " • orphaned"}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+        {(runtimeDiagnostics?.stale_jobs.length ?? 0) > 0 && (
+          <div style={{ marginTop: "0.5rem", fontSize: "0.85rem" }}>
+            Stale jobs: {runtimeDiagnostics?.stale_jobs.join(", ")}
+          </div>
+        )}
+        {(runtimeDiagnostics?.orphaned_jobs.length ?? 0) > 0 && (
+          <div style={{ marginTop: "0.25rem", fontSize: "0.85rem" }}>
+            Orphaned jobs: {runtimeDiagnostics?.orphaned_jobs.join(", ")}
+          </div>
+        )}
+        <div style={{ marginTop: "0.75rem", display: "flex", gap: "0.5rem" }}>
+          <button
+            className="btn"
+            onClick={() => void handleReconcile()}
+            disabled={activeAction === "reconcile"}
+          >
+            {activeAction === "reconcile" ? "Reconciling..." : "Reconcile Jobs"}
+          </button>
+          <button className="btn" onClick={() => void refreshRuntimeDiagnostics()}>
+            Refresh Diagnostics
+          </button>
+        </div>
+      </section>
 
       <section className="status-panel">
         <div className="status-row">

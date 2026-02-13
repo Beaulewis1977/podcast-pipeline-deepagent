@@ -14,6 +14,7 @@ from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
+import httpx
 import streamlit as st
 
 from podcast_pipeline.clients.service_client import (
@@ -333,6 +334,61 @@ def _build_clip_score_rows(viral_payload: dict[str, Any], limit: int = 10) -> li
 # ============================================================================
 # Dashboard Page
 # ============================================================================
+def _fetch_runtime_diagnostics(base_url: str, timeout_seconds: float) -> dict[str, Any] | None:
+    """Fetch runtime diagnostics payload from /system/runtime."""
+    url = f"{base_url.rstrip('/')}/system/runtime"
+    try:
+        response = httpx.get(url, timeout=timeout_seconds)
+        response.raise_for_status()
+        payload = response.json()
+    except Exception as exc:
+        logger.warning("runtime_diagnostics_fetch_failed", url=url, error=str(exc))
+        return None
+
+    return payload if isinstance(payload, dict) else None
+
+
+def _runtime_recovery_summary(payload: dict[str, Any] | None) -> dict[str, Any]:
+    """Normalize runtime diagnostics for display in recovery controls."""
+    if not isinstance(payload, dict):
+        return {
+            "available": False,
+            "active_runs": 0,
+            "stale_jobs": [],
+            "orphaned_jobs": [],
+            "job_rows": [],
+        }
+
+    active_jobs = [str(job_id) for job_id in payload.get("active_jobs", []) if job_id]
+    stale_jobs = [str(job_id) for job_id in payload.get("stale_jobs", []) if job_id]
+    orphaned_jobs = [str(job_id) for job_id in payload.get("orphaned_jobs", []) if job_id]
+
+    job_rows: list[dict[str, Any]] = []
+    raw_jobs = payload.get("jobs", [])
+    if isinstance(raw_jobs, list):
+        for item in raw_jobs:
+            if not isinstance(item, dict):
+                continue
+            job_rows.append(
+                {
+                    "Job": item.get("job_id", ""),
+                    "Status": item.get("status", ""),
+                    "Last Stage": item.get("last_known_stage", ""),
+                    "Heartbeat Age (s)": item.get("heartbeat_age_seconds"),
+                    "Stale": bool(item.get("stale", False)),
+                    "Orphaned": bool(item.get("orphaned", False)),
+                }
+            )
+
+    return {
+        "available": True,
+        "active_runs": len(active_jobs),
+        "stale_jobs": stale_jobs,
+        "orphaned_jobs": orphaned_jobs,
+        "job_rows": job_rows,
+    }
+
+
 def render_resumable_jobs() -> None:
     """Show resumable jobs banner if any interrupted jobs exist."""
     client = get_service_client()
@@ -341,7 +397,47 @@ def render_resumable_jobs() -> None:
     except ServiceError:
         return
 
+    timeout_seconds = max(5.0, float(get_config().service.timeout))
+    runtime_payload = _fetch_runtime_diagnostics(get_config().service.base_url, timeout_seconds)
+    runtime_summary = _runtime_recovery_summary(runtime_payload)
+
+    action_col1, action_col2 = st.columns([1, 1])
+    with action_col1:
+        if st.button("♻️ Reconcile Now", key="reconcile_jobs"):
+            try:
+                corrected = client.reconcile_jobs()
+                if corrected > 0:
+                    st.success(
+                        f"Reconciled {corrected} stale runtime entr{'y' if corrected == 1 else 'ies'}."
+                    )
+                else:
+                    st.info("Reconcile complete: no stale runtime entries found.")
+                st.rerun()
+            except ServiceError as exc:
+                st.error(f"Reconcile failed: {exc}")
+    with action_col2:
+        if st.button("🧭 Refresh Runtime", key="refresh_runtime"):
+            st.rerun()
+
+    if runtime_summary["available"]:
+        runtime_col1, runtime_col2, runtime_col3 = st.columns(3)
+        runtime_col1.metric("Active Runs", runtime_summary["active_runs"])
+        runtime_col2.metric("Stale Runs", len(runtime_summary["stale_jobs"]))
+        runtime_col3.metric("Orphaned Runs", len(runtime_summary["orphaned_jobs"]))
+
+        if runtime_summary["stale_jobs"]:
+            st.warning(f"Stale runtime jobs: {', '.join(runtime_summary['stale_jobs'])}")
+        if runtime_summary["orphaned_jobs"]:
+            st.warning(f"Orphaned runtime jobs: {', '.join(runtime_summary['orphaned_jobs'])}")
+
+        if runtime_summary["job_rows"]:
+            with st.expander("Runtime Journal Details", expanded=False):
+                st.table(runtime_summary["job_rows"])
+    else:
+        st.caption("Runtime diagnostics unavailable; showing resumable jobs only.")
+
     if not resumable.jobs:
+        st.divider()
         return
 
     st.warning(
