@@ -4,6 +4,7 @@ All business logic is delegated to :class:`Pipeline` and :class:`Job`
 from the core package -- route handlers only translate HTTP concerns.
 """
 
+import shutil
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
@@ -28,8 +29,8 @@ from podcast_pipeline.service.schemas import (
     ResumeJobRequest,
     ResumeJobResponse,
     RunJobRequest,
-    RunQualityControls,
     RunJobResponse,
+    RunQualityControls,
     StageDetail,
 )
 from podcast_pipeline.service.supervisor import Supervisor
@@ -277,6 +278,42 @@ async def get_job(job_id: str, request: Request) -> JobDetailResponse:
     pipeline = _get_pipeline(request)
     job = _load_job_or_404(pipeline, job_id)
     return _job_to_detail(job)
+
+
+# --------------------------------------------------------------------------
+# DELETE /jobs/{job_id}  -- remove job artifacts
+# --------------------------------------------------------------------------
+
+
+@router.delete("/{job_id}")
+async def delete_job(job_id: str, request: Request) -> dict[str, object]:
+    """Delete a job directory when no active background run exists."""
+    pipeline = _get_pipeline(request)
+    supervisor = _get_supervisor(request)
+    job = _load_job_or_404(pipeline, job_id)
+
+    if job.job_id in supervisor.active_jobs():
+        raise HTTPException(
+            status_code=409,
+            detail=f"Job {job.job_id} has an active background run",
+        )
+
+    job_dir = pipeline.config.paths.jobs_dir / job.job_id
+    if not job_dir.exists():
+        raise HTTPException(status_code=404, detail=f"Job not found: {job.job_id}")
+
+    try:
+        shutil.rmtree(job_dir)
+    except OSError as exc:
+        logger.exception("delete_job_failed", job_id=job.job_id, error=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    logger.info("job_deleted", job_id=job.job_id, path=str(job_dir))
+    return {
+        "job_id": job.job_id,
+        "deleted": True,
+        "message": f"Deleted job {job.job_id}",
+    }
 
 
 # --------------------------------------------------------------------------
