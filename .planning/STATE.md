@@ -1,8 +1,8 @@
 # Project State: Podcast Pipeline
 
-**Last updated:** 2026-02-12
-**Current phase:** Phase 4 planned (execution pending)
-**Overall progress:** 75% (3/4 phases complete)
+**Last updated:** 2026-02-13
+**Current phase:** Phase 4 in progress (1/10 plans complete)
+**Overall progress:** 67% (18/27 plans complete)
 
 ## Project Reference
 
@@ -14,15 +14,15 @@ See: `.planning/PROJECT.md`
 ## Current Position
 
 ```
-Phase:    3 of 4 complete (Phase 4 planned, execution pending)
-Plan:     17 completed + 10 planned in Phase 4
-Status:   Ready to execute Phase 4 plans
-Last activity: 2026-02-12 - Planned Phase 4 (research + 10 executable plans)
+Phase:    3 of 4 complete (Phase 4 execution in progress)
+Plan:     18 completed overall; 1/10 complete in Phase 4
+Status:   Executing Phase 4 hardening plans
+Last activity: 2026-02-13 - Completed 04-01-PLAN.md
 
-Progress: [██████████████████░░░░░░] 75% (3/4 phases complete)
+Progress: [████████████████░░░░░░░░] 67% (18/27 plans complete)
 ```
 
-**Next Phase:** Phase 4 - Post-release hardening
+**Next Phase:** Phase 4 - Post-release hardening (`04-02-PLAN.md`)
 
 ## Phase Status
 
@@ -31,13 +31,13 @@ Progress: [██████████████████░░░░░
 | 1 | Wiring + Stability | Complete | 6/6 | 100% |
 | 2 | Research + Viral Integration | Complete | 5/5 | 100% |
 | 3 | Polishing + Desktop Distribution | Complete | 6/6 | 100% |
-| 4 | Post-release hardening | Planned | 0/10 | 0% |
+| 4 | Post-release hardening | In progress | 1/10 | 10% |
 
 ## Performance Metrics
 
 | Metric | Value |
 |--------|-------|
-| Plans completed | 17 |
+| Plans completed | 18 |
 | Requirements done | 35/83 (21 partial) |
 | Phases complete | 3/4 |
 | Estimated completion | In progress |
@@ -81,11 +81,15 @@ Progress: [██████████████████░░░░░
 | PyInstaller for backend sidecar | Single-file cross-platform binary from Python service | 2026-02-05 |
 | Graduated smoke severity | Blocking checks (artifact/size/sidecar) vs warnings (health/ffmpeg) | 2026-02-05 |
 | Draft releases by default | Manual review before publishing to avoid broken releases | 2026-02-05 |
+| Use stdlib O_EXCL lock files for job-scoped run exclusivity | Avoids new dependencies while enforcing deterministic same-job concurrency guardrails | 2026-02-13 |
+| Validate stage names in job mutation APIs | Prevents invalid stage keys from corrupting canonical state transitions | 2026-02-13 |
+| Reload job state from disk before each stage dispatch | Prevents stale in-memory state from overwriting newer persisted job state | 2026-02-13 |
 
 ### Roadmap Evolution
 
 - Phase 4 added: Post-release hardening
 - Phase 4 planned: research complete + 10 plan files created
+- Phase 4 execution started: completed 04-01 runtime invariants hardening
 
 ### Technical Notes
 
@@ -119,16 +123,17 @@ Progress: [██████████████████░░░░░
 - 2026-02-05: End-to-end smoke test passed (ingest -> transcribe -> analyze -> review)
 - 2026-02-12: Added Phase 4 (Post-release hardening) to roadmap
 - 2026-02-12: Planned Phase 4 with integrated research and 10 execution plans
+- 2026-02-13: Completed 04-01-PLAN.md (stage validation + per-job lock + state reload)
 
 ## Session Continuity
 
 ### Last session
 
-Completed Phase 3, fixed Gemini model name, ran successful end-to-end smoke test through Streamlit UI, then created Phase 4 research and execution plans.
+Executed `04-01-PLAN.md`, added strict stage validation, introduced per-job orchestration locking with state reload boundaries, and landed dedicated concurrency regression tests.
 
 ### Stopped at
 
-Phase 4 planning complete; next action is /prompts:gsd-execute-phase phase=4.
+Completed `04-01-PLAN.md`; next action is execute `04-02-PLAN.md`.
 
 ### Resume file
 
@@ -136,4 +141,4 @@ None
 
 ---
 
-*State updated: 2026-02-12*
+*State updated: 2026-02-13*
