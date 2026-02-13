@@ -16,6 +16,8 @@ import argparse
 import datetime as dt
 import re
 import shutil
+import sys
+import tempfile
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -144,9 +146,9 @@ def replace_single_arg_commands(text: str) -> tuple[str, list[str]]:
             rf"(?P<cmd>{_cmd_regex(cmd)})\s+(?!{re.escape(key)}=)(?P<arg>{arg_pat})"
         )
 
-        def repl(m: re.Match[str]) -> str:
+        def repl(m: re.Match[str], *, _key: str = key) -> str:
             arg = m.group("arg")
-            return f"{m.group('cmd')} {key}={arg}"
+            return f"{m.group('cmd')} {_key}={arg}"
 
         new_out, n = pattern.subn(repl, out)
         if n:
@@ -445,8 +447,8 @@ def main() -> int:
     if args.backup_root:
         backup_root = Path(args.backup_root).expanduser().resolve()
     else:
-        stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
-        backup_root = Path("/tmp") / f"codex-gsd-backup-{stamp}"
+        stamp = dt.datetime.now(dt.UTC).strftime("%Y%m%d-%H%M%S")
+        backup_root = Path(tempfile.gettempdir()) / f"codex-gsd-backup-{stamp}"
 
     if not args.dry_run:
         backup_root.mkdir(parents=True, exist_ok=True)
@@ -467,13 +469,13 @@ def main() -> int:
             changes.append(Change(rel_path=rel_path, changed=False, notes=[]))
 
     # Summary to stdout for traceability.
-    print(f"Codex root: {codex_root}")
-    print(f"Files scanned: {len(files)}")
+    sys.stdout.write(f"Codex root: {codex_root}\n")
+    sys.stdout.write(f"Files scanned: {len(files)}\n")
     if args.dry_run:
-        print(f"Dry run: would change {changed_count} files")
+        sys.stdout.write(f"Dry run: would change {changed_count} files\n")
     else:
-        print(f"Backup: {backup_root}")
-        print(f"Changed files: {changed_count}")
+        sys.stdout.write(f"Backup: {backup_root}\n")
+        sys.stdout.write(f"Changed files: {changed_count}\n")
     return 0
 
 

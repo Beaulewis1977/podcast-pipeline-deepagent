@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import re
+import sys
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -123,9 +124,7 @@ def is_positional_arg_usage(tokens: list[str]) -> bool:
     non_flags = [tok for tok in tokens if not tok.startswith("--")]
     if not non_flags:
         return False
-    if any("=" in tok for tok in non_flags):
-        return False
-    return True
+    return not any("=" in tok for tok in non_flags)
 
 
 def is_usage_context(line: str) -> bool:
@@ -136,9 +135,7 @@ def is_usage_context(line: str) -> bool:
         return True
     if line.strip().startswith("/"):
         return True
-    if line.strip().startswith("`/"):
-        return True
-    return False
+    return bool(line.strip().startswith("`/"))
 
 
 def truncate_arg_tokens(tokens: list[str]) -> list[str]:
@@ -269,7 +266,7 @@ def collect_findings(codex_root: Path, files: Iterable[Path]) -> list[Finding]:
 def render_report(
     codex_root: Path, files: list[Path], findings: list[Finding], out_path: Path
 ) -> str:
-    now = dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    now = dt.datetime.now(dt.UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
     files_with_issues = sorted({f.rel_path for f in findings})
     by_category: dict[str, int] = {}
     by_file: dict[str, int] = {}
@@ -356,7 +353,7 @@ def parse_args() -> argparse.Namespace:
             Path.cwd()
             / "docs"
             / "reports"
-            / f"{dt.date.today().isoformat()}-gsd-keyvalue-migration-checklist.md"
+            / f"{dt.datetime.now(dt.UTC).date().isoformat()}-gsd-keyvalue-migration-checklist.md"
         ),
         help="Output markdown report path.",
     )
@@ -370,9 +367,9 @@ def main() -> int:
     files = iter_target_files(codex_root)
     findings = collect_findings(codex_root, files)
     render_report(codex_root, files, findings, out_path)
-    print(f"Wrote checklist report: {out_path}")
-    print(f"GSD files scanned: {len(files)}")
-    print(f"Checklist items: {len(findings)}")
+    sys.stdout.write(f"Wrote checklist report: {out_path}\n")
+    sys.stdout.write(f"GSD files scanned: {len(files)}\n")
+    sys.stdout.write(f"Checklist items: {len(findings)}\n")
     return 0
 
 
