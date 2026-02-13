@@ -377,6 +377,50 @@ class TestStreamlitActions:
         mock_st.error.assert_called_once()
         assert "FFmpeg not found" in mock_st.error.call_args[0][0]
 
+    def test_streamlit_actions_run_full_pipeline_calls_run_job_without_stage(
+        self, service_client: ServiceClient, seeded_job_id: str
+    ) -> None:
+        """Run Full Pipeline should trigger full-run semantics (no stage override)."""
+        from podcast_pipeline.ui.app import run_full_pipeline_via_service
+
+        mock_run = MagicMock(
+            return_value=RunResult(
+                job_id=seeded_job_id, status="complete", message="Ran 4 stage(s)"
+            )
+        )
+        service_client.run_job = mock_run  # type: ignore[assignment]
+
+        mock_st = MagicMock()
+        mock_st.rerun = MagicMock()
+        with (
+            patch("podcast_pipeline.ui.app.get_service_client", return_value=service_client),
+            patch("podcast_pipeline.ui.app.st", mock_st),
+        ):
+            run_full_pipeline_via_service(seeded_job_id)
+
+        mock_run.assert_called_once_with(seeded_job_id)
+        mock_st.success.assert_called_once()
+
+    def test_streamlit_actions_upload_path_uses_service_upload_dir(
+        self, client_temp_dir: Path
+    ) -> None:
+        """Uploaded file is persisted outside pre-created per-job directories."""
+        from podcast_pipeline.ui.app import _persist_uploaded_video
+
+        class _FakeUpload:
+            def __init__(self) -> None:
+                self.name = "episode.mp4"
+                self._payload = b"video-bytes"
+
+            def getvalue(self) -> bytes:
+                return self._payload
+
+        saved_path = _persist_uploaded_video(_FakeUpload(), client_temp_dir)
+
+        assert saved_path.parent == client_temp_dir / "_uploads"
+        assert saved_path.suffix == ".mp4"
+        assert saved_path.read_bytes() == b"video-bytes"
+
     def test_streamlit_actions_check_service_available(self, service_client: ServiceClient):
         """check_service_status returns True when backend is up."""
         from podcast_pipeline.ui.app import check_service_status

@@ -9,7 +9,7 @@ directory on the local machine.
 
 import contextlib
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +26,9 @@ from podcast_pipeline.stages.review import (
     approve_review,
     write_edit_plan,
 )
+from podcast_pipeline.utils.logging import get_logger
+
+logger = get_logger(__name__)
 
 # Page config must be first Streamlit command
 st.set_page_config(
@@ -71,6 +74,29 @@ def _job_dir_for(job_id: str) -> Path:
     """Resolve the local filesystem job directory for a given job_id."""
     config = get_config()
     return config.paths.jobs_dir / job_id
+
+
+def _persist_uploaded_video(uploaded_file: Any, jobs_dir: Path) -> Path:
+    """Persist a Streamlit upload for service-side job creation."""
+    uploads_dir = jobs_dir / "_uploads"
+    uploads_dir.mkdir(parents=True, exist_ok=True)
+
+    source_name = Path(str(getattr(uploaded_file, "name", "upload.mp4")))
+    stem = source_name.stem or "upload"
+    ext = source_name.suffix or ".mp4"
+    timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
+
+    upload_path = uploads_dir / f"{stem}_{timestamp}{ext}"
+    suffix = 1
+    while upload_path.exists():
+        upload_path = uploads_dir / f"{stem}_{timestamp}_{suffix}{ext}"
+        suffix += 1
+
+    payload = (
+        uploaded_file.getvalue() if hasattr(uploaded_file, "getvalue") else uploaded_file.read()
+    )
+    upload_path.write_bytes(payload)
+    return upload_path
 
 
 def format_timestamp(ts: datetime | None) -> str:
@@ -313,23 +339,8 @@ def render_new_job_form() -> None:
         config = get_config()
         jobs_dir = config.paths.jobs_dir
 
-        # Generate job ID
-        from datetime import UTC, datetime
-
-        timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
-        name_part = job_name or uploaded_file.name.rsplit(".", 1)[0]
-        job_id = f"{name_part}_{timestamp}"
-
-        # Create job directory and save video
-        job_dir = jobs_dir / job_id
-        input_dir = job_dir / "input"
-        input_dir.mkdir(parents=True, exist_ok=True)
-
-        # Save uploaded file
-        ext = Path(uploaded_file.name).suffix
-        video_path = input_dir / f"raw{ext}"
-        with open(video_path, "wb") as f:
-            f.write(uploaded_file.read())
+        name_part = job_name.strip() or Path(uploaded_file.name).stem
+        video_path = _persist_uploaded_video(uploaded_file, jobs_dir)
 
         # Create job via service
         client = get_service_client()
@@ -342,6 +353,8 @@ def render_new_job_form() -> None:
             st.error("Backend service is not running. Start it with: `podcast-pipeline service`")
         except ServiceError as exc:
             st.error(f"Failed to create job: {exc}")
+        except OSError as exc:
+            st.error(f"Failed to save upload for processing: {exc}")
 
 
 # ============================================================================
@@ -1042,6 +1055,24 @@ def run_stage_via_service(job_id: str, stage_name: str) -> None:
             st.error(f"Error running {stage_name}: {exc}")
 
 
+def run_full_pipeline_via_service(job_id: str) -> None:
+    """Run the pipeline from the first stage through the normal workflow."""
+    client = get_service_client()
+
+    with st.spinner("Running full pipeline..."):
+        try:
+            result = client.run_job(job_id)
+            if result.status == "complete":
+                st.success(f"Full pipeline run complete: {result.message}")
+                st.rerun()
+            else:
+                st.error(f"Full pipeline run failed: {result.message}")
+        except ServiceUnavailableError:
+            st.error("Backend service is not running. Start it with: `podcast-pipeline service`")
+        except ServiceError as exc:
+            st.error(f"Error running full pipeline: {exc}")
+
+
 def save_review_decisions(job_dir: Path, decisions: ReviewDecisions | None) -> None:
     """Save review decisions to file."""
     review_dir = job_dir / "review"
@@ -1141,7 +1172,7 @@ def main() -> None:
             st.caption(f"Current: {current_job[:20]}...")
 
             if st.button("▶️ Run Full Pipeline"):
-                run_stage_via_service(current_job, "ingest")
+                run_full_pipeline_via_service(current_job)
 
             if st.button("📋 View Status"):
                 st.session_state.page = "editor"
