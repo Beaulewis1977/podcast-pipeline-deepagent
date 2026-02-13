@@ -99,6 +99,38 @@ def _persist_uploaded_video(uploaded_file: Any, jobs_dir: Path) -> Path:
     return upload_path
 
 
+def _read_metadata_json(path: Path) -> dict[str, Any] | None:
+    """Read metadata JSON and return a dict payload."""
+    try:
+        raw = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning("ingest_metadata_load_failed", path=str(path), error=str(exc))
+        return None
+    if not isinstance(raw, dict):
+        logger.warning("ingest_metadata_invalid_payload", path=str(path), type=type(raw).__name__)
+        return None
+    return raw
+
+
+def _load_ingest_metadata(job_dir: Path) -> dict[str, Any] | None:
+    """Load ingest metadata from canonical path with logged legacy fallback."""
+    canonical_path = job_dir / "intermediate" / "metadata.json"
+    legacy_path = job_dir / "input" / "metadata.json"
+
+    canonical_metadata = _read_metadata_json(canonical_path) if canonical_path.exists() else None
+    if canonical_metadata is not None:
+        return canonical_metadata
+
+    if legacy_path.exists():
+        logger.warning(
+            "ingest_metadata_legacy_fallback",
+            path=str(legacy_path),
+            canonical_exists=canonical_path.exists(),
+        )
+        return _read_metadata_json(legacy_path)
+    return None
+
+
 def format_timestamp(ts: datetime | None) -> str:
     """Format timestamp for display."""
     if ts is None:
@@ -471,14 +503,11 @@ def render_video_preview(job_id: str, job_dir: Path) -> None:
         st.video(str(video_path))
 
         # Get video duration from metadata
-        metadata_path = job_dir / "input" / "metadata.json"
         duration = 0.0
-        if metadata_path.exists():
-            try:
-                metadata = json.loads(metadata_path.read_text())
+        metadata = _load_ingest_metadata(job_dir)
+        if metadata is not None:
+            with contextlib.suppress(TypeError, ValueError):
                 duration = float(metadata.get("duration", 0))
-            except Exception:
-                pass
 
         # Timeline scrubber
         if duration > 0:
@@ -504,6 +533,13 @@ def render_video_preview(job_id: str, job_dir: Path) -> None:
 def render_timeline_editor(job_id: str, job_dir: Path) -> None:
     """Render visual cut editor with timeline markers."""
     st.subheader("Timeline Editor")
+
+    ingest_metadata = _load_ingest_metadata(job_dir)
+    if ingest_metadata is not None:
+        with contextlib.suppress(TypeError, ValueError):
+            duration_seconds = float(ingest_metadata.get("duration", 0))
+            if duration_seconds > 0:
+                st.caption(f"Source duration: {duration_seconds:.1f}s")
 
     # Load analysis data
     analysis_path = job_dir / "analysis" / "analysis.json"
