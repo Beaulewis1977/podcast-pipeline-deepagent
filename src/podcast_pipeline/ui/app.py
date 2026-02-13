@@ -19,6 +19,7 @@ import streamlit as st
 
 from podcast_pipeline.clients.service_client import (
     ServiceClient,
+    ServiceConflictError,
     ServiceError,
     ServiceUnavailableError,
 )
@@ -32,6 +33,12 @@ from podcast_pipeline.utils.logging import get_logger
 
 logger = get_logger(__name__)
 _MARKETING_METADATA_KEY = "__metadata__"
+_NAV_LABELS_BY_PAGE = {
+    "dashboard": "📊 Dashboard",
+    "editor": "🎬 Editor",
+    "settings": "⚙️ Settings",
+}
+_NAV_PAGES_BY_LABEL = {label: page for page, label in _NAV_LABELS_BY_PAGE.items()}
 
 # Page config must be first Streamlit command
 st.set_page_config(
@@ -57,6 +64,12 @@ def get_config() -> Config:
 
 def get_service_client() -> ServiceClient:
     """Get a cached ``ServiceClient`` configured from project settings."""
+    cached_client = st.session_state.get("service_client")
+    if cached_client is not None and not hasattr(cached_client, "delete_job"):
+        with contextlib.suppress(Exception):
+            cached_client.close()
+        st.session_state.pop("service_client", None)
+
     if "service_client" not in st.session_state:
         config = get_config()
         st.session_state.service_client = ServiceClient(
@@ -224,6 +237,32 @@ def format_timestamp(ts: datetime | None) -> str:
     return ts.strftime("%Y-%m-%d %H:%M")
 
 
+def _normalize_page(page: str | None) -> str:
+    """Return a valid page name for UI navigation."""
+    return page if page in _NAV_LABELS_BY_PAGE else "dashboard"
+
+
+def _set_current_page(page: str) -> None:
+    """Set page state and mark navigation for sidebar sync on next rerun."""
+    normalized_page = _normalize_page(page)
+    st.session_state["page"] = normalized_page
+    st.session_state["_sync_nav_to_page"] = True
+
+
+def _sync_nav_with_page() -> str:
+    """Normalize page and optionally mirror it into the sidebar radio key."""
+    current_page = _normalize_page(st.session_state.get("page"))
+    st.session_state["page"] = current_page
+
+    should_sync = bool(st.session_state.pop("_sync_nav_to_page", False))
+    if st.session_state.get("nav_radio") not in _NAV_PAGES_BY_LABEL:
+        should_sync = True
+
+    if should_sync:
+        st.session_state["nav_radio"] = _NAV_LABELS_BY_PAGE[current_page]
+    return current_page
+
+
 def status_badge(status: str) -> str:
     """Generate colored status badge."""
     colors = {
@@ -232,6 +271,7 @@ def status_badge(status: str) -> str:
         "waiting": "🟡",
         "failed": "🔴",
         "pending": "⚪",
+        "invalid": "🟠",
     }
     return f"{colors.get(status, '⚫')} {status.capitalize()}"
 
@@ -248,6 +288,30 @@ def load_jobs_list() -> list[dict[str, Any]]:
     except ServiceError as exc:
         st.error(f"Failed to fetch jobs: {exc}")
         return []
+
+
+def _is_invalid_job_conflict(exc: ServiceError) -> bool:
+    """Return True when backend rejects a job due to invalid persisted state."""
+    return isinstance(exc, ServiceConflictError) and "job state is invalid" in str(exc).lower()
+
+
+def _safe_current_job_status(job_id: str) -> str | None:
+    """Return current job status; None when the job cannot be queried."""
+    client = get_service_client()
+    try:
+        detail = client.get_job(job_id)
+        return detail.status
+    except ServiceConflictError as exc:
+        if _is_invalid_job_conflict(exc):
+            return "invalid"
+    except ServiceError:
+        return None
+    return None
+
+
+def _raise_service_error(status_code: int, detail: Any) -> None:
+    """Raise a normalized service-layer error for UI actions."""
+    raise ServiceError(f"Service error {status_code}: {detail}")
 
 
 def _build_research_panel_data(research_payload: dict[str, Any]) -> dict[str, Any]:
@@ -480,6 +544,42 @@ def resume_job_via_service(job_id: str, from_stage: str) -> None:
             st.error(f"Resume failed: {exc}")
 
 
+def delete_job_via_service(job_id: str) -> None:
+    """Delete a job and clear related local UI state."""
+    client = get_service_client()
+    with st.spinner(f"Deleting {job_id}..."):
+        try:
+            delete_job = getattr(client, "delete_job", None)
+            if callable(delete_job):
+                result = delete_job(job_id)
+                message = result.message
+            else:
+                config = get_config()
+                response = httpx.delete(
+                    f"{config.service.base_url.rstrip('/')}/jobs/{job_id}",
+                    timeout=max(5.0, float(config.service.timeout)),
+                )
+                detail: Any = response.text
+                payload: dict[str, Any] = {}
+                with contextlib.suppress(ValueError):
+                    raw_payload = response.json()
+                    if isinstance(raw_payload, dict):
+                        payload = raw_payload
+                        detail = payload.get("detail", raw_payload)
+                if response.is_error:
+                    _raise_service_error(response.status_code, detail)
+                message = str(payload.get("message", f"Deleted job {job_id}"))
+            if st.session_state.get("current_job_id") == job_id:
+                st.session_state.pop("current_job_id", None)
+            st.session_state.pop(f"timeline_rows_{job_id}", None)
+            st.success(message)
+            st.rerun()
+        except ServiceUnavailableError:
+            st.error("Backend service is not running. Start it with: `podcast-pipeline service`")
+        except ServiceError as exc:
+            st.error(f"Delete failed: {exc}")
+
+
 def render_dashboard() -> None:
     """Render main dashboard with job list and status."""
     st.header("📊 Dashboard")
@@ -519,7 +619,7 @@ def render_dashboard() -> None:
     # Jobs table
     for job_info in jobs:
         with st.container():
-            col1, col2, col3, col4 = st.columns([3, 2, 2, 1])
+            col1, col2, col3, col4, col5 = st.columns([3, 2, 2, 1, 1])
             with col1:
                 st.markdown(f"**{job_info['job_id']}**")
             with col2:
@@ -529,8 +629,11 @@ def render_dashboard() -> None:
             with col4:
                 if st.button("Open", key=f"open_{job_info['job_id']}"):
                     st.session_state.current_job_id = job_info["job_id"]
-                    st.session_state.page = "editor"
+                    _set_current_page("editor")
                     st.rerun()
+            with col5:
+                if st.button("🗑️ Delete", key=f"delete_{job_info['job_id']}"):
+                    delete_job_via_service(job_info["job_id"])
             st.divider()
 
     # New job section
@@ -580,7 +683,7 @@ def render_editor() -> None:
     if not job_id:
         st.warning("No job selected. Return to dashboard to select a job.")
         if st.button("← Back to Dashboard"):
-            st.session_state.page = "dashboard"
+            _set_current_page("dashboard")
             st.rerun()
         return
 
@@ -594,7 +697,13 @@ def render_editor() -> None:
         st.error("Backend service is not running. Start it with: `podcast-pipeline service`")
         return
     except ServiceError:
-        st.error(f"Job not found: {job_id}")
+        st.error(
+            f"Unable to load job {job_id}. The job state may be invalid. "
+            "Delete it from Dashboard and re-run if needed."
+        )
+        if st.button("← Back to Dashboard", key=f"back_invalid_{job_id}"):
+            _set_current_page("dashboard")
+            st.rerun()
         return
 
     # Header
@@ -603,7 +712,7 @@ def render_editor() -> None:
         st.header(f"🎬 {job_id}")
     with col2:
         if st.button("← Dashboard"):
-            st.session_state.page = "dashboard"
+            _set_current_page("dashboard")
             st.rerun()
 
     # Stage status from service response
@@ -1579,6 +1688,18 @@ def run_stage_via_service(
                 st.error(f"{stage_name.title()} failed: {result.message}")
         except ServiceUnavailableError:
             st.error("Backend service is not running. Start it with: `podcast-pipeline service`")
+        except ServiceConflictError as exc:
+            if _is_invalid_job_conflict(exc):
+                if st.session_state.get("current_job_id") == job_id:
+                    st.session_state.pop("current_job_id", None)
+                st.session_state.pop(f"timeline_rows_{job_id}", None)
+                st.error(
+                    f"Job {job_id} has invalid state and cannot run. "
+                    "Delete or repair it from Dashboard."
+                )
+                _set_current_page("dashboard")
+                return
+            st.error(f"Error running {stage_name}: {exc}")
         except ServiceError as exc:
             st.error(f"Error running {stage_name}: {exc}")
 
@@ -1597,6 +1718,18 @@ def run_full_pipeline_via_service(job_id: str) -> None:
                 st.error(f"Full pipeline run failed: {result.message}")
         except ServiceUnavailableError:
             st.error("Backend service is not running. Start it with: `podcast-pipeline service`")
+        except ServiceConflictError as exc:
+            if _is_invalid_job_conflict(exc):
+                if st.session_state.get("current_job_id") == job_id:
+                    st.session_state.pop("current_job_id", None)
+                st.session_state.pop(f"timeline_rows_{job_id}", None)
+                st.error(
+                    f"Job {job_id} has invalid state and cannot run. "
+                    "Delete or repair it from Dashboard."
+                )
+                _set_current_page("dashboard")
+                return
+            st.error(f"Error running full pipeline: {exc}")
         except ServiceError as exc:
             st.error(f"Error running full pipeline: {exc}")
 
@@ -1675,20 +1808,18 @@ def main() -> None:
         st.divider()
 
         # Navigation
+        _sync_nav_with_page()
         page = st.radio(
             "Navigation",
-            ["📊 Dashboard", "🎬 Editor", "⚙️ Settings"],
+            list(_NAV_PAGES_BY_LABEL.keys()),
             key="nav_radio",
             label_visibility="collapsed",
         )
 
         # Update page state
-        if "📊 Dashboard" in page:
-            st.session_state.page = "dashboard"
-        elif "🎬 Editor" in page:
-            st.session_state.page = "editor"
-        elif "⚙️ Settings" in page:
-            st.session_state.page = "settings"
+        selected_page = _NAV_PAGES_BY_LABEL.get(page, "dashboard")
+        if selected_page != _normalize_page(st.session_state.get("page")):
+            st.session_state["page"] = selected_page
 
         st.divider()
 
@@ -1698,13 +1829,33 @@ def main() -> None:
         current_job = st.session_state.get("current_job_id")
         if current_job:
             st.caption(f"Current: {current_job[:20]}...")
+            current_status = _safe_current_job_status(current_job)
+            if current_status == "invalid":
+                st.warning("Current job state is invalid.")
+                action_col1, action_col2 = st.columns(2)
+                with action_col1:
+                    if st.button("🗑️ Delete Job", key=f"delete_invalid_quick_{current_job}"):
+                        delete_job_via_service(current_job)
+                with action_col2:
+                    if st.button("🧹 Clear Selection", key=f"clear_invalid_quick_{current_job}"):
+                        st.session_state.pop("current_job_id", None)
+                        st.session_state.pop(f"timeline_rows_{current_job}", None)
+                        _set_current_page("dashboard")
+                        st.rerun()
+            elif current_status is None:
+                st.warning("Current job is unavailable.")
+                if st.button("🧹 Clear Selection", key=f"clear_missing_quick_{current_job}"):
+                    st.session_state.pop("current_job_id", None)
+                    st.session_state.pop(f"timeline_rows_{current_job}", None)
+                    _set_current_page("dashboard")
+                    st.rerun()
+            else:
+                if st.button("▶️ Run Full Pipeline"):
+                    run_full_pipeline_via_service(current_job)
 
-            if st.button("▶️ Run Full Pipeline"):
-                run_full_pipeline_via_service(current_job)
-
-            if st.button("📋 View Status"):
-                st.session_state.page = "editor"
-                st.rerun()
+                if st.button("📋 View Status"):
+                    _set_current_page("editor")
+                    st.rerun()
 
         st.divider()
         st.caption("v0.1.0 | Streamlit UI")

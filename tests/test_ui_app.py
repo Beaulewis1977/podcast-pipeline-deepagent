@@ -1,8 +1,12 @@
 """Regression tests for Streamlit UI workflow helpers."""
 
+import contextlib
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
+
+import httpx
 
 
 def _write_json(path: Path, payload: dict[str, object]) -> None:
@@ -72,8 +76,14 @@ def test_ui_app_timeline_reads_metadata_for_duration_caption(tmp_path: Path) -> 
     _write_json(tmp_path / "analysis" / "analysis.json", {"content_cuts": []})
 
     mock_st = MagicMock()
+    mock_st.session_state = {}
     mock_st.button.return_value = False
     mock_st.checkbox.return_value = False
+    mock_st.number_input.return_value = 0.0
+    mock_st.text_input.return_value = ""
+    mock_st.columns.side_effect = lambda spec: [
+        MagicMock() for _ in range(len(spec) if isinstance(spec, list) else int(spec))
+    ]
 
     with patch("podcast_pipeline.ui.app.st", mock_st):
         render_timeline_editor("job-abc", tmp_path)
@@ -144,6 +154,107 @@ def test_ui_app_marketing_review_flow_regeneration_resets_review_state(tmp_path:
     updated = ReviewDecisions.model_validate_json((review_dir / "review_state.json").read_text())
     assert updated.review_complete is False
     assert updated.marketing_edits == {}
+
+
+def test_ui_app_delete_job_clears_related_session_state() -> None:
+    """Deleting a job clears current/timeline session state and reruns."""
+    from podcast_pipeline.ui.app import delete_job_via_service
+
+    fake_client = MagicMock()
+    fake_client.delete_job.return_value = MagicMock(message="Deleted job job-abc")
+
+    mock_st = MagicMock()
+    mock_st.session_state = {
+        "current_job_id": "job-abc",
+        "timeline_rows_job-abc": [{"id": "row-1"}],
+    }
+    mock_st.spinner.return_value = contextlib.nullcontext()
+
+    with (
+        patch("podcast_pipeline.ui.app.get_service_client", return_value=fake_client),
+        patch("podcast_pipeline.ui.app.st", mock_st),
+    ):
+        delete_job_via_service("job-abc")
+
+    fake_client.delete_job.assert_called_once_with("job-abc")
+    assert "current_job_id" not in mock_st.session_state
+    assert "timeline_rows_job-abc" not in mock_st.session_state
+    mock_st.success.assert_called_once_with("Deleted job job-abc")
+    mock_st.rerun.assert_called_once()
+
+
+def test_ui_app_delete_job_legacy_client_falls_back_to_http_delete() -> None:
+    """Legacy cached client instances without delete_job should use HTTP fallback."""
+    from podcast_pipeline.ui.app import delete_job_via_service
+
+    class _LegacyClient:
+        pass
+
+    mock_st = MagicMock()
+    mock_st.session_state = {
+        "current_job_id": "job-legacy",
+        "timeline_rows_job-legacy": [{"id": "row-1"}],
+    }
+    mock_st.spinner.return_value = contextlib.nullcontext()
+
+    config = SimpleNamespace(service=SimpleNamespace(base_url="http://testserver", timeout=7.0))
+    response = httpx.Response(
+        200,
+        json={
+            "job_id": "job-legacy",
+            "deleted": True,
+            "message": "Deleted job job-legacy",
+        },
+        request=httpx.Request("DELETE", "http://testserver/jobs/job-legacy"),
+    )
+
+    with (
+        patch("podcast_pipeline.ui.app.get_service_client", return_value=_LegacyClient()),
+        patch("podcast_pipeline.ui.app.get_config", return_value=config),
+        patch("podcast_pipeline.ui.app.httpx.delete", return_value=response) as delete_call,
+        patch("podcast_pipeline.ui.app.st", mock_st),
+    ):
+        delete_job_via_service("job-legacy")
+
+    delete_call.assert_called_once_with("http://testserver/jobs/job-legacy", timeout=7.0)
+    assert "current_job_id" not in mock_st.session_state
+    assert "timeline_rows_job-legacy" not in mock_st.session_state
+    mock_st.success.assert_called_once_with("Deleted job job-legacy")
+    mock_st.rerun.assert_called_once()
+
+
+def test_ui_app_set_current_page_marks_nav_sync_flag() -> None:
+    """Page helper should mark sidebar sync for the next rerun."""
+    from podcast_pipeline.ui.app import _set_current_page
+
+    mock_st = MagicMock()
+    mock_st.session_state = {}
+
+    with patch("podcast_pipeline.ui.app.st", mock_st):
+        _set_current_page("editor")
+
+    assert mock_st.session_state["page"] == "editor"
+    assert mock_st.session_state["_sync_nav_to_page"] is True
+    assert "nav_radio" not in mock_st.session_state
+
+
+def test_ui_app_sync_nav_with_page_realigns_stale_sidebar_selection() -> None:
+    """Sidebar selection should be corrected when page state changed via button."""
+    from podcast_pipeline.ui.app import _sync_nav_with_page
+
+    mock_st = MagicMock()
+    mock_st.session_state = {
+        "page": "dashboard",
+        "nav_radio": "🎬 Editor",
+        "_sync_nav_to_page": True,
+    }
+
+    with patch("podcast_pipeline.ui.app.st", mock_st):
+        _sync_nav_with_page()
+
+    assert mock_st.session_state["nav_radio"] == "📊 Dashboard"
+    assert mock_st.session_state["page"] == "dashboard"
+    assert "_sync_nav_to_page" not in mock_st.session_state
 
 
 def test_ui_app_timeline_edit_prefers_saved_edit_plan(tmp_path: Path) -> None:

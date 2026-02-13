@@ -46,9 +46,16 @@ def _create_test_job(
     if stages:
         default_stages.update(stages)
 
+    initial_status = (
+        StageStatus.RUNNING
+        if any(status != StageStatus.PENDING for status in default_stages.values())
+        else StageStatus.PENDING
+    )
+
     job = Job(
         job_id=job_id,
         input_file="/tmp/test.mp4",  # noqa: S108
+        status=initial_status,
         stages={name: JobStage(status=status) for name, status in default_stages.items()},
     )
     job._update_overall_status()

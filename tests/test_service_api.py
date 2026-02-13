@@ -144,6 +144,117 @@ class TestJobsContract:
         assert resp.status_code == 200
         assert resp.json()["jobs"] == []
 
+    def test_jobs_contract_delete_removes_managed_upload_file(self, service_client: TestClient):
+        """Deleting a job also removes its orphaned jobs/_uploads source file."""
+        jobs_dir = service_client.app.state.pipeline.config.paths.jobs_dir
+        upload_path = jobs_dir / "_uploads" / "sample_upload.mp4"
+        upload_path.parent.mkdir(parents=True, exist_ok=True)
+        upload_path.write_bytes(b"\x00" * 32)
+
+        create_resp = service_client.post(
+            "/jobs",
+            json={"video_path": str(upload_path), "name": "delete-upload"},
+        )
+        assert create_resp.status_code == 201
+        job_id = create_resp.json()["job_id"]
+
+        delete_resp = service_client.delete(f"/jobs/{job_id}")
+        assert delete_resp.status_code == 200
+        assert delete_resp.json()["deleted"] is True
+        assert not (jobs_dir / job_id).exists()
+        assert not upload_path.exists()
+
+    def test_jobs_contract_delete_keeps_shared_upload_file(self, service_client: TestClient):
+        """Deleting one job does not remove an upload still referenced by another job."""
+        jobs_dir = service_client.app.state.pipeline.config.paths.jobs_dir
+        upload_path = jobs_dir / "_uploads" / "shared_upload.mp4"
+        upload_path.parent.mkdir(parents=True, exist_ok=True)
+        upload_path.write_bytes(b"\x00" * 32)
+
+        create_a = service_client.post(
+            "/jobs",
+            json={"video_path": str(upload_path), "name": "shared-a"},
+        )
+        create_b = service_client.post(
+            "/jobs",
+            json={"video_path": str(upload_path), "name": "shared-b"},
+        )
+        assert create_a.status_code == 201
+        assert create_b.status_code == 201
+        job_a = create_a.json()["job_id"]
+        job_b = create_b.json()["job_id"]
+
+        delete_resp = service_client.delete(f"/jobs/{job_a}")
+        assert delete_resp.status_code == 200
+        assert delete_resp.json()["deleted"] is True
+        assert upload_path.exists()
+        assert (jobs_dir / job_b).exists()
+
+    def test_jobs_contract_list_includes_invalid_state_jobs(self, service_client: TestClient):
+        """GET /jobs should include entries that fail strict model validation."""
+        jobs_dir = service_client.app.state.pipeline.config.paths.jobs_dir
+        broken_dir = jobs_dir / "broken-job"
+        broken_dir.mkdir(parents=True, exist_ok=True)
+        (broken_dir / "state.json").write_text(
+            """
+{
+  "job_id": "broken-job",
+  "created_at": "2026-02-01T00:00:00Z",
+  "updated_at": "2026-02-01T00:00:05Z",
+  "status": "complete",
+  "input_file": "/tmp/broken.mp4",
+  "stages": {
+    "ingest": {
+      "status": "complete",
+      "started_at": "2026-02-01T00:00:10Z",
+      "completed_at": "2026-02-01T00:00:01Z",
+      "outputs": [],
+      "error": null
+    }
+  },
+  "error": null,
+  "config": {}
+}
+            """.strip()
+        )
+
+        resp = service_client.get("/jobs")
+        assert resp.status_code == 200
+        jobs = resp.json()["jobs"]
+        broken = next((item for item in jobs if item["job_id"] == "broken-job"), None)
+        assert broken is not None
+        assert broken["status"] == "invalid"
+
+    def test_jobs_contract_delete_allows_invalid_state_jobs(self, service_client: TestClient):
+        """DELETE /jobs/{id} should work even when state.json is invalid."""
+        jobs_dir = service_client.app.state.pipeline.config.paths.jobs_dir
+        broken_dir = jobs_dir / "invalid-delete-job"
+        broken_dir.mkdir(parents=True, exist_ok=True)
+        (broken_dir / "state.json").write_text(
+            """
+{
+  "job_id": "invalid-delete-job",
+  "created_at": "2026-02-01T00:00:00Z",
+  "updated_at": "2026-02-01T00:00:05Z",
+  "status": "complete",
+  "input_file": "/tmp/broken.mp4",
+  "stages": {
+    "analyze": {
+      "status": "complete",
+      "error": "should not exist on complete"
+    }
+  },
+  "error": null,
+  "config": {}
+}
+            """.strip()
+        )
+
+        delete_resp = service_client.delete("/jobs/invalid-delete-job")
+        assert delete_resp.status_code == 200
+        assert delete_resp.json()["deleted"] is True
+        assert not broken_dir.exists()
+
     def test_jobs_contract_resume_all_pending(self, service_client: TestClient, seeded_job: str):
         """POST /jobs/{id}/resume on a brand-new job picks first stage."""
         resp = service_client.post(
@@ -563,6 +674,45 @@ class TestServiceClientResumeTimeout:
 
         assert client_factory_calls == 1
         assert request_calls == 2
+
+    def test_service_client_delete_job_calls_delete_endpoint(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """delete_job uses DELETE /jobs/{id} and returns typed payload."""
+        client = ServiceClient(base_url="http://testserver")
+        captured: dict[str, object] = {}
+
+        def _fake_request(
+            method: str,
+            path: str,
+            *,
+            json: dict[str, object] | None = None,
+            timeout: float | None = None,
+        ) -> httpx.Response:
+            captured["method"] = method
+            captured["path"] = path
+            captured["json"] = json
+            captured["timeout"] = timeout
+            return httpx.Response(
+                200,
+                json={
+                    "job_id": "job-123",
+                    "deleted": True,
+                    "message": "Deleted job job-123",
+                },
+                request=httpx.Request(method, f"http://testserver{path}"),
+            )
+
+        monkeypatch.setattr(client, "_request", _fake_request)
+        result = client.delete_job("job-123")
+        assert result.deleted is True
+        assert captured == {
+            "method": "DELETE",
+            "path": "/jobs/job-123",
+            "json": None,
+            "timeout": None,
+        }
 
 
 # ---------------------------------------------------------------------------

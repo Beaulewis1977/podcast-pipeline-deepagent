@@ -139,6 +139,14 @@ class ResumableJobsList(BaseModel):
     jobs: list[ResumableJobItem]
 
 
+class DeleteJobResult(BaseModel):
+    """Response from DELETE /jobs/{id}."""
+
+    job_id: str
+    deleted: bool
+    message: str
+
+
 # ---------------------------------------------------------------------------
 # Typed exceptions
 # ---------------------------------------------------------------------------
@@ -470,3 +478,9 @@ class ServiceClient:
         self._raise_for_status(resp)
         data: dict[str, int] = resp.json()
         return data.get("corrected", 0)
+
+    def delete_job(self, job_id: str) -> DeleteJobResult:
+        """Delete a job and its managed artifacts (DELETE /jobs/{id})."""
+        resp = self._request("DELETE", f"/jobs/{job_id}")
+        self._raise_for_status(resp)
+        return DeleteJobResult.model_validate(resp.json())

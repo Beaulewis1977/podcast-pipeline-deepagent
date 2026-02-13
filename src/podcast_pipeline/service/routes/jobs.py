@@ -4,6 +4,7 @@ All business logic is delegated to :class:`Pipeline` and :class:`Job`
 from the core package -- route handlers only translate HTTP concerns.
 """
 
+import json
 import shutil
 from pathlib import Path
 
@@ -41,6 +42,42 @@ logger = get_logger(__name__)
 router = APIRouter()
 
 
+def _is_managed_upload(path: Path, jobs_dir: Path) -> bool:
+    """Return True when path is inside jobs/_uploads."""
+    uploads_dir = (jobs_dir / "_uploads").resolve()
+    try:
+        return path.resolve().is_relative_to(uploads_dir)
+    except (OSError, ValueError):
+        return False
+
+
+def _upload_is_referenced_by_other_job(
+    jobs_dir: Path,
+    upload_path: Path,
+    *,
+    excluded_job_id: str,
+) -> bool:
+    """Return True when another job still points at this uploaded source file."""
+    resolved_upload = upload_path.resolve()
+    for job_dir in jobs_dir.iterdir():
+        if job_dir.name in {excluded_job_id, "_uploads"}:
+            continue
+        state_path = job_dir / "state.json"
+        if not state_path.exists():
+            continue
+        try:
+            other_job = Job.load(job_dir)
+        except Exception as exc:
+            logger.warning("job_reference_scan_load_failed", job_id=job_dir.name, error=str(exc))
+            continue
+        try:
+            if Path(other_job.input_file).resolve() == resolved_upload:
+                return True
+        except OSError:
+            continue
+    return False
+
+
 def _get_pipeline(request: Request) -> Pipeline:
     """Retrieve the shared Pipeline instance from app state."""
     pipeline: Pipeline = request.app.state.pipeline
@@ -59,6 +96,12 @@ def _load_job_or_404(pipeline: Pipeline, job_id: str) -> Job:
         return pipeline.load_job(job_id)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=f"Job not found: {job_id}") from exc
+    except Exception as exc:
+        logger.warning("job_state_invalid", job_id=job_id, error=str(exc))
+        raise HTTPException(
+            status_code=409,
+            detail=f"Job state is invalid for {job_id}. Delete or repair this job.",
+        ) from exc
 
 
 def _persist_run_quality_controls(
@@ -290,29 +333,57 @@ async def delete_job(job_id: str, request: Request) -> dict[str, object]:
     """Delete a job directory when no active background run exists."""
     pipeline = _get_pipeline(request)
     supervisor = _get_supervisor(request)
-    job = _load_job_or_404(pipeline, job_id)
 
-    if job.job_id in supervisor.active_jobs():
+    if job_id in supervisor.active_jobs():
         raise HTTPException(
             status_code=409,
-            detail=f"Job {job.job_id} has an active background run",
+            detail=f"Job {job_id} has an active background run",
         )
 
-    job_dir = pipeline.config.paths.jobs_dir / job.job_id
+    job_dir = pipeline.config.paths.jobs_dir / job_id
     if not job_dir.exists():
-        raise HTTPException(status_code=404, detail=f"Job not found: {job.job_id}")
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+
+    jobs_dir = pipeline.config.paths.jobs_dir
+    input_path: Path | None = None
+    state_path = job_dir / "state.json"
+    if state_path.exists():
+        try:
+            payload = json.loads(state_path.read_text())
+        except (OSError, json.JSONDecodeError):
+            payload = {}
+        if isinstance(payload, dict):
+            raw_input = payload.get("input_file")
+            if isinstance(raw_input, str) and raw_input.strip():
+                input_path = Path(raw_input)
 
     try:
         shutil.rmtree(job_dir)
     except OSError as exc:
-        logger.exception("delete_job_failed", job_id=job.job_id, error=str(exc))
+        logger.exception("delete_job_failed", job_id=job_id, error=str(exc))
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-    logger.info("job_deleted", job_id=job.job_id, path=str(job_dir))
+    if input_path and input_path.exists() and _is_managed_upload(input_path, jobs_dir):
+        if not _upload_is_referenced_by_other_job(
+            jobs_dir,
+            input_path,
+            excluded_job_id=job_id,
+        ):
+            try:
+                input_path.unlink(missing_ok=True)
+            except OSError as exc:
+                logger.warning(
+                    "job_upload_cleanup_failed",
+                    job_id=job_id,
+                    path=str(input_path),
+                    error=str(exc),
+                )
+
+    logger.info("job_deleted", job_id=job_id, path=str(job_dir))
     return {
-        "job_id": job.job_id,
+        "job_id": job_id,
         "deleted": True,
-        "message": f"Deleted job {job.job_id}",
+        "message": f"Deleted job {job_id}",
     }
 
 

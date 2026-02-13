@@ -1,5 +1,6 @@
 """Pipeline orchestration."""
 
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -120,8 +121,49 @@ class Pipeline:
                         job_dir=str(job_dir),
                         error=str(e),
                     )
+                    summaries.append(self._fallback_invalid_job_summary(job_dir, state_file))
 
         return summaries
+
+    def _fallback_invalid_job_summary(self, job_dir: Path, state_file: Path) -> dict[str, Any]:
+        """Build a resilient summary for jobs that fail strict model validation."""
+        created = datetime.fromtimestamp(state_file.stat().st_mtime, UTC).isoformat()
+        job_id = job_dir.name
+        stage_statuses = dict.fromkeys(self.STAGE_ORDER, "unknown")
+
+        try:
+            payload = json.loads(state_file.read_text())
+        except (OSError, json.JSONDecodeError):
+            payload = {}
+
+        if isinstance(payload, dict):
+            raw_job_id = payload.get("job_id")
+            if isinstance(raw_job_id, str) and raw_job_id.strip():
+                job_id = raw_job_id
+
+            raw_created = payload.get("created_at")
+            if isinstance(raw_created, str) and raw_created.strip():
+                created = raw_created
+
+            raw_stages = payload.get("stages")
+            if isinstance(raw_stages, dict):
+                parsed_stages: dict[str, str] = {}
+                for stage_name in self.STAGE_ORDER:
+                    raw_stage = raw_stages.get(stage_name)
+                    status = None
+                    if isinstance(raw_stage, dict):
+                        raw_status = raw_stage.get("status")
+                        if isinstance(raw_status, str) and raw_status.strip():
+                            status = raw_status
+                    parsed_stages[stage_name] = status or "unknown"
+                stage_statuses = parsed_stages
+
+        return {
+            "job_id": job_id,
+            "status": "invalid",
+            "created": created,
+            "stages": stage_statuses,
+        }
 
     def run(
         self,
