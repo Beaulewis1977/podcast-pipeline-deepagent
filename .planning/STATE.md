@@ -1,8 +1,8 @@
 # Project State: Podcast Pipeline
 
 **Last updated:** 2026-02-13
-**Current phase:** Phase 4 in progress (7/10 plans complete)
-**Overall progress:** 89% (24/27 plans complete)
+**Current phase:** Phase 4 in progress (8/10 plans complete)
+**Overall progress:** 93% (25/27 plans complete)
 
 ## Project Reference
 
@@ -15,14 +15,14 @@ See: `.planning/PROJECT.md`
 
 ```
 Phase:    3 of 4 complete (Phase 4 execution in progress)
-Plan:     24 completed overall; 7/10 complete in Phase 4
+Plan:     25 completed overall; 8/10 complete in Phase 4
 Status:   Executing Phase 4 hardening plans
-Last activity: 2026-02-13 - Completed 04-07-PLAN.md
+Last activity: 2026-02-13 - Completed 04-08-PLAN.md
 
-Progress: [██████████████████████░░░] 89% (24/27 plans complete)
+Progress: [███████████████████████░░] 93% (25/27 plans complete)
 ```
 
-**Next Phase:** Phase 4 - Post-release hardening (`04-08-PLAN.md`)
+**Next Phase:** Phase 4 - Post-release hardening (`04-09-PLAN.md`)
 
 ## Phase Status
 
@@ -31,13 +31,13 @@ Progress: [██████████████████████░
 | 1 | Wiring + Stability | Complete | 6/6 | 100% |
 | 2 | Research + Viral Integration | Complete | 5/5 | 100% |
 | 3 | Polishing + Desktop Distribution | Complete | 6/6 | 100% |
-| 4 | Post-release hardening | In progress | 7/10 | 70% |
+| 4 | Post-release hardening | In progress | 8/10 | 80% |
 
 ## Performance Metrics
 
 | Metric | Value |
 |--------|-------|
-| Plans completed | 24 |
+| Plans completed | 25 |
 | Requirements done | 35/83 (21 partial) |
 | Phases complete | 3/4 |
 | Estimated completion | In progress |
@@ -103,6 +103,9 @@ Progress: [██████████████████████░
 | Render stage now reports explicit degraded/failed outcomes with per-platform status maps | Prevents hidden partial export failures from being reported as generic success | 2026-02-13 |
 | Quality controls flow through run payload schemas into persisted job config and render runtime settings | Converts Streamlit quality widgets from display-only state into effective encoding behavior | 2026-02-13 |
 | Ingest/render now enforce disk preflight and post-FFmpeg output existence checks | Fails early on low-capacity conditions and loudly on missing/empty artifacts | 2026-02-13 |
+| Render enhancement chain is FFmpeg-native with explicit loudnorm fallback behavior | Keeps output quality deterministic even when optional normalization dependencies are unavailable | 2026-02-13 |
+| Research query derivation uses deterministic metadata+transcript weighting with explicit fallback source labels | Prevents weak filename defaults from silently driving research quality | 2026-02-13 |
+| YouTube API cache persistence is opt-in via cache_path with TTL pruning on load/lookup | Reduces repeated quota spikes across restarts without forcing global cache side effects | 2026-02-13 |
 
 ### Roadmap Evolution
 
@@ -115,6 +118,7 @@ Progress: [██████████████████████░
 - Phase 4 execution continued: completed 04-06 service runtime hardening (auth gate + timeout heartbeats + reconciliation diagnostics)
 - Phase 4 execution continued: completed 04-03 UI truthfulness hardening (full-run semantics + metadata path fix + review-governed marketing flow)
 - Phase 4 execution continued: completed 04-07 render truthfulness and quality wiring hardening (platform failure contract + quality payload wiring + preflight/output checks)
+- Phase 4 execution continued: completed 04-08 output quality backbone hardening (render enhancement + thumbnail artifacts + transcript-grounded research query/cache hardening)
 
 ### Technical Notes
 
@@ -155,16 +159,17 @@ Progress: [██████████████████████░
 - 2026-02-13: Completed 04-06-PLAN.md (production auth gate + sanitized errors + supervisor timeout heartbeat + periodic reconciliation diagnostics)
 - 2026-02-13: Completed 04-03-PLAN.md (truthful full-run UI action, canonical metadata/timeline loading, review-governed marketing save/regenerate flow)
 - 2026-02-13: Completed 04-07-PLAN.md (render truthful partial-failure semantics, quality-control run payload wiring, ingest/render preflight and artifact verification guardrails)
+- 2026-02-13: Completed 04-08-PLAN.md (concrete render enhancement + thumbnail artifacts, transcript-grounded research query derivation, persistent TTL cache restart behavior)
 
 ## Session Continuity
 
 ### Last session
 
-Executed `04-07-PLAN.md`, hardened render outcome truthfulness, wired Streamlit quality controls into validated run payloads, and added ingest/render preflight plus output-verification guardrails.
+2026-02-13 01:58 UTC — Executed `04-08-PLAN.md`, implemented concrete render enhancement and thumbnail artifact generation, upgraded transcript-grounded research query derivation, and added persistent TTL cache restart semantics.
 
 ### Stopped at
 
-Completed `04-07-PLAN.md`; next action is execute `04-08-PLAN.md`.
+Completed `04-08-PLAN.md`; next action is execute `04-09-PLAN.md`.
 
 ### Resume file
 
