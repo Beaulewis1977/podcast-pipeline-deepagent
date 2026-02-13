@@ -5,6 +5,7 @@ from pydantic import ValidationError
 
 from podcast_pipeline.config import ModelConfig, ServiceConfig
 from podcast_pipeline.models.job import Job, JobStage, StageStatus
+from podcast_pipeline.models.transcript import FillerCut, Segment, Word
 
 
 class TestJobModelValidation:
@@ -39,6 +40,18 @@ class TestJobModelValidation:
                 status=StageStatus.PENDING,
                 stages={
                     "ingest": JobStage(status=StageStatus.PENDING, progress_percent=10),
+                },
+            )
+
+    def test_job_rejects_pending_status_with_running_stage(self):
+        """Pending jobs cannot include active stage states."""
+        with pytest.raises(ValidationError):
+            Job(
+                job_id="job-pending-with-running-stage",
+                input_file="/tmp/video.mp4",  # noqa: S108
+                status=StageStatus.PENDING,
+                stages={
+                    "ingest": JobStage(status=StageStatus.RUNNING),
                 },
             )
 
@@ -117,3 +130,25 @@ class TestConfigModelValidation:
         """Bracketed IPv6 hosts remain valid."""
         config = ServiceConfig(host="[::1]", port=8787)
         assert config.base_url == "http://[::1]:8787"
+
+
+class TestTranscriptModelValidation:
+    """Validation invariants for transcript timing/confidence data."""
+
+    def test_transcript_rejects_zero_duration_segment(self):
+        """Segments must span positive duration."""
+        with pytest.raises(ValidationError):
+            Segment(start=10.0, end=10.0, text="zero duration")
+
+    def test_transcript_rejects_word_confidence_out_of_bounds(self):
+        """Word confidence must be bounded to [0, 1]."""
+        with pytest.raises(ValidationError):
+            Word(word="bad", start=0.0, end=0.4, confidence=1.2)
+
+        with pytest.raises(ValidationError):
+            Word(word="bad", start=0.0, end=0.4, confidence=-0.2)
+
+    def test_transcript_rejects_filler_cut_confidence_out_of_bounds(self):
+        """Filler cut confidence must be bounded to [0, 1]."""
+        with pytest.raises(ValidationError):
+            FillerCut(start=1.0, end=1.4, word="um", confidence=1.5)
