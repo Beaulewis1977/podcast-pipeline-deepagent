@@ -13,6 +13,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from podcast_pipeline.config import Config
+from podcast_pipeline.models.job import StageStatus
 from podcast_pipeline.pipeline import Pipeline
 from podcast_pipeline.service.app import create_app
 from podcast_pipeline.service.supervisor import Supervisor
@@ -286,6 +287,115 @@ class TestRunResumeSchema:
         assert payload["completed"] is False
         assert payload["rejected"] is False
         assert captured == {"stage": "transcribe", "until_stage": "render"}
+
+
+# ---------------------------------------------------------------------------
+# Resume-through-completion semantics (Phase 04-02 Task 2)
+# ---------------------------------------------------------------------------
+
+
+class TestResumeToCompletion:
+    """Resume endpoint behavior for continuation-through-completion flow."""
+
+    def test_resume_to_completion_defaults_to_final_stage(
+        self,
+        service_client: TestClient,
+        seeded_job: str,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """from_stage resumes through final stage when until_stage is omitted."""
+        captured: dict[str, str | None] = {}
+
+        def _fake_run(*_args, stage: str | None = None, until_stage: str | None = None):
+            captured["stage"] = stage
+            captured["until_stage"] = until_stage
+            return {
+                "analyze": StageResult(success=True),
+                "review": StageResult(success=True),
+                "render": StageResult(success=True),
+            }
+
+        monkeypatch.setattr(service_client.app.state.pipeline, "run", _fake_run)
+        resp = service_client.post(
+            f"/jobs/{seeded_job}/resume",
+            json={"from_stage": "analyze"},
+        )
+        assert resp.status_code == 200
+        payload = resp.json()
+        assert payload["status"] == "complete"
+        assert payload["started"] is True
+        assert payload["completed"] is True
+        assert payload["rejected"] is False
+        assert captured == {"stage": "analyze", "until_stage": "render"}
+
+    def test_resume_to_completion_honors_explicit_until_stage(
+        self,
+        service_client: TestClient,
+        seeded_job: str,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """until_stage narrows continuation range for resume."""
+        captured: dict[str, str | None] = {}
+
+        def _fake_run(*_args, stage: str | None = None, until_stage: str | None = None):
+            captured["stage"] = stage
+            captured["until_stage"] = until_stage
+            return {
+                "analyze": StageResult(success=True),
+                "review": StageResult(success=True),
+            }
+
+        monkeypatch.setattr(service_client.app.state.pipeline, "run", _fake_run)
+        resp = service_client.post(
+            f"/jobs/{seeded_job}/resume",
+            json={"from_stage": "analyze", "until_stage": "review"},
+        )
+        assert resp.status_code == 200
+        assert captured == {"stage": "analyze", "until_stage": "review"}
+
+    def test_resume_to_completion_rejects_until_before_detected_resume_stage(
+        self,
+        service_client: TestClient,
+        seeded_job: str,
+    ):
+        """until_stage earlier than auto-detected resume stage returns 422."""
+        pipeline = service_client.app.state.pipeline
+        job = pipeline.load_job(seeded_job)
+        job.update_stage("ingest", StageStatus.COMPLETE)
+        job.save(pipeline.config.paths.jobs_dir)
+
+        resp = service_client.post(
+            f"/jobs/{seeded_job}/resume",
+            json={"until_stage": "ingest"},
+        )
+        assert resp.status_code == 422
+        detail = resp.json()["detail"]
+        assert isinstance(detail, list)
+        assert any(entry.get("loc", [])[-1] == "until_stage" for entry in detail)
+
+    def test_already_complete_resume_returns_noop_response(
+        self,
+        service_client: TestClient,
+        seeded_job: str,
+    ):
+        """Already-complete jobs return deterministic no-op resume response."""
+        pipeline = service_client.app.state.pipeline
+        job = pipeline.load_job(seeded_job)
+        for stage_name in Pipeline.STAGE_ORDER:
+            job.update_stage(stage_name, StageStatus.COMPLETE)
+        job.save(pipeline.config.paths.jobs_dir)
+
+        resp = service_client.post(
+            f"/jobs/{seeded_job}/resume",
+            json={},
+        )
+        assert resp.status_code == 200
+        payload = resp.json()
+        assert payload["status"] == "complete"
+        assert payload["started"] is False
+        assert payload["completed"] is True
+        assert payload["rejected"] is False
+        assert "no incomplete stages" in payload["message"]
 
 
 # ---------------------------------------------------------------------------

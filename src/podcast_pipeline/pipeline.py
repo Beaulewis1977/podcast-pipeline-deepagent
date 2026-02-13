@@ -201,6 +201,14 @@ class Pipeline:
         until_stage: str | None = None,
     ) -> list[str]:
         """Resolve and validate requested stages."""
+        if stage and until_stage:
+            Job.validate_stage_name(stage)
+            Job.validate_stage_name(until_stage)
+            start_index = self.STAGE_ORDER.index(stage)
+            end_index = self.STAGE_ORDER.index(until_stage)
+            if end_index < start_index:
+                raise ValueError("until_stage must be the same as or after stage")
+            return self.STAGE_ORDER[start_index : end_index + 1]
         if stage:
             Job.validate_stage_name(stage)
             return [stage]

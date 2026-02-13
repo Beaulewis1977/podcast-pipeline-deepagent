@@ -341,13 +341,28 @@ async def resume_job(job_id: str, body: ResumeJobRequest, request: Request) -> R
             rejected=False,
         )
 
+    resume_until_stage = body.until_stage or Pipeline.STAGE_ORDER[-1]
+    resume_start_index = Pipeline.STAGE_ORDER.index(resume_stage)
+    resume_end_index = Pipeline.STAGE_ORDER.index(resume_until_stage)
+    if resume_end_index < resume_start_index:
+        raise HTTPException(
+            status_code=422,
+            detail=[
+                {
+                    "loc": ["body", "until_stage"],
+                    "msg": "until_stage must be the same as or after from_stage",
+                    "type": "value_error",
+                }
+            ],
+        )
+
     # Background (non-blocking) resume via supervisor
     if body.background:
         supervisor = _get_supervisor(request)
         accepted = supervisor.start_run(
             job,
             stage=resume_stage,
-            until_stage=body.until_stage,
+            until_stage=resume_until_stage,
         )
         if not accepted:
             raise HTTPException(
@@ -357,7 +372,7 @@ async def resume_job(job_id: str, body: ResumeJobRequest, request: Request) -> R
         return ResumeJobResponse(
             job_id=job_id,
             status="running",
-            message=f"Background resume started from {resume_stage}",
+            message=f"Background resume started from {resume_stage} through {resume_until_stage}",
             started=True,
             completed=False,
             rejected=False,
@@ -368,7 +383,7 @@ async def resume_job(job_id: str, body: ResumeJobRequest, request: Request) -> R
         results = pipeline.run(
             job,
             stage=resume_stage,
-            until_stage=body.until_stage,
+            until_stage=resume_until_stage,
         )
         failed = [name for name, r in results.items() if not r.success]
         started = len(results) > 0
@@ -384,7 +399,7 @@ async def resume_job(job_id: str, body: ResumeJobRequest, request: Request) -> R
         return ResumeJobResponse(
             job_id=job_id,
             status="complete",
-            message=f"Resumed from {resume_stage}",
+            message=f"Resumed from {resume_stage} through {resume_until_stage}",
             started=started,
             completed=True,
             rejected=False,
