@@ -1,6 +1,7 @@
 """Render stage: Export final content for all platforms."""
 
 import json
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -72,10 +73,14 @@ class RenderStage(Stage):
         outputs: list[str] = []
         errors: list[str] = []
         platform_results: dict[str, dict[str, Any]] = {}
+        selected_platforms = list(dict.fromkeys(decisions.export_platforms))
+        preflight_error = self._run_render_preflight(input_video, job_dir, selected_platforms)
+        if preflight_error is not None:
+            return StageResult(success=False, error=preflight_error)
+
         self.logger.info("render_quality_controls", controls=quality_controls)
 
         # Export for each selected platform
-        selected_platforms = list(dict.fromkeys(decisions.export_platforms))
         for platform in selected_platforms:
             self.logger.info("rendering_platform", platform=platform)
 
@@ -161,8 +166,13 @@ class RenderStage(Stage):
             self.logger.warning("marketing_doc_failed", error=str(e))
 
         # Export short-form clips
-        clip_outputs = self._export_clips(job_dir, input_video, edit_plan)
-        outputs.extend(clip_outputs)
+        try:
+            clip_outputs = self._export_clips(job_dir, input_video, edit_plan)
+            outputs.extend(clip_outputs)
+        except (FFmpegError, FileNotFoundError, RuntimeError) as e:
+            clip_error = f"clips: {e}"
+            errors.append(clip_error)
+            self.logger.exception("clip_export_failed", error=str(e))
 
         failed_platforms = [
             platform
@@ -171,7 +181,7 @@ class RenderStage(Stage):
         ]
         if failed_platforms and len(failed_platforms) == len(platform_results):
             render_status = "failed"
-        elif failed_platforms:
+        elif failed_platforms or errors:
             render_status = "degraded"
         else:
             render_status = "complete"
@@ -184,10 +194,14 @@ class RenderStage(Stage):
             platform_results=platform_results,
         )
 
-        if failed_platforms:
+        if errors:
+            if failed_platforms:
+                error_message = f"Platform export failures: {', '.join(failed_platforms)}"
+            else:
+                error_message = "; ".join(errors)
             return StageResult(
                 success=False,
-                error=f"Platform export failures: {', '.join(failed_platforms)}",
+                error=error_message,
                 outputs=outputs,
                 data={
                     "status": render_status,
@@ -233,6 +247,39 @@ class RenderStage(Stage):
             "video_quality": raw_quality,
             "audio_normalize": audio_normalize,
         }
+
+    def _run_render_preflight(
+        self,
+        input_video: Path,
+        job_dir: Path,
+        selected_platforms: list[str],
+    ) -> str | None:
+        """Ensure render output paths and free space are sufficient."""
+        output_root = job_dir / "output"
+        output_root.mkdir(parents=True, exist_ok=True)
+
+        source_size = input_video.stat().st_size
+        platform_factor = max(1, len(selected_platforms))
+        required_bytes = max(int(source_size * (platform_factor + 0.75)), 300 * 1024 * 1024)
+        free_bytes = shutil.disk_usage(output_root).free
+        if free_bytes < required_bytes:
+            return (
+                "Render preflight failed: insufficient disk space for platform exports. "
+                f"Required ≥ {required_bytes / (1024 * 1024):.1f} MiB, "
+                f"available {free_bytes / (1024 * 1024):.1f} MiB at {output_root}."
+            )
+        return None
+
+    def _assert_output_exists(self, output_path: Path, artifact_name: str) -> None:
+        """Verify output artifacts exist and are non-empty after FFmpeg calls."""
+        if not output_path.exists():
+            raise FileNotFoundError(
+                f"Render output verification failed: {artifact_name} missing at {output_path}."
+            )
+        if output_path.stat().st_size == 0:
+            raise RuntimeError(
+                f"Render output verification failed: {artifact_name} is empty at {output_path}."
+            )
 
     def _apply_video_quality_profile(self, spec: PlatformSpec, video_quality: str) -> PlatformSpec:
         """Derive runtime encoding settings from the selected quality profile."""
@@ -355,11 +402,13 @@ class RenderStage(Stage):
         ]
 
         run_ffmpeg(args)
+        self._assert_output_exists(output_file, f"{platform} audio export")
 
         if normalize_audio:
             self._normalize_loudness(output_file, spec.loudness_lufs)
         else:
             self.logger.info("loudness_normalization_disabled", platform=platform)
+        self._assert_output_exists(output_file, f"{platform} audio export")
 
         self.logger.info(f"{platform}_rendered", output=str(output_file))
         return [str(output_file.relative_to(output_dir.parent.parent))]
@@ -468,11 +517,13 @@ class RenderStage(Stage):
         args.append(str(output_file))
 
         run_ffmpeg(args)
+        self._assert_output_exists(output_file, f"{platform} video export")
 
         if normalize_audio:
             self._normalize_loudness(output_file, spec.loudness_lufs)
         else:
             self.logger.info("loudness_normalization_disabled", platform=platform)
+        self._assert_output_exists(output_file, f"{platform} video export")
 
         self.logger.info(f"{platform}_rendered", output=str(output_file))
         return [str(output_file.relative_to(output_dir.parent.parent))]
@@ -649,6 +700,7 @@ class RenderStage(Stage):
         clips_dir.mkdir(parents=True, exist_ok=True)
 
         outputs: list[str] = []
+        clip_errors: list[str] = []
         for idx, clip in enumerate(edit_plan.clip_ranges, 1):
             start = max(0.0, float(clip.start_seconds))
             end = max(0.0, float(clip.end_seconds))
@@ -679,13 +731,17 @@ class RenderStage(Stage):
             ]
             try:
                 run_ffmpeg(args)
+                self._assert_output_exists(clip_path, f"clip_{idx:02d} export")
                 outputs.append(str(clip_path.relative_to(job_dir)))
-            except FFmpegError as e:
-                self.logger.warning("clip_export_failed", clip=idx, error=str(e))
-                continue
+            except (FFmpegError, FileNotFoundError, RuntimeError) as e:
+                error_msg = f"clip_{idx:02d}: {e}"
+                clip_errors.append(error_msg)
+                self.logger.error("clip_export_failed", clip=idx, error=str(e))
 
         if outputs:
             self.logger.info("clips_exported", count=len(outputs))
+        if clip_errors:
+            raise RuntimeError("; ".join(clip_errors))
 
         return outputs
 

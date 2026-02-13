@@ -1,5 +1,6 @@
 """Tests for render stage and platform exports."""
 
+from collections import namedtuple
 import json
 from pathlib import Path
 
@@ -316,3 +317,60 @@ class TestRenderStatusSemantics:
         assert result.data["status"] == "failed"
         assert result.data["platform_results"]["unknown_platform"]["status"] == "failed"
         assert "Unsupported platform" in result.data["platform_results"]["unknown_platform"]["error"]
+
+
+class TestRenderGuardrails:
+    """Tests for render preflight and output verification checks."""
+
+    def test_preflight_fails_when_render_disk_space_is_low(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        """Render should fail early when free space is below preflight requirements."""
+        config = load_config()
+        stage = RenderStage(config)
+        job = _create_review_ready_job(tmp_path, ["youtube"])
+
+        mock_usage = namedtuple("usage", ["total", "used", "free"])
+        monkeypatch.setattr(
+            "podcast_pipeline.stages.render.shutil.disk_usage",
+            lambda _path: mock_usage(total=1024, used=1023, free=1),
+        )
+        monkeypatch.setattr(
+            "podcast_pipeline.stages.render.get_video_info",
+            lambda _input: {"width": 1920, "height": 1080, "duration": 30.0, "fps": 30.0},
+        )
+        monkeypatch.setattr(stage, "_generate_marketing_doc", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr(stage, "_export_clips", lambda *_args, **_kwargs: [])
+
+        result = stage.run(job, tmp_path)
+
+        assert result.success is False
+        assert "Render preflight failed" in (result.error or "")
+
+    def test_output_exists_missing_platform_file_marks_failure(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        """Missing FFmpeg output files should fail render with actionable errors."""
+        config = load_config()
+        stage = RenderStage(config)
+        job = _create_review_ready_job(tmp_path, ["youtube"])
+
+        monkeypatch.setattr(
+            "podcast_pipeline.stages.render.get_video_info",
+            lambda _input: {"width": 1920, "height": 1080, "duration": 30.0, "fps": 30.0},
+        )
+        monkeypatch.setattr("podcast_pipeline.stages.render.run_ffmpeg", lambda _args: None)
+        monkeypatch.setattr(stage, "_normalize_loudness", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr(stage, "_generate_marketing_doc", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr(stage, "_export_clips", lambda *_args, **_kwargs: [])
+
+        result = stage.run(job, tmp_path)
+
+        assert result.success is False
+        youtube_result = result.data["platform_results"]["youtube"]
+        assert youtube_result["status"] == "failed"
+        assert "output verification failed" in youtube_result["error"].lower()
