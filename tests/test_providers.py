@@ -167,6 +167,31 @@ def test_gemini_retry_retries_on_rate_limit_status_code(monkeypatch: pytest.Monk
     assert files.get_calls >= 1
 
 
+def test_gemini_rate_limit_error_preserves_retry_after(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Gemini structured 429 responses preserve retry-after metadata."""
+    provider = GeminiProvider(api_key="test-key")
+    _configure_fast_retry(monkeypatch, provider, attempts=1)
+
+    request = httpx.Request("POST", "https://generativelanguage.googleapis.com/v1beta/models")
+    response = httpx.Response(429, headers={"retry-after": "17"}, request=request)
+    rate_limit_error = httpx.HTTPStatusError(
+        "rate limited",
+        request=request,
+        response=response,
+    )
+
+    files = _FakeGeminiFiles()
+    models = _FakeGeminiModels(events=[rate_limit_error])
+    fake_client = _FakeGeminiClient(files=files, models=models)
+    monkeypatch.setattr(provider, "_get_client", lambda: fake_client)
+
+    with pytest.raises(RateLimitError) as exc_info:
+        provider.analyze(Path("jobs/job-1/intermediate/proxy.mp4"), {"text": "retry-after test"})
+
+    assert exc_info.value.retry_after == 17
+    assert models.call_count == 1
+
+
 def test_gemini_upload_cache_reuses_file_id_between_calls(monkeypatch: pytest.MonkeyPatch) -> None:
     """Gemini should reuse cached upload IDs for repeated analysis on the same proxy."""
     provider = GeminiProvider(api_key="test-key")
@@ -190,6 +215,32 @@ def test_gemini_upload_cache_reuses_file_id_between_calls(monkeypatch: pytest.Mo
     assert files.get_calls >= 1
 
 
+def test_gemini_upload_cache_stale_entry_reuploads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Stale Gemini cache entries should be evicted and replaced with a fresh upload."""
+    provider = GeminiProvider(api_key="test-key")
+    files = _FakeGeminiFiles()
+    models = _FakeGeminiModels(
+        events=[
+            json.dumps(_valid_analysis_payload()),
+            json.dumps(_valid_analysis_payload()),
+        ]
+    )
+    fake_client = _FakeGeminiClient(files=files, models=models)
+    monkeypatch.setattr(provider, "_get_client", lambda: fake_client)
+
+    proxy_path = Path("jobs/job-stale/intermediate/proxy.mp4")
+    cache_key = provider._upload_cache_key(proxy_path)
+
+    provider.analyze(proxy_path, {"text": "first pass"})
+    provider._upload_cache[cache_key] = "stale-upload-id"
+    provider.analyze(proxy_path, {"text": "second pass"})
+
+    assert files.upload_calls == 2
+    assert provider._upload_cache[cache_key] != "stale-upload-id"
+
+
 def test_gemini_upload_cache_upload_failure_does_not_cache(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -205,6 +256,30 @@ def test_gemini_upload_cache_upload_failure_does_not_cache(
         provider.analyze(proxy_path, {"text": "upload failure"})
 
     assert provider._upload_cache_key(proxy_path) not in provider._upload_cache
+
+
+def test_gemini_upload_without_identifier_raises_provider_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Gemini uploads must include a valid file identifier to seed cache reuse."""
+    provider = GeminiProvider(api_key="test-key")
+
+    class _InvalidUploadFiles(_FakeGeminiFiles):
+        def upload(self, file: Path) -> Any:  # noqa: ARG002
+            self.upload_calls += 1
+            return SimpleNamespace(name=None, state=SimpleNamespace(name="ACTIVE"))
+
+    files = _InvalidUploadFiles()
+    models = _FakeGeminiModels(events=[json.dumps(_valid_analysis_payload())])
+    fake_client = _FakeGeminiClient(files=files, models=models)
+    monkeypatch.setattr(provider, "_get_client", lambda: fake_client)
+
+    proxy_path = Path("jobs/job-invalid-upload/intermediate/proxy.mp4")
+    with pytest.raises(ProviderError, match="valid file identifier"):
+        provider.analyze(proxy_path, {"text": "invalid upload id"})
+
+    assert provider._upload_cache_key(proxy_path) not in provider._upload_cache
+    assert models.call_count == 0
 
 
 def test_kimi_rate_limit_raises_rate_limit_error(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -224,6 +299,34 @@ def test_kimi_rate_limit_raises_rate_limit_error(monkeypatch: pytest.MonkeyPatch
         provider.analyze(Path("proxy.mp4"), {"text": "test"})
 
     assert call_count["count"] == 1
+
+
+def test_kimi_invalid_analysis_schema_raises_provider_parse_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Kimi JSON payloads with invalid analysis shape must fail explicitly."""
+    provider = KimiProvider(api_key="test-key")
+    payload = {
+        "choices": [
+            {
+                "message": {
+                    "content": json.dumps(
+                        {
+                            "content_cuts": [
+                                {
+                                    "reason": "missing timestamps",
+                                }
+                            ]
+                        }
+                    )
+                }
+            }
+        ]
+    }
+    monkeypatch.setattr(httpx, "post", lambda *args, **kwargs: _FakeKimiResponse(200, payload))
+
+    with pytest.raises(ProviderParseError, match="invalid analysis schema"):
+        provider.analyze(Path("proxy.mp4"), {"text": "test transcript"})
 
 
 def test_analyze_fallback_sets_degraded_mode_metadata(
