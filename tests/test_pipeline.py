@@ -1,6 +1,7 @@
 """Tests for pipeline orchestration."""
 
 import json
+import threading
 from pathlib import Path
 
 import pytest
@@ -8,6 +9,8 @@ import pytest
 from podcast_pipeline.config import Config
 from podcast_pipeline.models.job import Job, StageStatus
 from podcast_pipeline.pipeline import Pipeline
+from podcast_pipeline.stages.base import StageResult
+from podcast_pipeline.utils.locks import JobLockAcquisitionError
 
 
 class TestPipeline:
@@ -121,3 +124,73 @@ class TestStageValidation:
             pipeline.run(job, until_stage="not-a-stage")
 
         assert job.status == StageStatus.PENDING
+
+
+class TestPipelineLocking:
+    """Tests for lock acquisition and state reload boundaries."""
+
+    def test_state_reload_uses_latest_job_state(self, config: Config) -> None:
+        """state_reload should skip stages already complete on disk."""
+        pipeline = Pipeline(config)
+        job = Job(job_id="state-reload-job", input_file="/tmp/test.mp4")  # noqa: S108
+        job.save(config.paths.jobs_dir)
+
+        stale_job = pipeline.load_job(job.job_id)
+        fresh_job = pipeline.load_job(job.job_id)
+        fresh_job.update_stage("ingest", StageStatus.COMPLETE, outputs=["input/audio.wav"])
+        fresh_job.save(config.paths.jobs_dir)
+
+        run_counter = {"calls": 0}
+
+        class CountingStage:
+            def execute(self, stage_job: Job, job_dir: Path) -> StageResult:
+                run_counter["calls"] += 1
+                return StageResult(success=True)
+
+        pipeline.stages["ingest"] = CountingStage()
+        results = pipeline.run(stale_job, stage="ingest")
+
+        assert results == {}
+        assert run_counter["calls"] == 0
+
+    def test_job_lock_rejects_second_run_attempt(self, config: Config) -> None:
+        """lock contention should reject a concurrent run for the same job."""
+        pipeline_one = Pipeline(config)
+        pipeline_two = Pipeline(config)
+        job = Job(job_id="lock-contention-job", input_file="/tmp/test.mp4")  # noqa: S108
+        job.save(config.paths.jobs_dir)
+
+        stage_started = threading.Event()
+        stage_release = threading.Event()
+        runner_errors: list[Exception] = []
+
+        class BlockingStage:
+            def execute(self, stage_job: Job, job_dir: Path) -> StageResult:
+                stage_started.set()
+                stage_release.wait(timeout=5)
+                return StageResult(success=True)
+
+        pipeline_one.stages["ingest"] = BlockingStage()
+
+        def _run_with_lock() -> None:
+            try:
+                locked_job = pipeline_one.load_job(job.job_id)
+                pipeline_one.run(locked_job, stage="ingest")
+            except Exception as exc:  # pragma: no cover - assertion below captures failures
+                runner_errors.append(exc)
+            finally:
+                stage_release.set()
+
+        worker = threading.Thread(target=_run_with_lock)
+        worker.start()
+        assert stage_started.wait(timeout=5)
+
+        with pytest.raises(JobLockAcquisitionError, match="already running"):
+            second_job = pipeline_two.load_job(job.job_id)
+            pipeline_two.run(second_job, stage="ingest")
+
+        stage_release.set()
+        worker.join(timeout=5)
+
+        assert runner_errors == []
+        assert not worker.is_alive()

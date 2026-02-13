@@ -12,6 +12,7 @@ from podcast_pipeline.stages.ingest import IngestStage
 from podcast_pipeline.stages.render import RenderStage
 from podcast_pipeline.stages.review import ReviewStage
 from podcast_pipeline.stages.transcribe import TranscribeStage
+from podcast_pipeline.utils.locks import JobLockAcquisitionError, acquire_job_lock
 from podcast_pipeline.utils.logging import get_logger, setup_logging
 
 logger = get_logger(__name__)
@@ -141,48 +142,50 @@ class Pipeline:
         job_dir = job.get_job_dir(self.config.paths.jobs_dir)
         results: dict[str, StageResult] = {}
         stages_to_run = self._resolve_stages_to_run(stage=stage, until_stage=until_stage)
-
-        logger.info(
-            "pipeline_starting",
-            job_id=job.job_id,
-            stages=stages_to_run,
-        )
-
-        for stage_name in stages_to_run:
-            stage_impl = self.stages[stage_name]
-
-            # Check if stage should run
-            current_status = job.stages.get(stage_name)
-            if current_status and current_status.status == StageStatus.COMPLETE:
+        try:
+            with acquire_job_lock(self.config.paths.jobs_dir, job.job_id):
                 logger.info(
-                    "stage_already_complete",
-                    stage=stage_name,
+                    "pipeline_starting",
+                    job_id=job.job_id,
+                    stages=stages_to_run,
                 )
-                continue
 
-            # Special handling for review stage
-            if stage_name == "review":
-                result = stage_impl.execute(job, job_dir)
-                results[stage_name] = result
+                for stage_name in stages_to_run:
+                    job = self.load_job(job.job_id)
+                    stage_impl = self.stages[stage_name]
 
-                # If review is waiting, stop here
-                if result.data.get("status") == "waiting_for_review":
-                    logger.info(
-                        "waiting_for_review",
-                        job_id=job.job_id,
-                    )
-                    break
-            else:
-                result = stage_impl.execute(job, job_dir)
-                results[stage_name] = result
+                    current_status = job.stages.get(stage_name)
+                    if current_status and current_status.status == StageStatus.COMPLETE:
+                        logger.info(
+                            "stage_already_complete",
+                            stage=stage_name,
+                        )
+                        continue
 
-                if not result.success:
-                    logger.error(
-                        "stage_failed",
-                        stage=stage_name,
-                        error=result.error,
-                    )
-                    break
+                    if stage_name == "review":
+                        result = stage_impl.execute(job, job_dir)
+                        results[stage_name] = result
+
+                        if result.data.get("status") == "waiting_for_review":
+                            logger.info(
+                                "waiting_for_review",
+                                job_id=job.job_id,
+                            )
+                            break
+                    else:
+                        result = stage_impl.execute(job, job_dir)
+                        results[stage_name] = result
+
+                        if not result.success:
+                            logger.error(
+                                "stage_failed",
+                                stage=stage_name,
+                                error=result.error,
+                            )
+                            break
+        except JobLockAcquisitionError:
+            logger.warning("job_lock_conflict", job_id=job.job_id)
+            raise
 
         logger.info(
             "pipeline_complete",
