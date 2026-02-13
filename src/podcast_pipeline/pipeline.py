@@ -1,5 +1,6 @@
 """Pipeline orchestration."""
 
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -12,6 +13,7 @@ from podcast_pipeline.stages.ingest import IngestStage
 from podcast_pipeline.stages.render import RenderStage
 from podcast_pipeline.stages.review import ReviewStage
 from podcast_pipeline.stages.transcribe import TranscribeStage
+from podcast_pipeline.utils.locks import JobLockAcquisitionError, acquire_job_lock
 from podcast_pipeline.utils.logging import get_logger, setup_logging
 
 logger = get_logger(__name__)
@@ -20,7 +22,7 @@ logger = get_logger(__name__)
 class Pipeline:
     """Pipeline orchestrator."""
 
-    STAGE_ORDER = ["ingest", "transcribe", "analyze", "review", "render"]
+    STAGE_ORDER = list(Job.DEFAULT_STAGES)
 
     def __init__(self, config: Config | None = None):
         self.config = config or load_config()
@@ -119,8 +121,49 @@ class Pipeline:
                         job_dir=str(job_dir),
                         error=str(e),
                     )
+                    summaries.append(self._fallback_invalid_job_summary(job_dir, state_file))
 
         return summaries
+
+    def _fallback_invalid_job_summary(self, job_dir: Path, state_file: Path) -> dict[str, Any]:
+        """Build a resilient summary for jobs that fail strict model validation."""
+        created = datetime.fromtimestamp(state_file.stat().st_mtime, UTC).isoformat()
+        job_id = job_dir.name
+        stage_statuses = dict.fromkeys(self.STAGE_ORDER, "unknown")
+
+        try:
+            payload = json.loads(state_file.read_text())
+        except (OSError, json.JSONDecodeError):
+            payload = {}
+
+        if isinstance(payload, dict):
+            raw_job_id = payload.get("job_id")
+            if isinstance(raw_job_id, str) and raw_job_id.strip():
+                job_id = raw_job_id
+
+            raw_created = payload.get("created_at")
+            if isinstance(raw_created, str) and raw_created.strip():
+                created = raw_created
+
+            raw_stages = payload.get("stages")
+            if isinstance(raw_stages, dict):
+                parsed_stages: dict[str, str] = {}
+                for stage_name in self.STAGE_ORDER:
+                    raw_stage = raw_stages.get(stage_name)
+                    status = None
+                    if isinstance(raw_stage, dict):
+                        raw_status = raw_stage.get("status")
+                        if isinstance(raw_status, str) and raw_status.strip():
+                            status = raw_status
+                    parsed_stages[stage_name] = status or "unknown"
+                stage_statuses = parsed_stages
+
+        return {
+            "job_id": job_id,
+            "status": "invalid",
+            "created": created,
+            "stages": stage_statuses,
+        }
 
     def run(
         self,
@@ -140,64 +183,51 @@ class Pipeline:
         """
         job_dir = job.get_job_dir(self.config.paths.jobs_dir)
         results: dict[str, StageResult] = {}
-
-        # Determine which stages to run
-        if stage:
-            stages_to_run = [stage]
-        elif until_stage:
-            try:
-                idx = self.STAGE_ORDER.index(until_stage)
-                stages_to_run = self.STAGE_ORDER[: idx + 1]
-            except ValueError as e:
-                raise ValueError(f"Unknown stage: {until_stage}") from e
-        else:
-            stages_to_run = self.STAGE_ORDER
-
-        logger.info(
-            "pipeline_starting",
-            job_id=job.job_id,
-            stages=stages_to_run,
-        )
-
-        for stage_name in stages_to_run:
-            if stage_name not in self.stages:
-                logger.warning("unknown_stage", stage=stage_name)
-                continue
-
-            stage_impl = self.stages[stage_name]
-
-            # Check if stage should run
-            current_status = job.stages.get(stage_name)
-            if current_status and current_status.status == StageStatus.COMPLETE:
+        stages_to_run = self._resolve_stages_to_run(stage=stage, until_stage=until_stage)
+        try:
+            with acquire_job_lock(self.config.paths.jobs_dir, job.job_id):
                 logger.info(
-                    "stage_already_complete",
-                    stage=stage_name,
+                    "pipeline_starting",
+                    job_id=job.job_id,
+                    stages=stages_to_run,
                 )
-                continue
 
-            # Special handling for review stage
-            if stage_name == "review":
-                result = stage_impl.execute(job, job_dir)
-                results[stage_name] = result
+                for stage_name in stages_to_run:
+                    job = self.load_job(job.job_id)
+                    stage_impl = self.stages[stage_name]
 
-                # If review is waiting, stop here
-                if result.data.get("status") == "waiting_for_review":
-                    logger.info(
-                        "waiting_for_review",
-                        job_id=job.job_id,
-                    )
-                    break
-            else:
-                result = stage_impl.execute(job, job_dir)
-                results[stage_name] = result
+                    current_status = job.stages.get(stage_name)
+                    if current_status and current_status.status == StageStatus.COMPLETE:
+                        logger.info(
+                            "stage_already_complete",
+                            stage=stage_name,
+                        )
+                        continue
 
-                if not result.success:
-                    logger.error(
-                        "stage_failed",
-                        stage=stage_name,
-                        error=result.error,
-                    )
-                    break
+                    if stage_name == "review":
+                        result = stage_impl.execute(job, job_dir)
+                        results[stage_name] = result
+
+                        if result.data.get("status") == "waiting_for_review":
+                            logger.info(
+                                "waiting_for_review",
+                                job_id=job.job_id,
+                            )
+                            break
+                    else:
+                        result = stage_impl.execute(job, job_dir)
+                        results[stage_name] = result
+
+                        if not result.success:
+                            logger.error(
+                                "stage_failed",
+                                stage=stage_name,
+                                error=result.error,
+                            )
+                            break
+        except JobLockAcquisitionError:
+            logger.warning("job_lock_conflict", job_id=job.job_id)
+            raise
 
         logger.info(
             "pipeline_complete",
@@ -206,6 +236,29 @@ class Pipeline:
         )
 
         return results
+
+    def _resolve_stages_to_run(
+        self,
+        stage: str | None = None,
+        until_stage: str | None = None,
+    ) -> list[str]:
+        """Resolve and validate requested stages."""
+        if stage and until_stage:
+            Job.validate_stage_name(stage)
+            Job.validate_stage_name(until_stage)
+            start_index = self.STAGE_ORDER.index(stage)
+            end_index = self.STAGE_ORDER.index(until_stage)
+            if end_index < start_index:
+                raise ValueError("until_stage must be the same as or after stage")
+            return self.STAGE_ORDER[start_index : end_index + 1]
+        if stage:
+            Job.validate_stage_name(stage)
+            return [stage]
+        if until_stage:
+            Job.validate_stage_name(until_stage)
+            idx = self.STAGE_ORDER.index(until_stage)
+            return self.STAGE_ORDER[: idx + 1]
+        return self.STAGE_ORDER.copy()
 
 
 def create_and_run_pipeline(

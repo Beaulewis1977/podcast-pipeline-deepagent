@@ -3,9 +3,13 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "engines": {
+    "node": ">=22.6.0"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "test": "node ./scripts/run-tests.mjs",
     "lint": "eslint .",
     "preview": "vite preview",
     "tauri": "tauri"

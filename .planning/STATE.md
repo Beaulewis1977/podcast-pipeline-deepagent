@@ -1,26 +1,28 @@
 # Project State: Podcast Pipeline
 
-**Last updated:** 2026-02-05
-**Current phase:** All phases complete
-**Overall progress:** 100%
+**Last updated:** 2026-02-13
+**Current phase:** Phase 4 execution complete (10/10 plans complete; verification pending)
+**Overall progress:** 100% (27/27 plans complete)
 
 ## Project Reference
 
 See: `.planning/PROJECT.md`
 
 **Core value:** Turn raw podcast recording into multi-platform content without editing software or manual copywriting.
-**Current focus:** All 3 phases complete. Milestone v1.0 ready to close.
+**Current focus:** Verify Phase 4 goal achievement and close post-release hardening phase.
 
 ## Current Position
 
 ```
-Phase:    3 of 3 (all complete)
-Plan:     17 of 17 total plans
-Status:   All phases complete
-Last activity: 2026-02-05 - Phase 3 complete, Gemini model fix
+Phase:    3 of 4 complete (Phase 4 execution complete; verification pending)
+Plan:     27 completed overall; 10/10 complete in Phase 4
+Status:   Awaiting Phase 4 verification
+Last activity: 2026-02-13 - Completed 04-10-PLAN.md
 
-Progress: [████████████████████████] 100% (17/17 plans)
+Progress: [█████████████████████████] 100% (27/27 plans complete)
 ```
+
+**Next Phase:** Verify Phase 4 - Post-release hardening
 
 ## Phase Status
 
@@ -29,15 +31,16 @@ Progress: [███████████████████████
 | 1 | Wiring + Stability | Complete | 6/6 | 100% |
 | 2 | Research + Viral Integration | Complete | 5/5 | 100% |
 | 3 | Polishing + Desktop Distribution | Complete | 6/6 | 100% |
+| 4 | Post-release hardening | Execution complete | 10/10 | 100% |
 
 ## Performance Metrics
 
 | Metric | Value |
 |--------|-------|
-| Plans completed | 17 |
+| Plans completed | 27 |
 | Requirements done | 35/83 (21 partial) |
-| Phases complete | 3/3 |
-| Estimated completion | Complete |
+| Phases complete | 3/4 |
+| Estimated completion | In progress |
 
 ## Accumulated Context
 
@@ -78,6 +81,51 @@ Progress: [███████████████████████
 | PyInstaller for backend sidecar | Single-file cross-platform binary from Python service | 2026-02-05 |
 | Graduated smoke severity | Blocking checks (artifact/size/sidecar) vs warnings (health/ffmpeg) | 2026-02-05 |
 | Draft releases by default | Manual review before publishing to avoid broken releases | 2026-02-05 |
+| Use stdlib O_EXCL lock files for job-scoped run exclusivity | Avoids new dependencies while enforcing deterministic same-job concurrency guardrails | 2026-02-13 |
+| Validate stage names in job mutation APIs | Prevents invalid stage keys from corrupting canonical state transitions | 2026-02-13 |
+| Reload job state from disk before each stage dispatch | Prevents stale in-memory state from overwriting newer persisted job state | 2026-02-13 |
+| Reject zero-duration/overlapping filler-content cuts at model boundary | Prevents render-time silent cleanup and forces malformed edit plans to fail early | 2026-02-13 |
+| Enforce string↔seconds timestamp consistency in analysis models with 1s tolerance | Stops contradictory clip/cut timestamps from propagating into downstream ranking/render logic | 2026-02-13 |
+| Validate provider-model compatibility and safe service host/port in config models | Prevents invalid runtime configuration from reaching service/client startup paths | 2026-02-13 |
+| Run/resume schemas enforce typed stage windows with explicit started/completed/rejected outcomes | Keeps API responses truthful and invalid stage inputs as structured 422 errors | 2026-02-13 |
+| Resume defaults to continuation through final stage unless until_stage is provided | Aligns operational behavior with user expectation for one-call recovery continuation | 2026-02-13 |
+| Service client uses persistent HTTPX client plus endpoint-specific run/resume timeouts and typed HTTP status exceptions | Preserves backend parity while improving resilience for long-running pipeline requests | 2026-02-13 |
+| Provider parse/schema failures raise explicit typed errors with structured details | Prevents silent empty-analysis "success" payloads and preserves actionable diagnostics | 2026-02-13 |
+| Analyze outputs embed metadata.degraded_mode for transcript-only provider execution | Makes fallback degradation explicit to operators and downstream artifact consumers | 2026-02-13 |
+| Gemini upload IDs are reused per proxy path with structured 429 classification | Reduces repeated upload overhead and keeps retry semantics deterministic/testable | 2026-02-13 |
+| Production mode enforces API key auth on /jobs endpoints with explicit development bypass controls | Protects job-control surface in production while preserving local developer ergonomics | 2026-02-13 |
+| Global exception handlers sanitize unhandled and HTTP 5xx responses to internal_error payloads | Prevents stack traces and internal error strings from leaking to API clients | 2026-02-13 |
+| Supervisor runtime metadata records timeout state and infers last_known_stage from persisted job state | Makes hung/background progression observable and recoverable from runtime journal data | 2026-02-13 |
+| Lifespan-managed periodic reconciliation plus /system/runtime diagnostics monitor stale/orphaned runs | Provides proactive correction and operator visibility between manual recovery calls | 2026-02-13 |
+| Persist uploads in jobs/_uploads before service create_job | Keeps pipeline/service as source of truth for job directory lifecycle and removes orphan pre-job directories | 2026-02-13 |
+| Streamlit preview/timeline metadata source is intermediate/metadata.json with logged legacy fallback | Aligns UI duration/timestamp reads with ingest outputs while preserving backward compatibility | 2026-02-13 |
+| Marketing save/regenerate persists via review_state and analyze→review regeneration | Preserves review-governed editorial audit trail and avoids direct analysis.json mutation | 2026-02-13 |
+| Render stage now reports explicit degraded/failed outcomes with per-platform status maps | Prevents hidden partial export failures from being reported as generic success | 2026-02-13 |
+| Quality controls flow through run payload schemas into persisted job config and render runtime settings | Converts Streamlit quality widgets from display-only state into effective encoding behavior | 2026-02-13 |
+| Ingest/render now enforce disk preflight and post-FFmpeg output existence checks | Fails early on low-capacity conditions and loudly on missing/empty artifacts | 2026-02-13 |
+| Render enhancement chain is FFmpeg-native with explicit loudnorm fallback behavior | Keeps output quality deterministic even when optional normalization dependencies are unavailable | 2026-02-13 |
+| Research query derivation uses deterministic metadata+transcript weighting with explicit fallback source labels | Prevents weak filename defaults from silently driving research quality | 2026-02-13 |
+| YouTube API cache persistence is opt-in via cache_path with TTL pruning on load/lookup | Reduces repeated quota spikes across restarts without forcing global cache side effects | 2026-02-13 |
+| Desktop lifecycle controls route through typed backend methods including service-backed delete actions | Converts desktop from monitor-only surface into full operator control plane | 2026-02-13 |
+| Streamlit timeline edits persist as validated range edits into regenerated review/edit_plan artifacts | Enables true editorial timeline control instead of checkbox-only cut approvals | 2026-02-13 |
+| Recovery UX surfaces /system/runtime diagnostics with on-demand /jobs/reconcile actions across desktop and Streamlit | Makes stale/orphaned runtime state visible and operator-actionable without filesystem inspection | 2026-02-13 |
+| Coverage gates now require 45% overall plus providers/service/stages module thresholds | Strengthens runtime regression protection while keeping thresholds realistic for fixture-heavy media paths | 2026-02-13 |
+| Operator docs now codify service auth headers, resume-through-completion, degraded-mode, and quality-control contracts | Keeps desktop/Streamlit/API behavior truthful for manual operations and incident response | 2026-02-13 |
+
+### Roadmap Evolution
+
+- Phase 4 added: Post-release hardening
+- Phase 4 planned: research complete + 10 plan files created
+- Phase 4 execution started: completed 04-01 runtime invariants hardening
+- Phase 4 execution continued: completed 04-04 model/config validation hardening
+- Phase 4 execution continued: completed 04-02 run/resume contract hardening
+- Phase 4 execution continued: completed 04-05 provider reliability hardening
+- Phase 4 execution continued: completed 04-06 service runtime hardening (auth gate + timeout heartbeats + reconciliation diagnostics)
+- Phase 4 execution continued: completed 04-03 UI truthfulness hardening (full-run semantics + metadata path fix + review-governed marketing flow)
+- Phase 4 execution continued: completed 04-07 render truthfulness and quality wiring hardening (platform failure contract + quality payload wiring + preflight/output checks)
+- Phase 4 execution continued: completed 04-08 output quality backbone hardening (render enhancement + thumbnail artifacts + transcript-grounded research query/cache hardening)
+- Phase 4 execution continued: completed 04-09 operator UX hardening (desktop full lifecycle controls, Streamlit timeline range editing, cross-surface recovery diagnostics + reconcile controls)
+- Phase 4 execution completed: finished 04-10 confidence gates and docs alignment (provider reliability regressions, stronger coverage policy, runtime contract documentation)
 
 ### Technical Notes
 
@@ -109,16 +157,28 @@ Progress: [███████████████████████
 - 2026-02-05: Completed 03-01 through 03-06 (Phase 3 complete)
 - 2026-02-05: Fixed Gemini model name (gemini-2.5-flash-latest -> gemini-2.5-flash)
 - 2026-02-05: End-to-end smoke test passed (ingest -> transcribe -> analyze -> review)
+- 2026-02-12: Added Phase 4 (Post-release hardening) to roadmap
+- 2026-02-12: Planned Phase 4 with integrated research and 10 execution plans
+- 2026-02-13: Completed 04-01-PLAN.md (stage validation + per-job lock + state reload)
+- 2026-02-13: Completed 04-04-PLAN.md (strict model/config invariants + dedicated validation suites)
+- 2026-02-13: Completed 04-02-PLAN.md (typed run/resume contracts + continuation semantics + service client parity hardening)
+- 2026-02-13: Completed 04-05-PLAN.md (provider parse failure hardening + degraded fallback signaling + Gemini upload/retry reliability tests)
+- 2026-02-13: Completed 04-06-PLAN.md (production auth gate + sanitized errors + supervisor timeout heartbeat + periodic reconciliation diagnostics)
+- 2026-02-13: Completed 04-03-PLAN.md (truthful full-run UI action, canonical metadata/timeline loading, review-governed marketing save/regenerate flow)
+- 2026-02-13: Completed 04-07-PLAN.md (render truthful partial-failure semantics, quality-control run payload wiring, ingest/render preflight and artifact verification guardrails)
+- 2026-02-13: Completed 04-08-PLAN.md (concrete render enhancement + thumbnail artifacts, transcript-grounded research query derivation, persistent TTL cache restart behavior)
+- 2026-02-13: Completed 04-09-PLAN.md (desktop full lifecycle control plane, validated timeline edit persistence, runtime diagnostics/reconcile controls in desktop + Streamlit)
+- 2026-02-13: Completed 04-10-PLAN.md (provider reliability regressions, raised coverage gates, and runtime contract docs alignment)
 
 ## Session Continuity
 
 ### Last session
 
-Completed Phase 3, fixed Gemini model name, ran successful end-to-end smoke test through Streamlit UI. All 3 phases now complete.
+2026-02-13 04:27 UTC — Executed `04-10-PLAN.md`, strengthened confidence gates/docs alignment, and completed all Phase 4 plan executions.
 
 ### Stopped at
 
-All phases complete. Milestone v1.0 ready to close or extend.
+Completed `04-10-PLAN.md`; next action is phase verification (`gsd-verifier`) for Phase 4 goal.
 
 ### Resume file
 
@@ -126,4 +186,4 @@ None
 
 ---
 
-*State updated: 2026-02-05*
+*State updated: 2026-02-13*

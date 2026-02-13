@@ -377,6 +377,83 @@ class TestStreamlitActions:
         mock_st.error.assert_called_once()
         assert "FFmpeg not found" in mock_st.error.call_args[0][0]
 
+    def test_streamlit_actions_run_stage_quality_controls_payload(
+        self,
+        service_client: ServiceClient,
+        seeded_job_id: str,
+    ) -> None:
+        """Render action should forward quality controls in run payload."""
+        from podcast_pipeline.ui.app import run_stage_via_service
+
+        quality_controls = {"video_quality": "ultra", "audio_normalize": False}
+        mock_run = MagicMock(
+            return_value=RunResult(job_id=seeded_job_id, status="complete", message="OK")
+        )
+        service_client.run_job = mock_run  # type: ignore[assignment]
+
+        mock_st = MagicMock()
+        mock_st.rerun = MagicMock()
+        with (
+            patch("podcast_pipeline.ui.app.get_service_client", return_value=service_client),
+            patch("podcast_pipeline.ui.app.st", mock_st),
+        ):
+            run_stage_via_service(
+                seeded_job_id,
+                "render",
+                quality_controls=quality_controls,
+            )
+
+        mock_run.assert_called_once_with(
+            seeded_job_id,
+            stage="render",
+            quality_controls=quality_controls,
+        )
+        mock_st.success.assert_called_once()
+
+    def test_streamlit_actions_run_full_pipeline_calls_run_job_without_stage(
+        self, service_client: ServiceClient, seeded_job_id: str
+    ) -> None:
+        """Run Full Pipeline should trigger full-run semantics (no stage override)."""
+        from podcast_pipeline.ui.app import run_full_pipeline_via_service
+
+        mock_run = MagicMock(
+            return_value=RunResult(
+                job_id=seeded_job_id, status="complete", message="Ran 4 stage(s)"
+            )
+        )
+        service_client.run_job = mock_run  # type: ignore[assignment]
+
+        mock_st = MagicMock()
+        mock_st.rerun = MagicMock()
+        with (
+            patch("podcast_pipeline.ui.app.get_service_client", return_value=service_client),
+            patch("podcast_pipeline.ui.app.st", mock_st),
+        ):
+            run_full_pipeline_via_service(seeded_job_id)
+
+        mock_run.assert_called_once_with(seeded_job_id)
+        mock_st.success.assert_called_once()
+
+    def test_streamlit_actions_upload_path_uses_service_upload_dir(
+        self, client_temp_dir: Path
+    ) -> None:
+        """Uploaded file is persisted outside pre-created per-job directories."""
+        from podcast_pipeline.ui.app import _persist_uploaded_video
+
+        class _FakeUpload:
+            def __init__(self) -> None:
+                self.name = "episode.mp4"
+                self._payload = b"video-bytes"
+
+            def getvalue(self) -> bytes:
+                return self._payload
+
+        saved_path = _persist_uploaded_video(_FakeUpload(), client_temp_dir)
+
+        assert saved_path.parent == client_temp_dir / "_uploads"
+        assert saved_path.suffix == ".mp4"
+        assert saved_path.read_bytes() == b"video-bytes"
+
     def test_streamlit_actions_check_service_available(self, service_client: ServiceClient):
         """check_service_status returns True when backend is up."""
         from podcast_pipeline.ui.app import check_service_status
@@ -407,3 +484,83 @@ class TestStreamlitActions:
         assert "from podcast_pipeline.pipeline import Pipeline" not in source
         # It should use ServiceClient instead
         assert "ServiceClient" in source
+
+
+class TestQualityControlsContract:
+    """Validate schema and persistence behavior for render quality controls."""
+
+    def test_run_quality_controls_schema_rejects_invalid_video_quality(
+        self,
+        backend_test_client: TestClient,
+        video_file: Path,
+    ) -> None:
+        """Invalid quality profile should fail request validation."""
+        create_resp = backend_test_client.post(
+            "/jobs",
+            json={"video_path": str(video_file), "name": "quality-controls"},
+        )
+        assert create_resp.status_code == 201
+        job_id = create_resp.json()["job_id"]
+
+        resp = backend_test_client.post(
+            f"/jobs/{job_id}/run",
+            json={
+                "stage": "render",
+                "quality_controls": {
+                    "video_quality": "cinema",
+                    "audio_normalize": True,
+                },
+            },
+        )
+        assert resp.status_code == 422
+
+    def test_run_quality_controls_persist_to_job_config(
+        self,
+        backend_test_client: TestClient,
+        video_file: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Run route should persist valid quality controls before execution."""
+        create_resp = backend_test_client.post(
+            "/jobs",
+            json={"video_path": str(video_file), "name": "quality-controls"},
+        )
+        assert create_resp.status_code == 201
+        job_id = create_resp.json()["job_id"]
+
+        captured: dict[str, object] = {}
+
+        def _fake_run(job, stage=None, until_stage=None):
+            captured["controls"] = job.config.get("render_quality_controls")
+            return {}
+
+        monkeypatch.setattr(backend_test_client.app.state.pipeline, "run", _fake_run)
+
+        controls = {"video_quality": "high", "audio_normalize": False}
+        resp = backend_test_client.post(
+            f"/jobs/{job_id}/run",
+            json={
+                "stage": "render",
+                "quality_controls": controls,
+            },
+        )
+        assert resp.status_code == 200
+        assert captured["controls"] == controls
+
+
+class TestServiceErrorParsing:
+    """Validate client error parsing for non-standard HTTP payloads."""
+
+    def test_raise_for_status_handles_non_mapping_json_payload(self) -> None:
+        """Non-dict JSON responses should still populate error detail safely."""
+        response = httpx.Response(
+            500,
+            json=["failed", "retry"],
+            request=httpx.Request("GET", "http://testserver/jobs"),
+        )
+
+        with pytest.raises(ServiceResponseError) as exc_info:
+            ServiceClient._raise_for_status(response)
+
+        assert exc_info.value.status_code == 500
+        assert exc_info.value.detail == ["failed", "retry"]

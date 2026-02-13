@@ -14,13 +14,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from podcast_pipeline.models.job import Job
+from podcast_pipeline.models.job import Job, StageStatus
 from podcast_pipeline.pipeline import Pipeline
 from podcast_pipeline.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
-HEARTBEAT_INTERVAL_SECONDS = 5
+HEARTBEAT_INTERVAL_SECONDS = 5.0
+RUN_TIMEOUT_SECONDS = 1800.0
 
 
 class RuntimeMeta:
@@ -34,6 +35,8 @@ class RuntimeMeta:
         heartbeat: str,
         last_known_stage: str | None = None,
         status: str = "running",
+        timed_out_at: str | None = None,
+        timeout_seconds: float | None = None,
     ) -> None:
         self.job_id = job_id
         self.pid = pid
@@ -41,6 +44,8 @@ class RuntimeMeta:
         self.heartbeat = heartbeat
         self.last_known_stage = last_known_stage
         self.status = status
+        self.timed_out_at = timed_out_at
+        self.timeout_seconds = timeout_seconds
 
     def to_dict(self) -> dict[str, Any]:
         """Return a dict of all public fields for JSON serialisation."""
@@ -51,6 +56,8 @@ class RuntimeMeta:
             "heartbeat": self.heartbeat,
             "last_known_stage": self.last_known_stage,
             "status": self.status,
+            "timed_out_at": self.timed_out_at,
+            "timeout_seconds": self.timeout_seconds,
         }
 
     def save(self, job_dir: Path) -> None:
@@ -81,6 +88,8 @@ class RuntimeMeta:
             heartbeat=data["heartbeat"],
             last_known_stage=data.get("last_known_stage"),
             status=data.get("status", "unknown"),
+            timed_out_at=data.get("timed_out_at"),
+            timeout_seconds=data.get("timeout_seconds"),
         )
 
     @classmethod
@@ -97,8 +106,16 @@ class Supervisor:
     This object is stored on ``app.state`` and shared across requests.
     """
 
-    def __init__(self, pipeline: Pipeline) -> None:
+    def __init__(
+        self,
+        pipeline: Pipeline,
+        *,
+        heartbeat_interval_seconds: float = HEARTBEAT_INTERVAL_SECONDS,
+        run_timeout_seconds: float = RUN_TIMEOUT_SECONDS,
+    ) -> None:
         self.pipeline = pipeline
+        self.heartbeat_interval_seconds = heartbeat_interval_seconds
+        self.run_timeout_seconds = run_timeout_seconds
         # job_id -> asyncio.Task
         self._active: dict[str, asyncio.Task[None]] = {}
 
@@ -161,20 +178,35 @@ class Supervisor:
             pid=os.getpid(),
             started_at=now_iso,
             heartbeat=now_iso,
+            timeout_seconds=self.run_timeout_seconds,
             status="running",
         )
+        meta.last_known_stage = self._resolve_last_known_stage(job_dir)
         meta.save(job_dir)
 
         loop = asyncio.get_running_loop()
         heartbeat_task = asyncio.create_task(self._heartbeat_loop(meta, job_dir))
+        run_future = loop.run_in_executor(
+            None,
+            lambda: self.pipeline.run(job, stage=stage, until_stage=until_stage),
+        )
 
         try:
-            # Run the blocking pipeline in a thread so we don't stall the event loop
-            await loop.run_in_executor(
-                None,
-                lambda: self.pipeline.run(job, stage=stage, until_stage=until_stage),
+            # Run the blocking pipeline in a thread so we don't stall the event loop.
+            await asyncio.wait_for(
+                run_future,
+                timeout=self.run_timeout_seconds,
             )
             meta.status = "complete"
+        except TimeoutError:
+            run_future.cancel()
+            meta.status = "timed_out"
+            meta.timed_out_at = datetime.now(UTC).isoformat()
+            logger.exception(
+                "background_run_timed_out",
+                job_id=job.job_id,
+                timeout_seconds=self.run_timeout_seconds,
+            )
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -182,19 +214,45 @@ class Supervisor:
             meta.status = "failed"
         finally:
             heartbeat_task.cancel()
+            await asyncio.gather(heartbeat_task, return_exceptions=True)
             meta.heartbeat = datetime.now(UTC).isoformat()
+            meta.last_known_stage = self._resolve_last_known_stage(job_dir, meta.last_known_stage)
             meta.save(job_dir)
 
-    @staticmethod
-    async def _heartbeat_loop(meta: RuntimeMeta, job_dir: Path) -> None:
+    async def _heartbeat_loop(self, meta: RuntimeMeta, job_dir: Path) -> None:
         """Periodically update heartbeat timestamp while the run is active."""
         try:
             while True:
-                await asyncio.sleep(HEARTBEAT_INTERVAL_SECONDS)
+                await asyncio.sleep(self.heartbeat_interval_seconds)
                 meta.heartbeat = datetime.now(UTC).isoformat()
+                meta.last_known_stage = self._resolve_last_known_stage(
+                    job_dir,
+                    meta.last_known_stage,
+                )
                 meta.save(job_dir)
         except asyncio.CancelledError:
             return
+
+    @staticmethod
+    def _resolve_last_known_stage(job_dir: Path, fallback: str | None = None) -> str | None:
+        """Read state.json and infer the latest stage with activity."""
+        try:
+            job = Job.load(job_dir)
+        except Exception:
+            return fallback
+
+        for stage_name in reversed(Pipeline.STAGE_ORDER):
+            stage = job.stages.get(stage_name)
+            if stage is None:
+                continue
+            if stage.status in {
+                StageStatus.RUNNING,
+                StageStatus.COMPLETE,
+                StageStatus.FAILED,
+                StageStatus.WAITING,
+            }:
+                return stage_name
+        return fallback
 
 
 def is_stale_runtime(job_dir: Path, max_age_seconds: float = 30.0) -> bool:

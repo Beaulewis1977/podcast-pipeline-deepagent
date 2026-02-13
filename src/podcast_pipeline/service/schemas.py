@@ -5,8 +5,27 @@ the FastAPI backend and any client (Streamlit, Tauri, CLI).
 """
 
 from datetime import datetime
+from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+STAGE_ORDER = ("ingest", "transcribe", "analyze", "review", "render")
+STAGE_INDEX = {stage_name: index for index, stage_name in enumerate(STAGE_ORDER)}
+StageName = Literal["ingest", "transcribe", "analyze", "review", "render"]
+VideoQuality = Literal["draft", "standard", "high", "ultra"]
+
+
+def _validate_stage_window(
+    start_stage: StageName | None,
+    until_stage: StageName | None,
+    start_field: str,
+) -> None:
+    """Ensure until_stage is equal to or after the selected start stage."""
+    if start_stage is None or until_stage is None:
+        return
+    if STAGE_INDEX[until_stage] < STAGE_INDEX[start_stage]:
+        raise ValueError(f"until_stage must be the same as or after {start_field}")
+
 
 # ---------------------------------------------------------------------------
 # Health
@@ -45,19 +64,54 @@ class CreateJobResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class RunQualityControls(BaseModel):
+    """Runtime quality controls applied during render."""
+
+    video_quality: VideoQuality = Field(
+        default="standard",
+        description="Video quality profile to apply during render exports",
+    )
+    audio_normalize: bool = Field(
+        default=True,
+        description="Whether render should normalize final audio loudness",
+    )
+
+
 class RunJobRequest(BaseModel):
     """POST /jobs/{job_id}/run request body."""
 
-    stage: str | None = Field(None, description="Specific stage to run")
-    until_stage: str | None = Field(None, description="Run up to and including this stage")
+    stage: StageName | None = Field(None, description="Specific stage to run")
+    until_stage: StageName | None = Field(None, description="Run up to and including this stage")
+    quality_controls: RunQualityControls | None = Field(
+        default=None,
+        description="Optional render quality controls persisted for this run",
+    )
+
+    @model_validator(mode="after")
+    def validate_stage_window(self) -> "RunJobRequest":
+        """Validate stage and until_stage ordering."""
+        _validate_stage_window(self.stage, self.until_stage, "stage")
+        return self
 
 
 class RunJobResponse(BaseModel):
     """POST /jobs/{job_id}/run response body."""
 
     job_id: str
-    status: str
+    status: Literal["complete", "failed", "running"]
     message: str
+    started: bool = Field(
+        ...,
+        description="True when this request started stage execution",
+    )
+    completed: bool = Field(
+        ...,
+        description="True when the requested work completed successfully",
+    )
+    rejected: bool = Field(
+        ...,
+        description="True when the request was rejected without starting work",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -117,22 +171,44 @@ class JobListResponse(BaseModel):
 class ResumeJobRequest(BaseModel):
     """POST /jobs/{job_id}/resume request body."""
 
-    from_stage: str | None = Field(
+    from_stage: StageName | None = Field(
         None,
         description="Stage to resume from (defaults to first incomplete stage)",
+    )
+    until_stage: StageName | None = Field(
+        None,
+        description="Stop resuming after this stage (defaults to final stage)",
     )
     background: bool = Field(
         False,
         description="Run the resume in the background (non-blocking)",
     )
 
+    @model_validator(mode="after")
+    def validate_stage_window(self) -> "ResumeJobRequest":
+        """Validate from_stage and until_stage ordering."""
+        _validate_stage_window(self.from_stage, self.until_stage, "from_stage")
+        return self
+
 
 class ResumeJobResponse(BaseModel):
     """POST /jobs/{job_id}/resume response body."""
 
     job_id: str
-    status: str
+    status: Literal["complete", "failed", "running"]
     message: str
+    started: bool = Field(
+        ...,
+        description="True when this request started stage execution",
+    )
+    completed: bool = Field(
+        ...,
+        description="True when the requested work completed successfully",
+    )
+    rejected: bool = Field(
+        ...,
+        description="True when the request was rejected without starting work",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -143,8 +219,14 @@ class ResumeJobResponse(BaseModel):
 class BackgroundRunRequest(BaseModel):
     """POST /jobs/{job_id}/run/background request body."""
 
-    stage: str | None = Field(None, description="Specific stage to run")
-    until_stage: str | None = Field(None, description="Run up to and including this stage")
+    stage: StageName | None = Field(None, description="Specific stage to run")
+    until_stage: StageName | None = Field(None, description="Run up to and including this stage")
+
+    @model_validator(mode="after")
+    def validate_stage_window(self) -> "BackgroundRunRequest":
+        """Validate stage and until_stage ordering."""
+        _validate_stage_window(self.stage, self.until_stage, "stage")
+        return self
 
 
 class BackgroundRunResponse(BaseModel):

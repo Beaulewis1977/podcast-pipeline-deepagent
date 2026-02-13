@@ -249,9 +249,12 @@ omit = [
 ]
 
 [tool.coverage.report]
-fail_under = 38  # Actual coverage requires FFmpeg/AI mocks for full testing
+# Raised from 38 after Phase 4 hardening so regressions fail faster in CI.
+# Keep realistic slack for heavy FFmpeg/AI pathways that still rely on mocks.
+fail_under = 45
 show_missing = true
 skip_covered = true
+precision = 2
 exclude_lines = [
     "pragma: no cover",
     "def __repr__",
@@ -260,6 +263,13 @@ exclude_lines = [
     "if __name__ == .__main__.:",
     "@abstractmethod",
 ]
+
+[tool.podcast_pipeline.coverage_gates]
+# Runtime-critical module guardrails: tuned to current fixture strategy while
+# still requiring meaningful protection for hardened Phase 4 behavior.
+providers_fail_under = 78
+service_fail_under = 75
+stages_fail_under = 45
 
 [tool.coverage.html]
 directory = "htmlcov"

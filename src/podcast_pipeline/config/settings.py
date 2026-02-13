@@ -1,12 +1,33 @@
 """Configuration settings with Pydantic models."""
 
+import ipaddress
 import os
+import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 
 import yaml
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+SUPPORTED_MODEL_PROVIDERS = {"gemini", "kimi"}
+SUPPORTED_GEMINI_MODELS = {
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-latest",
+    "gemini-3-flash-preview",
+    "gemini-3-pro-preview",
+    "gemini-2.5-pro",
+}
+SUPPORTED_KIMI_MODELS = {
+    "kimi-k2.5",
+    "moonshot-v1-128k",
+}
+SUPPORTED_MODELS_BY_PROVIDER = {
+    "gemini": SUPPORTED_GEMINI_MODELS,
+    "kimi": SUPPORTED_KIMI_MODELS,
+}
+
+SERVICE_HOST_PATTERN = re.compile(r"^[A-Za-z0-9.-]+$")
 
 
 class PathsConfig(BaseModel):
@@ -36,6 +57,57 @@ class ModelConfig(BaseModel):
     model: str = "gemini-2.5-flash"  # Best cost/performance for video
     fallback_provider: str | None = "kimi"
     fallback_model: str | None = "kimi-k2.5"  # Latest Kimi multimodal model
+
+    @field_validator("provider")
+    @classmethod
+    def validate_provider(cls, value: str) -> str:
+        """Ensure provider is supported."""
+        normalized = value.strip().lower()
+        if normalized not in SUPPORTED_MODEL_PROVIDERS:
+            allowed = ", ".join(sorted(SUPPORTED_MODEL_PROVIDERS))
+            raise ValueError(f"Unsupported provider '{value}'. Expected one of: {allowed}")
+        return normalized
+
+    @field_validator("fallback_provider")
+    @classmethod
+    def validate_fallback_provider(cls, value: str | None) -> str | None:
+        """Ensure fallback provider is supported when configured."""
+        if value is None:
+            return None
+        normalized = value.strip().lower()
+        if normalized not in SUPPORTED_MODEL_PROVIDERS:
+            allowed = ", ".join(sorted(SUPPORTED_MODEL_PROVIDERS))
+            raise ValueError(f"Unsupported fallback_provider '{value}'. Expected one of: {allowed}")
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_model_compatibility(self) -> Self:
+        """Ensure model/fallback selections are compatible with configured providers."""
+        supported_primary = SUPPORTED_MODELS_BY_PROVIDER[self.provider]
+        if self.model not in supported_primary:
+            allowed = ", ".join(sorted(supported_primary))
+            raise ValueError(
+                f"Model '{self.model}' is not supported for provider '{self.provider}'. "
+                f"Expected one of: {allowed}"
+            )
+
+        if self.fallback_provider is None:
+            if self.fallback_model is not None:
+                raise ValueError("fallback_model requires fallback_provider to be configured")
+            return self
+
+        if self.fallback_model is None:
+            raise ValueError("fallback_provider requires fallback_model to be configured")
+
+        supported_fallback = SUPPORTED_MODELS_BY_PROVIDER[self.fallback_provider]
+        if self.fallback_model not in supported_fallback:
+            allowed = ", ".join(sorted(supported_fallback))
+            raise ValueError(
+                f"Fallback model '{self.fallback_model}' is not supported for provider "
+                f"'{self.fallback_provider}'. Expected one of: {allowed}"
+            )
+
+        return self
 
 
 class TranscriptionConfig(BaseModel):
@@ -236,9 +308,39 @@ class ServiceConfig(BaseModel):
     """
 
     host: str = "127.0.0.1"
-    port: int = 8787
-    timeout: float = 30.0
-    retries: int = 2
+    port: int = Field(default=8787, ge=1, le=65535)
+    timeout: float = Field(default=30.0, gt=0.0)
+    retries: int = Field(default=2, ge=0)
+
+    @field_validator("host")
+    @classmethod
+    def validate_host(cls, value: str) -> str:
+        """Validate service host format and reject unsafe URL-style values."""
+        host = value.strip()
+        if not host:
+            raise ValueError("host cannot be empty")
+        if host != value:
+            raise ValueError("host cannot include leading or trailing whitespace")
+        if host.startswith(("http://", "https://")):
+            raise ValueError("host must not include URL scheme")
+        if "/" in host:
+            raise ValueError("host must not include path separators")
+
+        if host.startswith("[") and host.endswith("]"):
+            ipv6 = host[1:-1]
+            try:
+                ipaddress.IPv6Address(ipv6)
+            except ValueError as exc:
+                raise ValueError(f"Invalid IPv6 host: {host}") from exc
+            return host
+
+        if ":" in host:
+            raise ValueError("host must not include a port; configure ports via ServiceConfig.port")
+
+        if not SERVICE_HOST_PATTERN.fullmatch(host):
+            raise ValueError("host must contain only letters, numbers, dots, and hyphens")
+
+        return host
 
     @property
     def base_url(self) -> str:

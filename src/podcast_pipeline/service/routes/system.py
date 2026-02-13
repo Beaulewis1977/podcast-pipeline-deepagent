@@ -8,9 +8,11 @@ optional model download/warmup without blocking the job APIs.
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 
 from podcast_pipeline.service.assets import (
@@ -21,6 +23,7 @@ from podcast_pipeline.service.assets import (
     resolve_binary,
     resolve_model,
 )
+from podcast_pipeline.service.supervisor import RuntimeMeta, is_stale_runtime
 from podcast_pipeline.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -69,6 +72,28 @@ class BinaryCheckResponse(BaseModel):
     path: str | None = None
     source: str = "unknown"
     message: str = ""
+
+
+class RuntimeJobStatus(BaseModel):
+    """Runtime metadata summary for a single job."""
+
+    job_id: str
+    status: str
+    pid: int
+    last_known_stage: str | None = None
+    heartbeat: str
+    heartbeat_age_seconds: float | None = None
+    stale: bool = False
+    orphaned: bool = False
+
+
+class RuntimeDiagnosticsResponse(BaseModel):
+    """Operational diagnostics for supervisor runtime journals."""
+
+    active_jobs: list[str] = Field(default_factory=list)
+    stale_jobs: list[str] = Field(default_factory=list)
+    orphaned_jobs: list[str] = Field(default_factory=list)
+    jobs: list[RuntimeJobStatus] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -215,6 +240,65 @@ async def warmup_status() -> dict[str, Any]:
             "path": info.path,
         }
     return result
+
+
+@router.get("/runtime", response_model=RuntimeDiagnosticsResponse)
+async def runtime_diagnostics(request: Request) -> RuntimeDiagnosticsResponse:
+    """Return runtime diagnostics for detecting stale or orphaned runs."""
+    pipeline = request.app.state.pipeline
+    supervisor = request.app.state.supervisor
+    jobs_dir: Path = pipeline.config.paths.jobs_dir
+
+    active_jobs = sorted(supervisor.active_jobs())
+    active_job_ids = set(active_jobs)
+    stale_jobs: list[str] = []
+    orphaned_jobs: list[str] = []
+    job_statuses: list[RuntimeJobStatus] = []
+
+    if jobs_dir.exists():
+        for entry in sorted(jobs_dir.iterdir()):
+            if not entry.is_dir():
+                continue
+
+            meta = RuntimeMeta.load(entry)
+            if meta is None:
+                continue
+
+            stale = is_stale_runtime(entry)
+            orphaned = meta.status == "running" and meta.job_id not in active_job_ids
+
+            if stale:
+                stale_jobs.append(meta.job_id)
+            if orphaned:
+                orphaned_jobs.append(meta.job_id)
+
+            heartbeat_age: float | None = None
+            try:
+                heartbeat_age = (
+                    datetime.now(UTC) - datetime.fromisoformat(meta.heartbeat)
+                ).total_seconds()
+            except (TypeError, ValueError):
+                heartbeat_age = None
+
+            job_statuses.append(
+                RuntimeJobStatus(
+                    job_id=meta.job_id,
+                    status=meta.status,
+                    pid=meta.pid,
+                    last_known_stage=meta.last_known_stage,
+                    heartbeat=meta.heartbeat,
+                    heartbeat_age_seconds=heartbeat_age,
+                    stale=stale,
+                    orphaned=orphaned,
+                )
+            )
+
+    return RuntimeDiagnosticsResponse(
+        active_jobs=active_jobs,
+        stale_jobs=sorted(set(stale_jobs)),
+        orphaned_jobs=sorted(set(orphaned_jobs)),
+        jobs=job_statuses,
+    )
 
 
 # ---------------------------------------------------------------------------

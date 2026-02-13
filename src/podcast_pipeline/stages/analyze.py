@@ -81,7 +81,7 @@ class AnalyzeStage(Stage):
         used_provider: str | None = None
         used_model: str | None = None
 
-        for provider in self.providers:
+        for provider_index, provider in enumerate(self.providers):
             if not provider.is_available():
                 self.logger.info(
                     "provider_unavailable",
@@ -98,15 +98,30 @@ class AnalyzeStage(Stage):
                 result = provider.analyze(proxy_path, transcript_data)
                 used_provider = provider.name
                 used_model = getattr(provider, "model", "unknown")
+                degraded_mode = self._build_degraded_mode_metadata(
+                    provider=provider,
+                    provider_index=provider_index,
+                )
+                analysis_payload = result.model_dump()
+                metadata_payload = analysis_payload.setdefault("metadata", {})
+                metadata_payload["degraded_mode"] = degraded_mode
 
                 # Save analysis result
                 analysis_path = job_dir / "analysis" / "analysis.json"
                 analysis_path.parent.mkdir(parents=True, exist_ok=True)
-                analysis_path.write_text(result.model_dump_json(indent=2))
+                analysis_path.write_text(json.dumps(analysis_payload, indent=2))
 
                 # Update job with provider info
                 job.stages[self.name].provider = used_provider
                 job.stages[self.name].model = used_model
+
+                if degraded_mode["enabled"]:
+                    self.logger.warning(
+                        "analysis_degraded_mode",
+                        provider=used_provider,
+                        model=used_model,
+                        reason=degraded_mode["reason"],
+                    )
 
                 self.logger.info(
                     "analysis_complete",
@@ -119,7 +134,7 @@ class AnalyzeStage(Stage):
                 outputs = [str(analysis_path.relative_to(job_dir))]
 
                 # Optional research integration
-                research_output = self._run_research(job, result, job_dir)
+                research_output = self._run_research(job, result, transcript_data, job_dir)
                 if research_output:
                     outputs.append(research_output)
 
@@ -136,7 +151,8 @@ class AnalyzeStage(Stage):
                     data={
                         "provider": used_provider,
                         "model": used_model,
-                        "analysis": result.model_dump(),
+                        "degraded_mode": degraded_mode,
+                        "analysis": analysis_payload,
                     },
                 )
 
@@ -161,10 +177,35 @@ class AnalyzeStage(Stage):
             error=f"All providers failed. Last error: {last_error}",
         )
 
+    def _build_degraded_mode_metadata(
+        self,
+        provider: GeminiProvider | KimiProvider,
+        provider_index: int,
+    ) -> dict[str, Any]:
+        """Build degraded-mode metadata for transcript-only provider outputs."""
+        supports_video = getattr(provider, "supports_video", True)
+        if supports_video:
+            return {
+                "enabled": False,
+                "reason": None,
+                "provider": provider.name,
+                "model": getattr(provider, "model", "unknown"),
+            }
+
+        is_fallback = provider_index > 0
+        reason = "fallback_provider_transcript_only" if is_fallback else "provider_transcript_only"
+        return {
+            "enabled": True,
+            "reason": reason,
+            "provider": provider.name,
+            "model": getattr(provider, "model", "unknown"),
+        }
+
     def _run_research(
         self,
         job: Job,
         analysis_result: AnalysisResult,
+        transcript_data: dict[str, Any],
         job_dir: Path,
     ) -> str | None:
         """Run YouTube research if configured."""
@@ -178,12 +219,21 @@ class AnalyzeStage(Stage):
             analysis_data = (
                 analysis_result.model_dump() if hasattr(analysis_result, "model_dump") else {}
             )
-            query, related_topics = self._derive_research_query(job, analysis_data)
+            query, related_topics, query_source = self._derive_research_query(
+                job=job,
+                analysis_data=analysis_data,
+                transcript_data=transcript_data,
+            )
 
             researcher = YouTubeResearcher(api_key=api_key)
             research_result: ResearchResult = researcher.research_topic(
                 query, related_topics=related_topics
             )
+            research_result.insights["query_derivation"] = {
+                "query": query,
+                "related_topics": related_topics,
+                "source": query_source,
+            }
 
             research_path = job_dir / "analysis" / "research.json"
             research_path.parent.mkdir(parents=True, exist_ok=True)
@@ -192,6 +242,7 @@ class AnalyzeStage(Stage):
             self.logger.info(
                 "research_complete",
                 query=query,
+                query_source=query_source,
                 topics=len(research_result.topics),
                 videos=len(research_result.trending_videos),
             )
@@ -208,15 +259,17 @@ class AnalyzeStage(Stage):
         self,
         job: Job,
         analysis_data: dict[str, Any],
-    ) -> tuple[str, list[str]]:
-        """Derive research query from analysis metadata or job name."""
+        transcript_data: dict[str, Any],
+    ) -> tuple[str, list[str], str]:
+        """Derive research query from metadata + transcript evidence."""
         topics = analysis_data.get("metadata", {}).get("topics", []) or []
-        topics = [topic for topic in topics if topic]
-        if topics:
-            return topics[0], topics[1:4]
-
         fallback = Path(job.input_file).stem or job.job_id
-        return fallback, []
+        query, related_topics, source = YouTubeResearcher.derive_query_terms(
+            transcript_data=transcript_data,
+            metadata_topics=topics,
+            fallback_query=fallback,
+        )
+        return query, related_topics, source
 
     def _normalize_score(self, value: Any, default: float = 5.0) -> float:
         """Normalize potentially-missing score inputs to bounded floats."""

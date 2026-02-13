@@ -1,6 +1,7 @@
 """Render stage: Export final content for all platforms."""
 
 import json
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +14,20 @@ from podcast_pipeline.utils.ffmpeg import FFmpegError, get_video_info, run_ffmpe
 from podcast_pipeline.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+VIDEO_QUALITY_PRESET = {
+    "draft": "veryfast",
+    "high": "slow",
+    "ultra": "veryslow",
+}
+VIDEO_QUALITY_BITRATE_FACTOR = {
+    "draft": 0.65,
+    "standard": 1.0,
+    "high": 1.2,
+    "ultra": 1.4,
+}
+MAX_THUMBNAIL_EXPORTS = 4
+MIN_THUMBNAIL_OFFSET_SECONDS = 0.5
 
 
 class RenderStage(Stage):
@@ -44,6 +59,7 @@ class RenderStage(Stage):
             )
 
         edit_plan = self._load_edit_plan(job_dir)
+        quality_controls = self._resolve_quality_controls(job)
 
         # Get input video
         input_video = self._find_input_video(job_dir)
@@ -58,29 +74,89 @@ class RenderStage(Stage):
 
         outputs: list[str] = []
         errors: list[str] = []
+        platform_results: dict[str, dict[str, Any]] = {}
+        selected_platforms = list(dict.fromkeys(decisions.export_platforms))
+        preflight_error = self._run_render_preflight(input_video, job_dir, selected_platforms)
+        if preflight_error is not None:
+            return StageResult(success=False, error=preflight_error)
+
+        self.logger.info("render_quality_controls", controls=quality_controls)
 
         # Export for each selected platform
-        for platform in decisions.export_platforms:
+        for platform in selected_platforms:
             self.logger.info("rendering_platform", platform=platform)
 
             try:
                 spec = self._get_platform_spec(platform)
                 if spec is None:
-                    self.logger.warning("unknown_platform", platform=platform)
+                    error_msg = f"{platform}: Unsupported platform"
+                    errors.append(error_msg)
+                    platform_results[platform] = {
+                        "status": "failed",
+                        "outputs": [],
+                        "error": error_msg,
+                    }
+                    self.logger.error("render_platform_failed", platform=platform, error=error_msg)
                     continue
 
+                runtime_spec = self._apply_video_quality_profile(
+                    spec,
+                    video_quality=quality_controls["video_quality"],
+                )
                 out = self._render_platform(
-                    job_dir, input_video, platform, spec, decisions, video_info, edit_plan
+                    job_dir,
+                    input_video,
+                    platform,
+                    runtime_spec,
+                    decisions,
+                    video_info,
+                    edit_plan,
+                    normalize_audio=quality_controls["audio_normalize"],
                 )
                 outputs.extend(out)
+                platform_results[platform] = {
+                    "status": "success",
+                    "outputs": out,
+                    "settings": {
+                        "video_quality": quality_controls["video_quality"],
+                        "audio_normalize": quality_controls["audio_normalize"],
+                        "preset": runtime_spec.preset,
+                        "video_bitrate": runtime_spec.video_bitrate,
+                        "audio_bitrate": runtime_spec.audio_bitrate,
+                    },
+                }
+                self.logger.info(
+                    "render_platform_complete",
+                    platform=platform,
+                    outputs=out,
+                    settings=platform_results[platform]["settings"],
+                )
 
             except FFmpegError as e:
                 error_msg = f"{platform}: FFmpeg error - {e}"
                 errors.append(error_msg)
+                platform_results[platform] = {
+                    "status": "failed",
+                    "outputs": [],
+                    "error": error_msg,
+                    "settings": {
+                        "video_quality": quality_controls["video_quality"],
+                        "audio_normalize": quality_controls["audio_normalize"],
+                    },
+                }
                 self.logger.exception("render_failed", platform=platform, error=str(e))
             except Exception as e:
                 error_msg = f"{platform}: {e}"
                 errors.append(error_msg)
+                platform_results[platform] = {
+                    "status": "failed",
+                    "outputs": [],
+                    "error": error_msg,
+                    "settings": {
+                        "video_quality": quality_controls["video_quality"],
+                        "audio_normalize": quality_controls["audio_normalize"],
+                    },
+                }
                 self.logger.exception("render_failed", platform=platform)
 
         # Generate marketing copy document
@@ -92,23 +168,480 @@ class RenderStage(Stage):
             self.logger.warning("marketing_doc_failed", error=str(e))
 
         # Export short-form clips
-        clip_outputs = self._export_clips(job_dir, input_video, edit_plan)
-        outputs.extend(clip_outputs)
+        try:
+            clip_outputs = self._export_clips(job_dir, input_video, edit_plan)
+            outputs.extend(clip_outputs)
+        except (FFmpegError, FileNotFoundError, RuntimeError) as e:
+            clip_error = f"clips: {e}"
+            errors.append(clip_error)
+            self.logger.exception("clip_export_failed", error=str(e))
 
-        self.logger.info("render_complete", outputs=outputs, errors=errors)
+        thumbnail_outputs, thumbnail_result = self._export_thumbnail_assets(
+            job_dir=job_dir,
+            input_video=input_video,
+            video_info=video_info,
+            decisions=decisions,
+        )
+        outputs.extend(thumbnail_outputs)
+        if thumbnail_result.get("status") == "failed":
+            error_message = str(thumbnail_result.get("error", "thumbnail export failed"))
+            errors.append(f"thumbnails: {error_message}")
+            self.logger.error("thumbnail_export_failed", error=error_message)
+        elif thumbnail_result.get("status") == "complete":
+            self.logger.info(
+                "thumbnail_export_complete",
+                count=thumbnail_result.get("generated", 0),
+                source=thumbnail_result.get("source"),
+            )
 
-        if errors and not outputs:
+        failed_platforms = [
+            platform
+            for platform, details in platform_results.items()
+            if details.get("status") != "success"
+        ]
+        if failed_platforms and len(failed_platforms) == len(platform_results):
+            render_status = "failed"
+        elif failed_platforms or errors:
+            render_status = "degraded"
+        else:
+            render_status = "complete"
+
+        self.logger.info(
+            "render_complete",
+            status=render_status,
+            outputs=outputs,
+            errors=errors,
+            platform_results=platform_results,
+        )
+
+        if errors:
+            if failed_platforms:
+                error_message = f"Platform export failures: {', '.join(failed_platforms)}"
+            else:
+                error_message = "; ".join(errors)
             return StageResult(
                 success=False,
-                error="; ".join(errors),
+                error=error_message,
                 outputs=outputs,
+                data={
+                    "status": render_status,
+                    "errors": errors,
+                    "platform_results": platform_results,
+                    "quality_controls": quality_controls,
+                    "thumbnail_result": thumbnail_result,
+                },
             )
 
         return StageResult(
             success=True,
             outputs=outputs,
-            data={"errors": errors} if errors else {},
+            data={
+                "status": render_status,
+                "errors": errors,
+                "platform_results": platform_results,
+                "quality_controls": quality_controls,
+                "thumbnail_result": thumbnail_result,
+            },
         )
+
+    def _resolve_quality_controls(self, job: Job) -> dict[str, Any]:
+        """Resolve render quality controls from persisted job config."""
+        raw_controls = job.config.get("render_quality_controls", {})
+        controls = raw_controls if isinstance(raw_controls, dict) else {}
+
+        raw_quality = str(controls.get("video_quality", "standard")).lower()
+        if raw_quality not in VIDEO_QUALITY_BITRATE_FACTOR:
+            self.logger.warning("invalid_video_quality_control", value=raw_quality)
+            raw_quality = "standard"
+
+        raw_audio_normalize = controls.get("audio_normalize", True)
+        if isinstance(raw_audio_normalize, bool):
+            audio_normalize = raw_audio_normalize
+        else:
+            audio_normalize = str(raw_audio_normalize).strip().lower() in {
+                "1",
+                "true",
+                "yes",
+                "on",
+            }
+
+        return {
+            "video_quality": raw_quality,
+            "audio_normalize": audio_normalize,
+        }
+
+    def _run_render_preflight(
+        self,
+        input_video: Path,
+        job_dir: Path,
+        selected_platforms: list[str],
+    ) -> str | None:
+        """Ensure render output paths and free space are sufficient."""
+        output_root = job_dir / "output"
+        output_root.mkdir(parents=True, exist_ok=True)
+
+        source_size = input_video.stat().st_size
+        platform_factor = max(1, len(selected_platforms))
+        required_bytes = max(int(source_size * (platform_factor + 0.75)), 300 * 1024 * 1024)
+        free_bytes = shutil.disk_usage(output_root).free
+        if free_bytes < required_bytes:
+            return (
+                "Render preflight failed: insufficient disk space for platform exports. "
+                f"Required ≥ {required_bytes / (1024 * 1024):.1f} MiB, "
+                f"available {free_bytes / (1024 * 1024):.1f} MiB at {output_root}."
+            )
+        return None
+
+    def _assert_output_exists(self, output_path: Path, artifact_name: str) -> None:
+        """Verify output artifacts exist and are non-empty after FFmpeg calls."""
+        if not output_path.exists():
+            raise FileNotFoundError(
+                f"Render output verification failed: {artifact_name} missing at {output_path}."
+            )
+        if output_path.stat().st_size == 0:
+            raise RuntimeError(
+                f"Render output verification failed: {artifact_name} is empty at {output_path}."
+            )
+
+    def _build_audio_enhancement_filters(self) -> list[str]:
+        """Build speech-focused enhancement chain for export audio tracks."""
+        filters: list[str] = []
+
+        noise_mode = str(self.config.audio.noise_reduction).strip().lower()
+        if noise_mode not in {"", "off", "false", "0"}:
+            noise_floor = -25.0
+            if noise_mode not in {"auto", "on", "true", "1"}:
+                try:
+                    noise_floor = float(noise_mode)
+                except ValueError:
+                    self.logger.warning("invalid_noise_reduction_setting", value=noise_mode)
+            noise_floor = min(max(noise_floor, -80.0), -8.0)
+            filters.append(f"afftdn=nf={noise_floor:.1f}")
+
+        filters.extend(
+            [
+                "highpass=f=70",
+                "lowpass=f=12000",
+                "equalizer=f=240:t=q:w=1.2:g=1.8",
+                "equalizer=f=3200:t=q:w=1.0:g=2.2",
+                "acompressor=threshold=-18dB:ratio=2.5:attack=5:release=120",
+                "alimiter=limit=0.95",
+            ]
+        )
+        return filters
+
+    def _load_thumbnail_candidates(
+        self,
+        job_dir: Path,
+    ) -> tuple[list[dict[str, Any]], str]:
+        """Load and normalize thumbnail candidates from analysis output."""
+        analysis_path = job_dir / "analysis" / "analysis.json"
+        if not analysis_path.exists():
+            return [], "missing_analysis"
+
+        try:
+            analysis_payload = json.loads(analysis_path.read_text())
+        except json.JSONDecodeError as e:
+            self.logger.warning("thumbnail_candidate_load_failed", error=str(e))
+            return [], "invalid_analysis_json"
+
+        raw_candidates = analysis_payload.get("thumbnail_frames", [])
+        if not isinstance(raw_candidates, list):
+            return [], "invalid_thumbnail_payload"
+
+        normalized: list[dict[str, Any]] = []
+        for index, raw in enumerate(raw_candidates):
+            if not isinstance(raw, dict):
+                continue
+
+            timestamp_seconds = self._parse_timestamp_seconds(raw.get("timestamp_seconds"))
+            if timestamp_seconds is None:
+                timestamp_seconds = self._parse_timestamp_seconds(raw.get("timestamp"))
+            if timestamp_seconds is None:
+                continue
+
+            normalized.append(
+                {
+                    "analysis_index": index,
+                    "timestamp": str(
+                        raw.get("timestamp") or self._format_timestamp(timestamp_seconds)
+                    ),
+                    "timestamp_seconds": timestamp_seconds,
+                    "visual_description": str(raw.get("visual_description", "")),
+                    "suggested_text_overlay": str(raw.get("suggested_text_overlay", "")),
+                    "emotion": str(raw.get("emotion", "")),
+                    "source": "analysis",
+                }
+            )
+
+        return normalized, "analysis"
+
+    def _build_fallback_thumbnail_candidates(self, video_duration: float) -> list[dict[str, Any]]:
+        """Build deterministic fallback thumbnail timestamps for sparse analysis output."""
+        if video_duration <= MIN_THUMBNAIL_OFFSET_SECONDS * 2:
+            return []
+
+        fallback_positions = [0.12, 0.32, 0.52, 0.72]
+        upper_bound = max(video_duration - MIN_THUMBNAIL_OFFSET_SECONDS, 0.0)
+        candidates: list[dict[str, Any]] = []
+        for position in fallback_positions:
+            timestamp_seconds = min(max(video_duration * position, 0.0), upper_bound)
+            candidates.append(
+                {
+                    "analysis_index": None,
+                    "timestamp": self._format_timestamp(timestamp_seconds),
+                    "timestamp_seconds": timestamp_seconds,
+                    "visual_description": "",
+                    "suggested_text_overlay": "",
+                    "emotion": "",
+                    "source": "duration_fallback",
+                }
+            )
+        return candidates
+
+    def _rank_thumbnail_candidates(
+        self,
+        candidates: list[dict[str, Any]],
+        video_duration: float,
+        selected_thumbnail: int | None,
+    ) -> list[dict[str, Any]]:
+        """Rank candidates deterministically using review preference and quality hints."""
+        if not candidates:
+            return []
+
+        ranked: list[dict[str, Any]] = []
+        total = len(candidates)
+        for index, candidate in enumerate(candidates):
+            score = float(total - index)
+            if (
+                selected_thumbnail is not None
+                and candidate.get("analysis_index") == selected_thumbnail
+            ):
+                score += 5.0
+            if candidate.get("suggested_text_overlay"):
+                score += 0.8
+            if candidate.get("visual_description"):
+                score += 0.5
+            if candidate.get("emotion"):
+                score += 0.3
+
+            timestamp_seconds = float(candidate.get("timestamp_seconds", 0.0))
+            if video_duration > 0:
+                normalized_position = timestamp_seconds / video_duration
+                if 0.1 <= normalized_position <= 0.9:
+                    score += 0.75
+                else:
+                    score -= 0.5
+
+            ranked_candidate = dict(candidate)
+            ranked_candidate["score"] = round(score, 4)
+            ranked.append(ranked_candidate)
+
+        ranked.sort(
+            key=lambda row: (
+                -float(row.get("score", 0.0)),
+                float(row.get("timestamp_seconds", 0.0)),
+            )
+        )
+        return ranked[:MAX_THUMBNAIL_EXPORTS]
+
+    def _export_thumbnail_assets(
+        self,
+        job_dir: Path,
+        input_video: Path,
+        video_info: dict[str, Any],
+        decisions: ReviewDecisions,
+    ) -> tuple[list[str], dict[str, Any]]:
+        """Extract and persist thumbnail images from ranked frame candidates."""
+        video_duration = max(float(video_info.get("duration", 0.0) or 0.0), 0.0)
+        candidates, source = self._load_thumbnail_candidates(job_dir)
+        if not candidates:
+            candidates = self._build_fallback_thumbnail_candidates(video_duration)
+            if candidates:
+                source = "duration_fallback"
+
+        if not candidates:
+            return [], {
+                "status": "skipped",
+                "source": source,
+                "generated": 0,
+                "reason": "no_thumbnail_candidates",
+            }
+
+        ranked_candidates = self._rank_thumbnail_candidates(
+            candidates=candidates,
+            video_duration=video_duration,
+            selected_thumbnail=decisions.selected_thumbnail,
+        )
+
+        thumbnail_dir = job_dir / "output" / "thumbnails"
+        thumbnail_dir.mkdir(parents=True, exist_ok=True)
+
+        outputs: list[str] = []
+        manifest_candidates: list[dict[str, Any]] = []
+        extraction_errors: list[str] = []
+
+        max_timestamp = (
+            max(video_duration - MIN_THUMBNAIL_OFFSET_SECONDS, 0.0) if video_duration > 0 else None
+        )
+
+        for rank, candidate in enumerate(ranked_candidates, start=1):
+            raw_timestamp = float(candidate.get("timestamp_seconds", 0.0))
+            timestamp_seconds = max(raw_timestamp, 0.0)
+            if max_timestamp is not None:
+                timestamp_seconds = min(timestamp_seconds, max_timestamp)
+
+            thumbnail_path = thumbnail_dir / f"thumbnail_{rank:02d}.jpg"
+            args = [
+                "-ss",
+                f"{timestamp_seconds:.3f}",
+                "-i",
+                str(input_video),
+                "-frames:v",
+                "1",
+                "-q:v",
+                "2",
+                str(thumbnail_path),
+            ]
+
+            try:
+                run_ffmpeg(args)
+                self._assert_output_exists(thumbnail_path, f"thumbnail_{rank:02d}")
+            except (FFmpegError, FileNotFoundError, RuntimeError) as e:
+                extraction_errors.append(
+                    f"{candidate.get('timestamp')} ({timestamp_seconds:.2f}s): {e}"
+                )
+                continue
+
+            relative_path = str(thumbnail_path.relative_to(job_dir))
+            outputs.append(relative_path)
+            manifest_candidates.append(
+                {
+                    "rank": rank,
+                    "path": relative_path,
+                    "timestamp": candidate.get("timestamp"),
+                    "timestamp_seconds": round(timestamp_seconds, 3),
+                    "score": candidate.get("score"),
+                    "source": candidate.get("source", source),
+                    "analysis_index": candidate.get("analysis_index"),
+                    "is_selected": (
+                        decisions.selected_thumbnail is not None
+                        and candidate.get("analysis_index") == decisions.selected_thumbnail
+                    ),
+                    "visual_description": candidate.get("visual_description", ""),
+                    "suggested_text_overlay": candidate.get("suggested_text_overlay", ""),
+                    "emotion": candidate.get("emotion", ""),
+                }
+            )
+
+        manifest_payload = {
+            "generated_at": self._format_timestamp_seconds(),
+            "source": source,
+            "selected_thumbnail_index": decisions.selected_thumbnail,
+            "generated": len(manifest_candidates),
+            "errors": extraction_errors,
+            "thumbnails": manifest_candidates,
+        }
+        manifest_path = thumbnail_dir / "manifest.json"
+        manifest_path.write_text(json.dumps(manifest_payload, indent=2))
+        outputs.append(str(manifest_path.relative_to(job_dir)))
+
+        if manifest_candidates:
+            return outputs, {
+                "status": "complete",
+                "source": source,
+                "generated": len(manifest_candidates),
+            }
+
+        return outputs, {
+            "status": "failed",
+            "source": source,
+            "generated": 0,
+            "error": extraction_errors[0]
+            if extraction_errors
+            else "thumbnail extraction failed for all candidates",
+        }
+
+    def _parse_timestamp_seconds(self, value: Any) -> float | None:
+        """Parse timestamp-like values into seconds."""
+        if isinstance(value, (int, float)):
+            return max(float(value), 0.0)
+        total_seconds = 0.0
+        is_valid = False
+
+        if isinstance(value, str):
+            normalized = value.strip()
+            parts = normalized.split(":") if normalized else []
+
+            if len(parts) in {2, 3}:
+                try:
+                    numbers = [float(part) for part in parts]
+                except ValueError:
+                    numbers = []
+
+                if numbers and all(number >= 0 for number in numbers):
+                    if len(numbers) == 2:
+                        minutes, seconds = numbers
+                        is_valid = seconds < 60
+                        total_seconds = (minutes * 60.0) + seconds
+                    else:
+                        hours, minutes, seconds = numbers
+                        is_valid = minutes < 60 and seconds < 60
+                        total_seconds = (hours * 3600.0) + (minutes * 60.0) + seconds
+
+        return total_seconds if is_valid else None
+
+    def _format_timestamp(self, seconds: float) -> str:
+        """Format seconds as MM:SS or HH:MM:SS."""
+        rounded = max(round(seconds), 0)
+        minutes, second = divmod(rounded, 60)
+        hours, minute = divmod(minutes, 60)
+        if hours > 0:
+            return f"{hours:02d}:{minute:02d}:{second:02d}"
+        return f"{minute:02d}:{second:02d}"
+
+    def _format_timestamp_seconds(self) -> str:
+        """Timestamp helper for JSON artifacts."""
+        from datetime import UTC, datetime
+
+        return datetime.now(UTC).isoformat()
+
+    def _apply_video_quality_profile(self, spec: PlatformSpec, video_quality: str) -> PlatformSpec:
+        """Derive runtime encoding settings from the selected quality profile."""
+        if video_quality == "standard":
+            return spec
+
+        tuned_spec = spec.model_copy(deep=True)
+        bitrate_factor = VIDEO_QUALITY_BITRATE_FACTOR[video_quality]
+        tuned_spec.audio_bitrate = self._scale_bitrate(spec.audio_bitrate, bitrate_factor)
+        if not tuned_spec.audio_only:
+            tuned_spec.video_bitrate = self._scale_bitrate(spec.video_bitrate, bitrate_factor)
+            tuned_spec.preset = VIDEO_QUALITY_PRESET[video_quality]
+        return tuned_spec
+
+    def _scale_bitrate(self, bitrate: str, factor: float) -> str:
+        """Scale bitrate strings like 8M/320k while preserving units."""
+        normalized = bitrate.strip()
+        if len(normalized) < 2:
+            return bitrate
+
+        unit = normalized[-1]
+        if unit.lower() not in {"k", "m"}:
+            return bitrate
+
+        try:
+            value = float(normalized[:-1])
+        except ValueError:
+            return bitrate
+
+        scaled_value = value * factor
+        if unit.lower() == "k":
+            scaled_value = max(32.0, scaled_value)
+            value_text = str(round(scaled_value))
+        else:
+            scaled_value = max(0.1, scaled_value)
+            value_text = f"{scaled_value:.2f}".rstrip("0").rstrip(".")
+        return f"{value_text}{unit}"
 
     def _get_platform_spec(self, platform: str) -> PlatformSpec | None:
         """Get platform spec by name."""
@@ -144,6 +677,7 @@ class RenderStage(Stage):
         decisions: ReviewDecisions,
         video_info: dict[str, Any],
         edit_plan: EditPlan | None,
+        normalize_audio: bool,
     ) -> list[str]:
         """Render export for a specific platform."""
         output_dir = job_dir / "output" / platform
@@ -151,7 +685,7 @@ class RenderStage(Stage):
 
         # Audio-only platforms
         if spec.audio_only:
-            return self._render_audio_only(output_dir, input_video, platform, spec)
+            return self._render_audio_only(output_dir, input_video, platform, spec, normalize_audio)
 
         # Video platforms
         return self._render_video(
@@ -162,6 +696,7 @@ class RenderStage(Stage):
             decisions,
             video_info,
             edit_plan,
+            normalize_audio,
         )
 
     def _render_audio_only(
@@ -170,6 +705,7 @@ class RenderStage(Stage):
         input_video: Path,
         platform: str,
         spec: PlatformSpec,
+        normalize_audio: bool,
     ) -> list[str]:
         """Render audio-only export (Spotify, Apple Podcasts)."""
         ext = {"mp3": "mp3", "m4a": "m4a", "aac": "m4a"}.get(spec.container, "mp3")
@@ -187,13 +723,20 @@ class RenderStage(Stage):
             str(self.config.audio.sample_rate),
             "-ac",
             str(spec.audio_channels),
-            str(output_file),
         ]
+        enhancement_filters = self._build_audio_enhancement_filters()
+        if enhancement_filters:
+            args.extend(["-af", ",".join(enhancement_filters)])
+        args.append(str(output_file))
 
         run_ffmpeg(args)
+        self._assert_output_exists(output_file, f"{platform} audio export")
 
-        # Normalize loudness
-        self._normalize_loudness(output_file, spec.loudness_lufs)
+        if normalize_audio:
+            self._normalize_loudness(output_file, spec.loudness_lufs)
+        else:
+            self.logger.info("loudness_normalization_disabled", platform=platform)
+        self._assert_output_exists(output_file, f"{platform} audio export")
 
         self.logger.info(f"{platform}_rendered", output=str(output_file))
         return [str(output_file.relative_to(output_dir.parent.parent))]
@@ -207,6 +750,7 @@ class RenderStage(Stage):
         decisions: ReviewDecisions,
         video_info: dict[str, Any],
         edit_plan: EditPlan | None,
+        normalize_audio: bool,
     ) -> list[str]:
         """Render video export with aspect ratio conversion."""
         output_file = output_dir / f"final.{spec.container}"
@@ -226,7 +770,7 @@ class RenderStage(Stage):
         )
 
         # Build audio filters
-        af_filters: list[str] = []
+        af_filters = self._build_audio_enhancement_filters()
 
         edit_filter = self._build_edit_plan_filter(
             edit_plan,
@@ -301,9 +845,13 @@ class RenderStage(Stage):
         args.append(str(output_file))
 
         run_ffmpeg(args)
+        self._assert_output_exists(output_file, f"{platform} video export")
 
-        # Normalize audio loudness
-        self._normalize_loudness(output_file, spec.loudness_lufs)
+        if normalize_audio:
+            self._normalize_loudness(output_file, spec.loudness_lufs)
+        else:
+            self.logger.info("loudness_normalization_disabled", platform=platform)
+        self._assert_output_exists(output_file, f"{platform} video export")
 
         self.logger.info(f"{platform}_rendered", output=str(output_file))
         return [str(output_file.relative_to(output_dir.parent.parent))]
@@ -480,6 +1028,7 @@ class RenderStage(Stage):
         clips_dir.mkdir(parents=True, exist_ok=True)
 
         outputs: list[str] = []
+        clip_errors: list[str] = []
         for idx, clip in enumerate(edit_plan.clip_ranges, 1):
             start = max(0.0, float(clip.start_seconds))
             end = max(0.0, float(clip.end_seconds))
@@ -510,18 +1059,22 @@ class RenderStage(Stage):
             ]
             try:
                 run_ffmpeg(args)
+                self._assert_output_exists(clip_path, f"clip_{idx:02d} export")
                 outputs.append(str(clip_path.relative_to(job_dir)))
-            except FFmpegError as e:
-                self.logger.warning("clip_export_failed", clip=idx, error=str(e))
-                continue
+            except (FFmpegError, FileNotFoundError, RuntimeError) as e:
+                error_msg = f"clip_{idx:02d}: {e}"
+                clip_errors.append(error_msg)
+                self.logger.exception("clip_export_failed", clip=idx, error=str(e))
 
         if outputs:
             self.logger.info("clips_exported", count=len(outputs))
+        if clip_errors:
+            raise RuntimeError("; ".join(clip_errors))
 
         return outputs
 
-    def _normalize_loudness(self, audio_file: Path, target_lufs: float) -> None:
-        """Normalize audio to target LUFS using pyloudnorm."""
+    def _normalize_loudness(self, audio_file: Path, target_lufs: float) -> dict[str, Any]:
+        """Normalize audio to target LUFS with optional-dependency fallback."""
         try:
             import pyloudnorm as pyln
             import soundfile as sf
@@ -570,7 +1123,7 @@ class RenderStage(Stage):
             if loudness == float("-inf") or abs(loudness - target_lufs) < 0.5:
                 if is_video and temp_audio.exists():
                     temp_audio.unlink()
-                return
+                return {"status": "skipped", "method": "pyloudnorm", "reason": "already_normalized"}
 
             # Normalize
             normalized = pyln.normalize.loudness(data, loudness, target_lufs)
@@ -611,17 +1164,83 @@ class RenderStage(Stage):
                 from_lufs=loudness,
                 to_lufs=target_lufs,
             )
+            return {"status": "normalized", "method": "pyloudnorm"}
 
         except ImportError:
             self.logger.warning(
                 "pyloudnorm_not_available",
-                message="Skipping loudness normalization",
+                message="Falling back to ffmpeg loudnorm",
             )
+            if self._normalize_loudness_with_ffmpeg(audio_file, target_lufs):
+                return {"status": "normalized", "method": "ffmpeg_loudnorm"}
+            return {
+                "status": "skipped",
+                "method": "none",
+                "reason": "normalization_dependencies_unavailable",
+            }
         except Exception as e:
             self.logger.warning(
                 "loudness_normalization_failed",
                 error=str(e),
             )
+            if self._normalize_loudness_with_ffmpeg(audio_file, target_lufs):
+                return {
+                    "status": "normalized",
+                    "method": "ffmpeg_loudnorm",
+                    "reason": "pyloudnorm_failed",
+                }
+            return {"status": "failed", "method": "none", "reason": str(e)}
+
+    def _normalize_loudness_with_ffmpeg(self, audio_file: Path, target_lufs: float) -> bool:
+        """Fallback normalization path when pyloudnorm stack is unavailable."""
+        suffix = audio_file.suffix.lower()
+        temp_output = audio_file.with_name(f"{audio_file.stem}.normalized{suffix}")
+        loudnorm_filter = f"loudnorm=I={target_lufs}:LRA=11:TP=-1.5"
+
+        try:
+            if suffix in {".mp4", ".mov", ".mkv", ".webm"}:
+                args = [
+                    "-i",
+                    str(audio_file),
+                    "-c:v",
+                    "copy",
+                    "-af",
+                    loudnorm_filter,
+                    "-c:a",
+                    "aac",
+                    "-b:a",
+                    "192k",
+                    str(temp_output),
+                ]
+            else:
+                codec = "libmp3lame" if suffix == ".mp3" else "aac"
+                bitrate = "320k" if suffix == ".mp3" else "192k"
+                args = [
+                    "-i",
+                    str(audio_file),
+                    "-af",
+                    loudnorm_filter,
+                    "-c:a",
+                    codec,
+                    "-b:a",
+                    bitrate,
+                    str(temp_output),
+                ]
+
+            run_ffmpeg(args)
+            self._assert_output_exists(temp_output, "fallback loudness normalization")
+            temp_output.replace(audio_file)
+            self.logger.info(
+                "loudness_normalized_with_ffmpeg",
+                file=str(audio_file),
+                target=target_lufs,
+            )
+            return True
+        except (FFmpegError, FileNotFoundError, RuntimeError) as e:
+            self.logger.warning("ffmpeg_loudnorm_fallback_failed", error=str(e))
+            if temp_output.exists():
+                temp_output.unlink(missing_ok=True)
+            return False
 
     def _generate_marketing_doc(self, job_dir: Path) -> str | None:
         """Generate marketing copy markdown document."""

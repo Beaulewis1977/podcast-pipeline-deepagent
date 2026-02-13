@@ -128,6 +128,38 @@ podcast-pipeline ui
 streamlit run src/podcast_pipeline/ui/app.py
 ```
 
+## 🔐 Service Runtime Contracts
+
+### Authentication policy
+
+Job-control routes (`/jobs/*`) are protected by a runtime auth policy:
+
+- `PODCAST_PIPELINE_SERVICE_ENV=production` requires `PODCAST_PIPELINE_SERVICE_API_KEY`
+- Clients must send `X-API-Key: <key>` for protected routes when auth is required
+- Development mode can allow local bypass with `PODCAST_PIPELINE_SERVICE_ALLOW_UNAUTHENTICATED_DEV=true`
+
+Example authenticated resume request:
+
+```bash
+curl -X POST http://127.0.0.1:8787/jobs/<job-id>/resume \
+  -H "X-API-Key: $PODCAST_PIPELINE_SERVICE_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"from_stage":"analyze","background":false}'
+```
+
+### Run/Resume semantics
+
+- `POST /jobs/{job_id}/run` supports `stage`, `until_stage`, and `quality_controls`
+- `POST /jobs/{job_id}/resume` defaults to resume-through-completion (from the first incomplete stage through `render`)
+- `resume` also accepts `from_stage`, `until_stage`, and `background` for explicit control
+- Streamlit **Run Full Pipeline** triggers end-to-end execution semantics, not ingest-only behavior
+
+### Degraded-mode and quality controls
+
+- Analyze writes provider fallback state to `analysis/analysis.json` at `metadata.degraded_mode`
+- Render quality controls (`video_quality`, `audio_normalize`) are persisted on run and reused in render execution
+- Use degraded-mode metadata in ops/debug workflows to distinguish full-video analysis from transcript-only fallback
+
 ## 📋 Pipeline Stages
 
 ### 1. Ingest
@@ -238,6 +270,11 @@ pytest tests/ -v
 
 # Run with coverage
 pytest tests/ --cov=src/podcast_pipeline --cov-report=html
+
+# Runtime-critical coverage checks (Phase 4 hardening gates)
+coverage report --include="src/podcast_pipeline/providers/*" --fail-under=78
+coverage report --include="src/podcast_pipeline/service/*" --fail-under=75
+coverage report --include="src/podcast_pipeline/stages/*" --fail-under=45
 
 # Run specific test file
 pytest tests/test_render.py -v

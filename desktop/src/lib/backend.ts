@@ -1,15 +1,13 @@
 /**
  * Backend service client for the Podcast Pipeline desktop app.
  *
- * Provides typed functions for:
- * - Sidecar lifecycle control (start/stop/status via Tauri commands)
- * - Health endpoint polling against the local backend service
- * - Job API calls (list, create, run)
+ * Exposes typed lifecycle methods for:
+ * - backend sidecar lifecycle (Tauri invoke commands)
+ * - job lifecycle operations (create, run, resume, delete, detail)
+ * - recovery diagnostics (reconcile + runtime state)
  *
- * All HTTP calls target the local backend at 127.0.0.1:BACKEND_PORT.
+ * HTTP calls target the local backend at ``127.0.0.1:${BACKEND_PORT}``.
  */
-
-import { invoke } from "@tauri-apps/api/core";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -29,9 +27,20 @@ const STARTUP_TIMEOUT_MS = 15_000;
 /** Interval between readiness probes during startup. */
 const STARTUP_PROBE_INTERVAL_MS = 500;
 
+export const STAGE_ORDER = [
+  "ingest",
+  "transcribe",
+  "analyze",
+  "review",
+  "render",
+] as const;
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
+
+/** Valid stage names supported by the backend service. */
+export type StageName = (typeof STAGE_ORDER)[number];
 
 /** Connection state for the backend sidecar service. */
 export type BackendStatus = "disconnected" | "connecting" | "connected";
@@ -39,7 +48,6 @@ export type BackendStatus = "disconnected" | "connecting" | "connected";
 /** Response shape from the backend GET /health endpoint. */
 export interface HealthResponse {
   status: string;
-  version: string | null;
 }
 
 /** Sidecar status returned by Rust commands. */
@@ -53,47 +61,159 @@ export interface SidecarStatus {
 export interface JobSummary {
   job_id: string;
   status: string;
-  current_stage: string | null;
+  created: string;
+  stages: Record<string, string>;
+}
+
+/** Stage detail returned from GET /jobs/{job_id}. */
+export interface JobStageDetail {
+  status: string;
+  started_at?: string | null;
+  completed_at?: string | null;
+  outputs: string[];
+  error?: string | null;
+  progress_percent?: number | null;
+  progress_message?: string | null;
+}
+
+/** Full job detail returned from backend GET /jobs/{job_id}. */
+export interface JobDetail {
+  job_id: string;
+  status: string;
+  input_file: string;
   created_at: string;
+  updated_at: string;
+  stages: Record<string, JobStageDetail>;
+  error?: string | null;
 }
 
 /** Request body for POST /jobs. */
-export interface CreateJobRequest {
-  input_path: string;
+interface CreateJobRequest {
+  video_path: string;
+  name?: string;
 }
 
 /** Response shape from POST /jobs. */
 export interface CreateJobResponse {
   job_id: string;
-  jobs_dir: string;
+  status: string;
+  input_file: string;
+  created_at: string;
 }
+
+/** Canonical response from run and resume lifecycle endpoints. */
+export interface LifecycleActionResponse {
+  job_id: string;
+  status: string;
+  message: string;
+  started: boolean;
+  completed: boolean;
+  rejected: boolean;
+}
+
+/** Runtime metadata summary for a single job journal entry. */
+export interface RuntimeJobStatus {
+  job_id: string;
+  status: string;
+  pid: number;
+  last_known_stage?: string | null;
+  heartbeat: string;
+  heartbeat_age_seconds?: number | null;
+  stale: boolean;
+  orphaned: boolean;
+}
+
+/** Response shape from GET /system/runtime. */
+export interface RuntimeDiagnostics {
+  active_jobs: string[];
+  stale_jobs: string[];
+  orphaned_jobs: string[];
+  jobs: RuntimeJobStatus[];
+}
+
+/** Request options for job run operations. */
+export interface RunJobOptions {
+  stage?: StageName;
+  untilStage?: StageName;
+  background?: boolean;
+}
+
+/** Request options for job resume operations. */
+export interface ResumeJobOptions {
+  fromStage?: StageName;
+  untilStage?: StageName;
+  background?: boolean;
+}
+
+interface ListJobsResponse {
+  jobs: JobSummary[];
+}
+
+interface BackgroundRunResponse {
+  job_id: string;
+  accepted: boolean;
+  message: string;
+}
+
+interface DeleteJobResponse {
+  job_id: string;
+  deleted: boolean;
+  message: string;
+}
+
+type InvokeFn = <T>(
+  command: string,
+  args?: Record<string, unknown>,
+) => Promise<T>;
+
+let cachedInvoke: InvokeFn | null = null;
+let invokeUnavailable = false;
 
 // ---------------------------------------------------------------------------
 // Sidecar lifecycle (Tauri invoke)
 // ---------------------------------------------------------------------------
 
+async function tauriInvoke<T>(
+  command: string,
+  args?: Record<string, unknown>,
+): Promise<T> {
+  if (cachedInvoke === null && !invokeUnavailable) {
+    try {
+      const tauri = await import("@tauri-apps/api/core");
+      cachedInvoke = tauri.invoke as InvokeFn;
+    } catch {
+      invokeUnavailable = true;
+    }
+  }
+
+  if (cachedInvoke === null) {
+    throw new Error("Tauri invoke is unavailable in this runtime");
+  }
+
+  return cachedInvoke<T>(command, args);
+}
+
 /**
  * Start the backend sidecar process via Tauri command.
  *
- * This invokes the Rust `start_sidecar` command which spawns the
- * `binaries/podcast-backend` sidecar with the configured port.
+ * Invokes the Rust ``start_sidecar`` command.
  */
 export async function startSidecar(): Promise<SidecarStatus> {
-  return invoke<SidecarStatus>("start_sidecar");
+  return tauriInvoke<SidecarStatus>("start_sidecar");
 }
 
 /**
  * Stop the backend sidecar process via Tauri command.
  *
- * Sends SIGTERM (Unix) or TerminateProcess (Windows) to the sidecar.
+ * Invokes the Rust ``stop_sidecar`` command.
  */
 export async function stopSidecar(): Promise<SidecarStatus> {
-  return invoke<SidecarStatus>("stop_sidecar");
+  return tauriInvoke<SidecarStatus>("stop_sidecar");
 }
 
 /** Query the current sidecar process status without side effects. */
 export async function getSidecarStatus(): Promise<SidecarStatus> {
-  return invoke<SidecarStatus>("sidecar_status");
+  return tauriInvoke<SidecarStatus>("sidecar_status");
 }
 
 // ---------------------------------------------------------------------------
@@ -103,14 +223,11 @@ export async function getSidecarStatus(): Promise<SidecarStatus> {
 /**
  * Probe the backend health endpoint.
  *
- * Returns the health response on success, or null if the backend is
- * unreachable or returns a non-OK status.
+ * Returns the health response on success, or ``null`` when unreachable.
  */
 export async function checkHealth(): Promise<HealthResponse | null> {
   try {
-    const res = await fetch(`${BASE_URL}/health`);
-    if (!res.ok) return null;
-    const data: HealthResponse = await res.json();
+    const data = await requestJson<HealthResponse>("/health");
     return data.status === "ok" ? data : null;
   } catch {
     return null;
@@ -121,15 +238,16 @@ export async function checkHealth(): Promise<HealthResponse | null> {
  * Wait for the backend to become healthy after sidecar startup.
  *
  * Polls the health endpoint at short intervals until it responds with
- * status "ok" or the timeout expires. Returns the health response on
- * success, or null on timeout.
+ * status ``ok`` or the timeout expires.
  */
 export async function waitForReady(): Promise<HealthResponse | null> {
   const deadline = Date.now() + STARTUP_TIMEOUT_MS;
 
   while (Date.now() < deadline) {
     const health = await checkHealth();
-    if (health !== null) return health;
+    if (health !== null) {
+      return health;
+    }
     await sleep(STARTUP_PROBE_INTERVAL_MS);
   }
 
@@ -137,53 +255,117 @@ export async function waitForReady(): Promise<HealthResponse | null> {
 }
 
 // ---------------------------------------------------------------------------
-// Job API
+// Job lifecycle API
 // ---------------------------------------------------------------------------
 
 /** Fetch the list of all jobs from the backend. */
 export async function listJobs(): Promise<JobSummary[]> {
-  const res = await fetch(`${BASE_URL}/jobs`);
-  if (!res.ok) {
-    throw new Error(`Failed to list jobs: ${res.status} ${res.statusText}`);
-  }
-  return res.json();
+  const payload = await requestJson<ListJobsResponse>("/jobs");
+  return payload.jobs ?? [];
 }
 
 /** Create a new job on the backend. */
 export async function createJob(
-  input_path: string,
+  videoPath: string,
+  name?: string,
 ): Promise<CreateJobResponse> {
-  const body: CreateJobRequest = { input_path };
-  const res = await fetch(`${BASE_URL}/jobs`, {
+  const body: CreateJobRequest = { video_path: videoPath };
+  if (name && name.trim().length > 0) {
+    body.name = name.trim();
+  }
+  return requestJson<CreateJobResponse>("/jobs", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (!res.ok) {
-    throw new Error(`Failed to create job: ${res.status} ${res.statusText}`);
-  }
-  return res.json();
 }
 
-/** Trigger a job run on the backend. */
-export async function runJob(jobId: string): Promise<void> {
-  const res = await fetch(`${BASE_URL}/jobs/${encodeURIComponent(jobId)}/run`, {
+/** Trigger a run for the specified job. */
+export async function runJob(
+  jobId: string,
+  options: RunJobOptions = {},
+): Promise<LifecycleActionResponse> {
+  const payload: Record<string, unknown> = {};
+  if (options.stage) {
+    payload.stage = options.stage;
+  }
+  if (options.untilStage) {
+    payload.until_stage = options.untilStage;
+  }
+
+  if (options.background) {
+    const background = await requestJson<BackgroundRunResponse>(
+      `/jobs/${encodeURIComponent(jobId)}/run/background`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+    );
+    return {
+      job_id: background.job_id,
+      status: background.accepted ? "running" : "failed",
+      message: background.message,
+      started: background.accepted,
+      completed: false,
+      rejected: !background.accepted,
+    };
+  }
+
+  return requestJson<LifecycleActionResponse>(
+    `/jobs/${encodeURIComponent(jobId)}/run`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+/** Resume a job from the first incomplete stage or requested stage. */
+export async function resumeJob(
+  jobId: string,
+  options: ResumeJobOptions = {},
+): Promise<LifecycleActionResponse> {
+  const payload: Record<string, unknown> = {
+    background: options.background ?? false,
+  };
+  if (options.fromStage) {
+    payload.from_stage = options.fromStage;
+  }
+  if (options.untilStage) {
+    payload.until_stage = options.untilStage;
+  }
+
+  return requestJson<LifecycleActionResponse>(
+    `/jobs/${encodeURIComponent(jobId)}/resume`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+/** Get detailed status for a single job. */
+export async function getJob(jobId: string): Promise<JobDetail> {
+  return requestJson<JobDetail>(`/jobs/${encodeURIComponent(jobId)}`);
+}
+
+/** Delete a job and all its artifacts. */
+export async function deleteJob(jobId: string): Promise<DeleteJobResponse> {
+  return requestJson<DeleteJobResponse>(`/jobs/${encodeURIComponent(jobId)}`, {
+    method: "DELETE",
+  });
+}
+
+/** Trigger reconciliation of stale runtime metadata. */
+export async function reconcileJobs(): Promise<number> {
+  const payload = await requestJson<{ corrected?: number }>("/jobs/reconcile", {
     method: "POST",
   });
-  if (!res.ok) {
-    throw new Error(`Failed to run job: ${res.status} ${res.statusText}`);
-  }
+  return payload.corrected ?? 0;
 }
 
-/** Get the status of a single job. */
-export async function getJob(jobId: string): Promise<JobSummary> {
-  const res = await fetch(
-    `${BASE_URL}/jobs/${encodeURIComponent(jobId)}`,
-  );
-  if (!res.ok) {
-    throw new Error(`Failed to get job: ${res.status} ${res.statusText}`);
-  }
-  return res.json();
+/** Fetch stale/orphan runtime diagnostics from the backend. */
+export async function getRuntimeDiagnostics(): Promise<RuntimeDiagnostics> {
+  return requestJson<RuntimeDiagnostics>("/system/runtime");
 }
 
 // ---------------------------------------------------------------------------
@@ -194,11 +376,6 @@ export async function getJob(jobId: string): Promise<JobSummary> {
  * Full startup sequence: start sidecar, wait for health, return status.
  *
  * This is the primary entry point for the App component on mount.
- * It attempts to start the sidecar process and waits for the backend
- * to become healthy before returning.
- *
- * @returns Object with sidecar status and health response. If health
- *          is null, the backend did not become ready within the timeout.
  */
 export async function bootBackend(): Promise<{
   sidecar: SidecarStatus;
@@ -207,6 +384,112 @@ export async function bootBackend(): Promise<{
   const sidecar = await startSidecar();
   const health = await waitForReady();
   return { sidecar, health };
+}
+
+// ---------------------------------------------------------------------------
+// Internal HTTP helpers
+// ---------------------------------------------------------------------------
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function detailToMessage(detail: unknown): string | null {
+  if (typeof detail === "string" && detail.trim().length > 0) {
+    return detail.trim();
+  }
+
+  if (Array.isArray(detail)) {
+    const messages = detail
+      .map((item) => {
+        if (typeof item === "string") {
+          return item;
+        }
+        if (isRecord(item) && typeof item.msg === "string") {
+          return item.msg;
+        }
+        return null;
+      })
+      .filter((item): item is string => Boolean(item && item.trim().length > 0));
+    if (messages.length > 0) {
+      return messages.join("; ");
+    }
+    return null;
+  }
+
+  if (isRecord(detail)) {
+    try {
+      return JSON.stringify(detail);
+    } catch {
+      return null;
+    }
+  }
+
+  return null;
+}
+
+function buildApiError(
+  method: string,
+  path: string,
+  response: Response,
+  payload: unknown,
+): Error {
+  let detail = detailToMessage(payload);
+  if (detail === null && isRecord(payload)) {
+    detail = detailToMessage(payload.detail);
+  }
+  if (detail === null || detail.length === 0) {
+    detail = response.statusText || "Unknown error";
+  }
+  return new Error(
+    `${method.toUpperCase()} ${path} failed (${response.status}): ${detail}`,
+  );
+}
+
+async function readResponsePayload(response: Response): Promise<unknown> {
+  const text = await response.text();
+  if (!text) {
+    return null;
+  }
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return text;
+  }
+}
+
+async function requestJson<T>(
+  path: string,
+  init: RequestInit = {},
+): Promise<T> {
+  const method = (init.method ?? "GET").toUpperCase();
+  const headers = new Headers(init.headers ?? {});
+  if (init.body && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(`${BASE_URL}${path}`, {
+      ...init,
+      method,
+      headers,
+    });
+  } catch (err) {
+    throw new Error(
+      `${method} ${path} failed: ${err instanceof Error ? err.message : "network error"}`,
+    );
+  }
+
+  const payload = await readResponsePayload(response);
+  if (!response.ok) {
+    throw buildApiError(method, path, response, payload);
+  }
+
+  if (payload === null) {
+    return {} as T;
+  }
+  return payload as T;
 }
 
 // ---------------------------------------------------------------------------

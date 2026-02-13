@@ -4,6 +4,8 @@ All business logic is delegated to :class:`Pipeline` and :class:`Job`
 from the core package -- route handlers only translate HTTP concerns.
 """
 
+import json
+import shutil
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
@@ -29,6 +31,7 @@ from podcast_pipeline.service.schemas import (
     ResumeJobResponse,
     RunJobRequest,
     RunJobResponse,
+    RunQualityControls,
     StageDetail,
 )
 from podcast_pipeline.service.supervisor import Supervisor
@@ -37,6 +40,42 @@ from podcast_pipeline.utils.logging import get_logger
 logger = get_logger(__name__)
 
 router = APIRouter()
+
+
+def _is_managed_upload(path: Path, jobs_dir: Path) -> bool:
+    """Return True when path is inside jobs/_uploads."""
+    uploads_dir = (jobs_dir / "_uploads").resolve()
+    try:
+        return path.resolve().is_relative_to(uploads_dir)
+    except (OSError, ValueError):
+        return False
+
+
+def _upload_is_referenced_by_other_job(
+    jobs_dir: Path,
+    upload_path: Path,
+    *,
+    excluded_job_id: str,
+) -> bool:
+    """Return True when another job still points at this uploaded source file."""
+    resolved_upload = upload_path.resolve()
+    for job_dir in jobs_dir.iterdir():
+        if job_dir.name in {excluded_job_id, "_uploads"}:
+            continue
+        state_path = job_dir / "state.json"
+        if not state_path.exists():
+            continue
+        try:
+            other_job = Job.load(job_dir)
+        except Exception as exc:
+            logger.warning("job_reference_scan_load_failed", job_id=job_dir.name, error=str(exc))
+            continue
+        try:
+            if Path(other_job.input_file).resolve() == resolved_upload:
+                return True
+        except OSError:
+            continue
+    return False
 
 
 def _get_pipeline(request: Request) -> Pipeline:
@@ -57,6 +96,30 @@ def _load_job_or_404(pipeline: Pipeline, job_id: str) -> Job:
         return pipeline.load_job(job_id)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=f"Job not found: {job_id}") from exc
+    except Exception as exc:
+        logger.warning("job_state_invalid", job_id=job_id, error=str(exc))
+        raise HTTPException(
+            status_code=409,
+            detail=f"Job state is invalid for {job_id}. Delete or repair this job.",
+        ) from exc
+
+
+def _persist_run_quality_controls(
+    pipeline: Pipeline,
+    job: Job,
+    controls: RunQualityControls | None,
+) -> None:
+    """Persist optional run quality controls into job config."""
+    if controls is None:
+        return
+
+    job.config["render_quality_controls"] = controls.model_dump()
+    job.save(pipeline.config.paths.jobs_dir)
+    logger.info(
+        "run_quality_controls_persisted",
+        job_id=job.job_id,
+        controls=job.config["render_quality_controls"],
+    )
 
 
 def _job_to_detail(job: Job) -> JobDetailResponse:
@@ -164,7 +227,11 @@ async def reconcile_jobs(request: Request) -> dict[str, int]:
 
 
 @router.post("/{job_id}/run", response_model=RunJobResponse)
-async def run_job(job_id: str, body: RunJobRequest, request: Request) -> RunJobResponse:
+async def run_job(
+    job_id: str,
+    request: Request,
+    body: RunJobRequest | None = None,
+) -> RunJobResponse:
     """Trigger a synchronous pipeline run for a job.
 
     For background (non-blocking) execution see the supervisor module,
@@ -174,18 +241,31 @@ async def run_job(job_id: str, body: RunJobRequest, request: Request) -> RunJobR
     job = _load_job_or_404(pipeline, job_id)
 
     try:
-        results = pipeline.run(job, stage=body.stage, until_stage=body.until_stage)
+        request_body = body or RunJobRequest()
+        _persist_run_quality_controls(pipeline, job, request_body.quality_controls)
+        results = pipeline.run(
+            job,
+            stage=request_body.stage,
+            until_stage=request_body.until_stage,
+        )
         failed = [name for name, r in results.items() if not r.success]
+        started = len(results) > 0
         if failed:
             return RunJobResponse(
                 job_id=job_id,
                 status="failed",
                 message=f"Stages failed: {', '.join(failed)}",
+                started=started,
+                completed=False,
+                rejected=False,
             )
         return RunJobResponse(
             job_id=job_id,
             status="complete",
             message=f"Ran {len(results)} stage(s) successfully",
+            started=started,
+            completed=True,
+            rejected=False,
         )
     except (FileNotFoundError, OSError, ValueError) as exc:
         logger.exception("run_job_failed", job_id=job_id, error=str(exc))
@@ -199,7 +279,9 @@ async def run_job(job_id: str, body: RunJobRequest, request: Request) -> RunJobR
 
 @router.post("/{job_id}/run/background", response_model=BackgroundRunResponse)
 async def run_job_background(
-    job_id: str, body: BackgroundRunRequest, request: Request
+    job_id: str,
+    request: Request,
+    body: BackgroundRunRequest | None = None,
 ) -> BackgroundRunResponse:
     """Start a non-blocking pipeline run via the supervisor.
 
@@ -210,7 +292,12 @@ async def run_job_background(
     supervisor = _get_supervisor(request)
     job = _load_job_or_404(pipeline, job_id)
 
-    accepted = supervisor.start_run(job, stage=body.stage, until_stage=body.until_stage)
+    request_body = body or BackgroundRunRequest()
+    accepted = supervisor.start_run(
+        job,
+        stage=request_body.stage,
+        until_stage=request_body.until_stage,
+    )
     if not accepted:
         raise HTTPException(
             status_code=409,
@@ -234,6 +321,70 @@ async def get_job(job_id: str, request: Request) -> JobDetailResponse:
     pipeline = _get_pipeline(request)
     job = _load_job_or_404(pipeline, job_id)
     return _job_to_detail(job)
+
+
+# --------------------------------------------------------------------------
+# DELETE /jobs/{job_id}  -- remove job artifacts
+# --------------------------------------------------------------------------
+
+
+@router.delete("/{job_id}")
+async def delete_job(job_id: str, request: Request) -> dict[str, object]:
+    """Delete a job directory when no active background run exists."""
+    pipeline = _get_pipeline(request)
+    supervisor = _get_supervisor(request)
+
+    if job_id in supervisor.active_jobs():
+        raise HTTPException(
+            status_code=409,
+            detail=f"Job {job_id} has an active background run",
+        )
+
+    job_dir = pipeline.config.paths.jobs_dir / job_id
+    if not job_dir.exists():
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+
+    jobs_dir = pipeline.config.paths.jobs_dir
+    input_path: Path | None = None
+    state_path = job_dir / "state.json"
+    if state_path.exists():
+        try:
+            payload = json.loads(state_path.read_text())
+        except (OSError, json.JSONDecodeError):
+            payload = {}
+        if isinstance(payload, dict):
+            raw_input = payload.get("input_file")
+            if isinstance(raw_input, str) and raw_input.strip():
+                input_path = Path(raw_input)
+
+    try:
+        shutil.rmtree(job_dir)
+    except OSError as exc:
+        logger.exception("delete_job_failed", job_id=job_id, error=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    if input_path and input_path.exists() and _is_managed_upload(input_path, jobs_dir):
+        if not _upload_is_referenced_by_other_job(
+            jobs_dir,
+            input_path,
+            excluded_job_id=job_id,
+        ):
+            try:
+                input_path.unlink(missing_ok=True)
+            except OSError as exc:
+                logger.warning(
+                    "job_upload_cleanup_failed",
+                    job_id=job_id,
+                    path=str(input_path),
+                    error=str(exc),
+                )
+
+    logger.info("job_deleted", job_id=job_id, path=str(job_dir))
+    return {
+        "job_id": job_id,
+        "deleted": True,
+        "message": f"Deleted job {job_id}",
+    }
 
 
 # --------------------------------------------------------------------------
@@ -279,14 +430,28 @@ async def resume_job(job_id: str, body: ResumeJobRequest, request: Request) -> R
     try:
         job = prepare_resume(jobs_dir, job_id, from_stage=body.from_stage)
     except ValueError as exc:
+        if "no incomplete stages to resume" not in str(exc):
+            raise HTTPException(
+                status_code=422,
+                detail=[
+                    {
+                        "loc": ["body", "from_stage"],
+                        "msg": str(exc),
+                        "type": "value_error",
+                    }
+                ],
+            ) from exc
         return ResumeJobResponse(
             job_id=job_id,
             status="complete",
             message=str(exc),
+            started=False,
+            completed=True,
+            rejected=False,
         )
 
     # Determine which stage we are resuming from.
-    resume_stage = body.from_stage
+    resume_stage: str | None = body.from_stage
     if resume_stage is None:
         for stage_name in Pipeline.STAGE_ORDER:
             stage_obj = job.stages.get(stage_name)
@@ -299,12 +464,34 @@ async def resume_job(job_id: str, body: ResumeJobRequest, request: Request) -> R
             job_id=job_id,
             status="complete",
             message="All stages already complete, nothing to resume",
+            started=False,
+            completed=True,
+            rejected=False,
+        )
+
+    resume_until_stage = body.until_stage or Pipeline.STAGE_ORDER[-1]
+    resume_start_index = Pipeline.STAGE_ORDER.index(resume_stage)
+    resume_end_index = Pipeline.STAGE_ORDER.index(resume_until_stage)
+    if resume_end_index < resume_start_index:
+        raise HTTPException(
+            status_code=422,
+            detail=[
+                {
+                    "loc": ["body", "until_stage"],
+                    "msg": "until_stage must be the same as or after from_stage",
+                    "type": "value_error",
+                }
+            ],
         )
 
     # Background (non-blocking) resume via supervisor
     if body.background:
         supervisor = _get_supervisor(request)
-        accepted = supervisor.start_run(job, stage=resume_stage)
+        accepted = supervisor.start_run(
+            job,
+            stage=resume_stage,
+            until_stage=resume_until_stage,
+        )
         if not accepted:
             raise HTTPException(
                 status_code=409,
@@ -313,23 +500,37 @@ async def resume_job(job_id: str, body: ResumeJobRequest, request: Request) -> R
         return ResumeJobResponse(
             job_id=job_id,
             status="running",
-            message=f"Background resume started from {resume_stage}",
+            message=f"Background resume started from {resume_stage} through {resume_until_stage}",
+            started=True,
+            completed=False,
+            rejected=False,
         )
 
     # Synchronous (blocking) resume
     try:
-        results = pipeline.run(job, stage=resume_stage)
+        results = pipeline.run(
+            job,
+            stage=resume_stage,
+            until_stage=resume_until_stage,
+        )
         failed = [name for name, r in results.items() if not r.success]
+        started = len(results) > 0
         if failed:
             return ResumeJobResponse(
                 job_id=job_id,
                 status="failed",
                 message=f"Resume failed at stage(s): {', '.join(failed)}",
+                started=started,
+                completed=False,
+                rejected=False,
             )
         return ResumeJobResponse(
             job_id=job_id,
             status="complete",
-            message=f"Resumed from {resume_stage}",
+            message=f"Resumed from {resume_stage} through {resume_until_stage}",
+            started=started,
+            completed=True,
+            rejected=False,
         )
     except (FileNotFoundError, OSError, ValueError) as exc:
         logger.exception("resume_job_failed", job_id=job_id, error=str(exc))

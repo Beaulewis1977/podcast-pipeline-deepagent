@@ -11,8 +11,7 @@
  *    local backend (same endpoints, no Tauri shell layer).
  */
 
-import { invoke } from "@tauri-apps/api/core";
-import { BACKEND_PORT } from "./backend";
+import { BACKEND_PORT, type StageName } from "./backend";
 
 const BASE_URL = `http://127.0.0.1:${BACKEND_PORT}`;
 
@@ -45,6 +44,40 @@ export interface ResumeResult {
   message: string;
 }
 
+/** Runtime journal diagnostics for a single job. */
+export interface RuntimeJobStatus {
+  job_id: string;
+  status: string;
+  pid: number;
+  last_known_stage?: string | null;
+  heartbeat: string;
+  heartbeat_age_seconds?: number | null;
+  stale: boolean;
+  orphaned: boolean;
+}
+
+/** Combined runtime diagnostics from ``GET /system/runtime``. */
+export interface RuntimeDiagnostics {
+  active_jobs: string[];
+  stale_jobs: string[];
+  orphaned_jobs: string[];
+  jobs: RuntimeJobStatus[];
+}
+
+export interface TriggerResumeOptions {
+  fromStage?: StageName;
+  untilStage?: StageName;
+  background?: boolean;
+}
+
+type InvokeFn = <T>(
+  command: string,
+  args?: Record<string, unknown>,
+) => Promise<T>;
+
+let cachedInvoke: InvokeFn | null = null;
+let invokeUnavailable = false;
+
 // ---------------------------------------------------------------------------
 // Recovery queries
 // ---------------------------------------------------------------------------
@@ -57,7 +90,7 @@ export interface ResumeResult {
  */
 export async function checkRecovery(): Promise<RecoveryStatus> {
   try {
-    return await invoke<RecoveryStatus>("check_recovery");
+    return await tauriInvoke<RecoveryStatus>("check_recovery");
   } catch {
     // Outside Tauri context -- fall back to direct HTTP
     return checkRecoveryDirect();
@@ -114,16 +147,16 @@ async function checkRecoveryDirect(): Promise<RecoveryStatus> {
  */
 export async function triggerResume(
   jobId: string,
-  fromStage?: string,
+  options: TriggerResumeOptions = {},
 ): Promise<ResumeResult> {
   try {
-    return await invoke<ResumeResult>("trigger_resume", {
+    return await tauriInvoke<ResumeResult>("trigger_resume", {
       jobId,
-      fromStage: fromStage ?? null,
+      fromStage: options.fromStage ?? null,
     });
   } catch {
     // Outside Tauri context -- fall back to direct HTTP
-    return triggerResumeDirect(jobId, fromStage);
+    return triggerResumeDirect(jobId, options);
   }
 }
 
@@ -132,11 +165,16 @@ export async function triggerResume(
  */
 async function triggerResumeDirect(
   jobId: string,
-  fromStage?: string,
+  options: TriggerResumeOptions = {},
 ): Promise<ResumeResult> {
-  const body: Record<string, unknown> = { background: true };
-  if (fromStage) {
-    body.from_stage = fromStage;
+  const body: Record<string, unknown> = {
+    background: options.background ?? true,
+  };
+  if (options.fromStage) {
+    body.from_stage = options.fromStage;
+  }
+  if (options.untilStage) {
+    body.until_stage = options.untilStage;
   }
 
   const res = await fetch(
@@ -154,4 +192,45 @@ async function triggerResumeDirect(
   }
 
   return res.json();
+}
+
+/** Trigger a reconcile cycle and return the corrected count. */
+export async function reconcileNow(): Promise<number> {
+  const res = await fetch(`${BASE_URL}/jobs/reconcile`, { method: "POST" });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Reconcile failed (${res.status}): ${text}`);
+  }
+  const payload: { corrected?: number } = await res.json();
+  return payload.corrected ?? 0;
+}
+
+/** Fetch stale/orphan runtime diagnostics for operator recovery decisions. */
+export async function getRuntimeDiagnostics(): Promise<RuntimeDiagnostics> {
+  const res = await fetch(`${BASE_URL}/system/runtime`);
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Runtime diagnostics failed (${res.status}): ${text}`);
+  }
+  return res.json();
+}
+
+async function tauriInvoke<T>(
+  command: string,
+  args?: Record<string, unknown>,
+): Promise<T> {
+  if (cachedInvoke === null && !invokeUnavailable) {
+    try {
+      const tauri = await import("@tauri-apps/api/core");
+      cachedInvoke = tauri.invoke as InvokeFn;
+    } catch {
+      invokeUnavailable = true;
+    }
+  }
+
+  if (cachedInvoke === null) {
+    throw new Error("Tauri invoke is unavailable in this runtime");
+  }
+
+  return cachedInvoke<T>(command, args);
 }

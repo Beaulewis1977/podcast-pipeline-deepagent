@@ -1,9 +1,9 @@
-"""Kimi (Moonshot) provider for video analysis - fallback provider.
+"""Kimi (Moonshot) provider for transcript-only fallback analysis.
 
 Kimi K2.5 Model Info (as of Feb 2026):
 - Model name: kimi-k2.5
 - API endpoint: https://api.moonshot.cn/v1 (OpenAI-compatible)
-- Native multimodal support (vision + text)
+- Model supports multimodal inputs, but this integration sends transcript text only
 - Context window: 256K tokens
 - Pricing: $0.60/M input tokens, $3.00/M output tokens
 
@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+from pydantic import ValidationError
 from tenacity import (
     retry,
     retry_if_exception_type,
@@ -31,6 +32,7 @@ from podcast_pipeline.models.analysis import AnalysisResult
 from podcast_pipeline.providers.base import (
     BaseProvider,
     ProviderError,
+    ProviderParseError,
     RateLimitError,
 )
 from podcast_pipeline.utils.logging import get_logger
@@ -55,18 +57,19 @@ KIMI_INSTANT_TEMPERATURE = 0.6
 
 
 class KimiProvider(BaseProvider):
-    """Kimi (Moonshot) provider - text-based analysis fallback.
+    """Kimi (Moonshot) provider for transcript-only fallback analysis.
 
     Uses Kimi K2.5 with OpenAI-compatible API for transcript analysis.
-    Note: Currently text-only, video analysis requires Gemini.
+    Note: `video_path` is currently ignored by design.
 
     Features:
     - 256K token context window
     - Fast "instant" mode (temperature 0.6)
-    - Native multimodal support
+    - Reliable transcript-only fallback behavior
     """
 
     name = "kimi"
+    supports_video = False
 
     def __init__(self, api_key: str | None, model: str = DEFAULT_KIMI_MODEL):
         self.api_key = api_key
@@ -87,7 +90,7 @@ class KimiProvider(BaseProvider):
         video_path: Path,
         transcript: dict[str, Any],
     ) -> AnalysisResult:
-        """Analyze using Kimi (transcript only, no video)."""
+        """Analyze using Kimi transcript-only mode."""
         if not self.is_available():
             raise ProviderError("Kimi API key not configured")
 
@@ -96,6 +99,11 @@ class KimiProvider(BaseProvider):
         logger.info(
             "kimi_analyzing",
             model=self.model,
+        )
+        logger.warning(
+            "kimi_transcript_only_mode",
+            model=self.model,
+            ignored_video_path=str(video_path),
         )
 
         try:
@@ -123,7 +131,14 @@ class KimiProvider(BaseProvider):
             )
 
             if response.status_code == 429:
-                raise RateLimitError("Kimi rate limit exceeded")
+                raise RateLimitError(
+                    "Kimi rate limit exceeded",
+                    details={
+                        "provider": self.name,
+                        "model": self.model,
+                        "status_code": response.status_code,
+                    },
+                )
 
             response.raise_for_status()
             data = response.json()
@@ -131,14 +146,48 @@ class KimiProvider(BaseProvider):
             result_text = data["choices"][0]["message"]["content"]
             analysis_data = self._parse_response(result_text)
 
-            return AnalysisResult.model_validate(analysis_data)
+            try:
+                return AnalysisResult.model_validate(analysis_data)
+            except ValidationError as error:
+                raise ProviderParseError(
+                    "Kimi returned an invalid analysis schema",
+                    details={
+                        "provider": self.name,
+                        "model": self.model,
+                        "validation_error": str(error),
+                    },
+                ) from error
 
+        except ProviderError:
+            raise
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 429:
-                raise RateLimitError(f"Kimi rate limit: {e}") from e
-            raise ProviderError(f"Kimi API error: {e}") from e
+                raise RateLimitError(
+                    "Kimi rate limit exceeded",
+                    details={
+                        "provider": self.name,
+                        "model": self.model,
+                        "status_code": e.response.status_code,
+                    },
+                ) from e
+            raise ProviderError(
+                "Kimi API error",
+                details={
+                    "provider": self.name,
+                    "model": self.model,
+                    "status_code": e.response.status_code,
+                    "error_type": type(e).__name__,
+                },
+            ) from e
         except Exception as e:
-            raise ProviderError(f"Kimi analysis failed: {e}") from e
+            raise ProviderError(
+                "Kimi analysis failed",
+                details={
+                    "provider": self.name,
+                    "model": self.model,
+                    "error_type": type(e).__name__,
+                },
+            ) from e
 
     def _parse_response(self, response_text: str) -> dict[str, Any]:
         """Parse JSON from Kimi response."""
@@ -146,24 +195,26 @@ class KimiProvider(BaseProvider):
         json_str = json_match.group(1).strip() if json_match else response_text.strip()
 
         try:
-            return dict(json.loads(json_str))
-        except json.JSONDecodeError:
-            return {
-                "content_cuts": [],
-                "viral_clips": [],
-                "thumbnail_frames": [],
-                "marketing": {
-                    "youtube": {"titles": [], "description": "", "hashtags": []},
-                    "spotify": {"titles": [], "description": "", "hashtags": []},
-                    "tiktok": {"titles": [], "description": "", "hashtags": []},
-                    "linkedin": {"titles": [], "description": "", "hashtags": []},
-                    "twitter": {"titles": [], "description": "", "hashtags": []},
-                    "apple": {"titles": [], "description": "", "hashtags": []},
+            parsed = json.loads(json_str)
+        except json.JSONDecodeError as error:
+            raise ProviderParseError(
+                "Kimi returned invalid JSON",
+                details={
+                    "provider": self.name,
+                    "model": self.model,
+                    "json_error": str(error),
+                    "response_excerpt": response_text[:200],
                 },
-                "metadata": {
-                    "summary": "Analysis parsing failed",
-                    "topics": [],
-                    "mood": "unknown",
-                    "guest_names": [],
+            ) from error
+
+        if not isinstance(parsed, dict):
+            raise ProviderParseError(
+                "Kimi response JSON must be an object",
+                details={
+                    "provider": self.name,
+                    "model": self.model,
+                    "payload_type": type(parsed).__name__,
+                    "response_excerpt": response_text[:200],
                 },
-            }
+            )
+        return dict(parsed)

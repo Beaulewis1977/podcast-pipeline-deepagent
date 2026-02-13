@@ -10,17 +10,35 @@ from podcast_pipeline.models.analysis import AnalysisResult
 class ProviderError(Exception):
     """Base error for AI providers."""
 
-    def __init__(self, message: str, retryable: bool = False):
+    def __init__(
+        self,
+        message: str,
+        retryable: bool = False,
+        details: dict[str, Any] | None = None,
+    ):
         super().__init__(message)
         self.retryable = retryable
+        self.details = details or {}
 
 
 class RateLimitError(ProviderError):
     """Rate limit exceeded."""
 
-    def __init__(self, message: str, retry_after: int | None = None):
-        super().__init__(message, retryable=True)
+    def __init__(
+        self,
+        message: str,
+        retry_after: int | None = None,
+        details: dict[str, Any] | None = None,
+    ):
+        super().__init__(message, retryable=True, details=details)
         self.retry_after = retry_after
+
+
+class ProviderParseError(ProviderError):
+    """Provider response could not be parsed or validated."""
+
+    def __init__(self, message: str, details: dict[str, Any] | None = None):
+        super().__init__(message, retryable=False, details=details)
 
 
 class QuotaExceededError(ProviderError):
@@ -35,6 +53,8 @@ class AnalysisProvider(Protocol):
     """Protocol for video analysis providers."""
 
     name: str
+    model: str
+    supports_video: bool
 
     def analyze(
         self,
@@ -61,6 +81,8 @@ class BaseProvider(ABC):
     """Base implementation for providers with common functionality."""
 
     name: str = "base"
+    model: str = "unknown"
+    supports_video: bool = True
 
     @abstractmethod
     def analyze(
