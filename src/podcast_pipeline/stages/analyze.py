@@ -134,7 +134,7 @@ class AnalyzeStage(Stage):
                 outputs = [str(analysis_path.relative_to(job_dir))]
 
                 # Optional research integration
-                research_output = self._run_research(job, result, job_dir)
+                research_output = self._run_research(job, result, transcript_data, job_dir)
                 if research_output:
                     outputs.append(research_output)
 
@@ -205,6 +205,7 @@ class AnalyzeStage(Stage):
         self,
         job: Job,
         analysis_result: AnalysisResult,
+        transcript_data: dict[str, Any],
         job_dir: Path,
     ) -> str | None:
         """Run YouTube research if configured."""
@@ -218,12 +219,21 @@ class AnalyzeStage(Stage):
             analysis_data = (
                 analysis_result.model_dump() if hasattr(analysis_result, "model_dump") else {}
             )
-            query, related_topics = self._derive_research_query(job, analysis_data)
+            query, related_topics, query_source = self._derive_research_query(
+                job=job,
+                analysis_data=analysis_data,
+                transcript_data=transcript_data,
+            )
 
             researcher = YouTubeResearcher(api_key=api_key)
             research_result: ResearchResult = researcher.research_topic(
                 query, related_topics=related_topics
             )
+            research_result.insights["query_derivation"] = {
+                "query": query,
+                "related_topics": related_topics,
+                "source": query_source,
+            }
 
             research_path = job_dir / "analysis" / "research.json"
             research_path.parent.mkdir(parents=True, exist_ok=True)
@@ -232,6 +242,7 @@ class AnalyzeStage(Stage):
             self.logger.info(
                 "research_complete",
                 query=query,
+                query_source=query_source,
                 topics=len(research_result.topics),
                 videos=len(research_result.trending_videos),
             )
@@ -248,15 +259,17 @@ class AnalyzeStage(Stage):
         self,
         job: Job,
         analysis_data: dict[str, Any],
-    ) -> tuple[str, list[str]]:
-        """Derive research query from analysis metadata or job name."""
+        transcript_data: dict[str, Any],
+    ) -> tuple[str, list[str], str]:
+        """Derive research query from metadata + transcript evidence."""
         topics = analysis_data.get("metadata", {}).get("topics", []) or []
-        topics = [topic for topic in topics if topic]
-        if topics:
-            return topics[0], topics[1:4]
-
         fallback = Path(job.input_file).stem or job.job_id
-        return fallback, []
+        query, related_topics, source = YouTubeResearcher.derive_query_terms(
+            transcript_data=transcript_data,
+            metadata_topics=topics,
+            fallback_query=fallback,
+        )
+        return query, related_topics, source
 
     def _normalize_score(self, value: Any, default: float = 5.0) -> float:
         """Normalize potentially-missing score inputs to bounded floats."""

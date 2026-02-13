@@ -106,6 +106,66 @@ class TestYouTubeResearcher:
         assert insights == {}
 
 
+class TestResearchQueryDerivation:
+    """Tests for transcript-driven research query derivation."""
+
+    def test_query_derivation_uses_metadata_topics_with_transcript_context(self) -> None:
+        """Metadata topics should remain primary when transcript evidence is present."""
+        transcript = {
+            "text": (
+                "This episode explains creator retention framework design and "
+                "podcast growth loops with practical examples."
+            ),
+            "segments": [
+                {"text": "creator retention framework in action"},
+                {"text": "podcast growth loops and repeatable hooks"},
+            ],
+        }
+
+        query, related_topics, source = YouTubeResearcher.derive_query_terms(
+            transcript_data=transcript,
+            metadata_topics=["Creator Retention Framework", "Podcast Growth Loops"],
+            fallback_query="episode_42",
+        )
+
+        assert query == "creator retention framework"
+        assert source in {"metadata_topics", "metadata+transcript"}
+        assert "podcast growth loops" in related_topics
+
+    def test_query_derivation_extracts_transcript_topics_when_metadata_missing(self) -> None:
+        """Transcript token/phrase weighting should provide deterministic topic queries."""
+        transcript = {
+            "text": (
+                "customer retention loop customer retention loop customer retention loop "
+                "for subscription podcasts"
+            ),
+            "segments": [{"text": "customer retention loop strategy for subscription podcasts"}],
+        }
+
+        query, related_topics, source = YouTubeResearcher.derive_query_terms(
+            transcript_data=transcript,
+            metadata_topics=[],
+            fallback_query="job-991",
+        )
+
+        assert source == "transcript_topics"
+        assert "customer" in query
+        assert "retention" in query
+        assert related_topics
+
+    def test_query_derivation_returns_labeled_fallback_for_sparse_transcript(self) -> None:
+        """Sparse transcript evidence should produce explicit fallback labels."""
+        query, related_topics, source = YouTubeResearcher.derive_query_terms(
+            transcript_data={"text": "uh um", "segments": [{"text": "uh"}]},
+            metadata_topics=[],
+            fallback_query="Episode-77_Final",
+        )
+
+        assert query == "episode 77 final"
+        assert related_topics == []
+        assert source.startswith("fallback_")
+
+
 class TestViralClipDetector:
     """Tests for viral clip detection."""
 

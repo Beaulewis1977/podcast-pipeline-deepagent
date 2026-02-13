@@ -192,6 +192,156 @@ class YouTubeResearcher:
         except (TypeError, ValueError):
             return copy.deepcopy(payload)
 
+    @classmethod
+    def _normalize_query_phrase(cls, value: str) -> str:
+        """Normalize topic/query fragments into stable search phrases."""
+        cleaned = re.sub(r"[^a-z0-9' ]+", " ", value.lower())
+        normalized = " ".join(cleaned.split())
+        return normalized.strip()
+
+    @classmethod
+    def _fallback_query(cls, fallback_query: str) -> str:
+        """Normalize fallback labels so sparse transcripts remain explicit."""
+        cleaned = re.sub(r"[_-]+", " ", fallback_query.lower())
+        normalized = " ".join(cleaned.split())
+        return normalized or "podcast episode"
+
+    @classmethod
+    def _tokenize_query_text(cls, text: str) -> list[str]:
+        """Tokenize transcript text while dropping low-signal noise terms."""
+        raw_tokens = re.findall(r"[a-z0-9']+", text.lower())
+        tokens: list[str] = []
+        for token in raw_tokens:
+            if len(token) < 3:
+                continue
+            if token.isdigit():
+                continue
+            if token in cls.KEYWORD_STOPWORDS:
+                continue
+            tokens.append(token)
+        return tokens
+
+    @classmethod
+    def _score_query_ngrams(cls, tokens: list[str]) -> dict[str, float]:
+        """Score transcript phrases with deterministic unigram/bigram/trigram weighting."""
+        scores: dict[str, float] = {}
+        for token in tokens:
+            scores[token] = scores.get(token, 0.0) + 0.65
+
+        for idx in range(len(tokens) - 1):
+            phrase = f"{tokens[idx]} {tokens[idx + 1]}"
+            scores[phrase] = scores.get(phrase, 0.0) + 2.2
+
+        for idx in range(len(tokens) - 2):
+            phrase = f"{tokens[idx]} {tokens[idx + 1]} {tokens[idx + 2]}"
+            scores[phrase] = scores.get(phrase, 0.0) + 2.9
+
+        return scores
+
+    @classmethod
+    def derive_query_terms(
+        cls,
+        transcript_data: dict[str, Any] | None,
+        metadata_topics: list[str] | None,
+        fallback_query: str,
+        max_related_topics: int = 3,
+    ) -> tuple[str, list[str], str]:
+        """Derive research query + related topics from transcript and metadata evidence."""
+        candidate_scores: dict[str, float] = {}
+        candidate_sources: dict[str, set[str]] = {}
+        normalized_metadata_topics: list[str] = []
+
+        for index, topic in enumerate(metadata_topics or []):
+            normalized_topic = cls._normalize_query_phrase(str(topic))
+            if len(normalized_topic) < 3:
+                continue
+            if normalized_topic not in normalized_metadata_topics:
+                normalized_metadata_topics.append(normalized_topic)
+            weight = max(6.0 - index, 2.0)
+            candidate_scores[normalized_topic] = candidate_scores.get(normalized_topic, 0.0) + weight
+            candidate_sources.setdefault(normalized_topic, set()).add("metadata")
+
+        transcript_chunks: list[str] = []
+        if isinstance(transcript_data, dict):
+            transcript_text = transcript_data.get("text")
+            if isinstance(transcript_text, str) and transcript_text.strip():
+                transcript_chunks.append(transcript_text)
+
+            segments = transcript_data.get("segments")
+            if isinstance(segments, list):
+                for segment in segments[:60]:
+                    if not isinstance(segment, dict):
+                        continue
+                    segment_text = segment.get("text")
+                    if isinstance(segment_text, str) and segment_text.strip():
+                        transcript_chunks.append(segment_text)
+
+        has_transcript_tokens = False
+        for chunk_index, chunk in enumerate(transcript_chunks):
+            tokens = cls._tokenize_query_text(chunk)
+            if not tokens:
+                continue
+
+            has_transcript_tokens = True
+            weighted_phrases = cls._score_query_ngrams(tokens)
+            source_multiplier = 1.2 if chunk_index < 6 else 0.9
+            for phrase, base_score in weighted_phrases.items():
+                if len(phrase) < 4:
+                    continue
+
+                phrase_score = base_score * source_multiplier
+                if phrase.count(" ") >= 1:
+                    phrase_score *= 1.15
+                candidate_scores[phrase] = candidate_scores.get(phrase, 0.0) + phrase_score
+                candidate_sources.setdefault(phrase, set()).add("transcript")
+
+        ranked_candidates = sorted(
+            candidate_scores.items(),
+            key=lambda item: (-item[1], -item[0].count(" "), item[0]),
+        )
+
+        normalized_fallback = cls._fallback_query(fallback_query)
+        if not ranked_candidates:
+            source = "fallback_sparse_transcript" if has_transcript_tokens else "fallback_missing_evidence"
+            return normalized_fallback, [], source
+
+        query, top_score = ranked_candidates[0]
+        query_sources = candidate_sources.get(query, set())
+
+        # Guard against weak transcript-only matches.
+        if top_score < 2.5 and "metadata" not in query_sources:
+            return normalized_fallback, [], "fallback_sparse_transcript"
+
+        related_topics: list[str] = []
+        for metadata_topic in normalized_metadata_topics:
+            if metadata_topic == query or metadata_topic in related_topics:
+                continue
+            related_topics.append(metadata_topic)
+            if len(related_topics) >= max_related_topics:
+                break
+
+        for phrase, score in ranked_candidates[1:]:
+            if score < 1.6:
+                continue
+            if phrase == query:
+                continue
+            if phrase in related_topics:
+                continue
+            related_topics.append(phrase)
+            if len(related_topics) >= max_related_topics:
+                break
+
+        if "metadata" in query_sources and "transcript" in query_sources:
+            source_label = "metadata+transcript"
+        elif "metadata" in query_sources:
+            source_label = "metadata_topics"
+        elif "transcript" in query_sources:
+            source_label = "transcript_topics"
+        else:
+            source_label = "fallback_missing_evidence"
+
+        return query, related_topics, source_label
+
     def search_videos(
         self,
         query: str,
