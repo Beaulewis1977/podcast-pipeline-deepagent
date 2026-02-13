@@ -201,7 +201,7 @@ def replace_plain_add_commands(text: str) -> tuple[str, list[str]]:
         # Usage: /gsd:add-phase <description>
         out, n1 = re.subn(
             rf"(\bUsage:\s*)(?P<cmd>{cmd_re})\s+<description>",
-            r"\\1\\g<cmd> description=\"<text>\"",
+            r'\1\g<cmd> description="<text>"',
             out,
         )
         if n1:

@@ -546,3 +546,21 @@ class TestQualityControlsContract:
         )
         assert resp.status_code == 200
         assert captured["controls"] == controls
+
+
+class TestServiceErrorParsing:
+    """Validate client error parsing for non-standard HTTP payloads."""
+
+    def test_raise_for_status_handles_non_mapping_json_payload(self) -> None:
+        """Non-dict JSON responses should still populate error detail safely."""
+        response = httpx.Response(
+            500,
+            json=["failed", "retry"],
+            request=httpx.Request("GET", "http://testserver/jobs"),
+        )
+
+        with pytest.raises(ServiceResponseError) as exc_info:
+            ServiceClient._raise_for_status(response)
+
+        assert exc_info.value.status_code == 500
+        assert exc_info.value.detail == ["failed", "retry"]

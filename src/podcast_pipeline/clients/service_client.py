@@ -309,11 +309,16 @@ class ServiceClient:
         """Raise ``ServiceResponseError`` for non-2xx responses."""
         if resp.is_success:
             return
+        detail: object = resp.text
         try:
-            payload = resp.json()
+            payload: object = resp.json()
+        except ValueError:
+            payload = None
+
+        if isinstance(payload, dict):
             detail = payload.get("detail", payload)
-        except Exception:
-            detail = resp.text
+        elif payload is not None:
+            detail = payload
         error_cls = STATUS_ERROR_MAP.get(resp.status_code, ServiceResponseError)
         raise error_cls(resp.status_code, detail)
 

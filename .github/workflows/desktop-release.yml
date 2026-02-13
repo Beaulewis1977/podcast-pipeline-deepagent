@@ -22,7 +22,7 @@ permissions:
 
 env:
   PYTHON_VERSION: "3.12"
-  NODE_VERSION: "20"
+  NODE_VERSION: "22"
   CARGO_TERM_COLOR: always
   # Skip build.rs sidecar validation during CI — binaries are prepared in a
   # dedicated step before `tauri build`.
