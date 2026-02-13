@@ -10,6 +10,7 @@ directory on the local machine.
 import contextlib
 import json
 from datetime import UTC, datetime
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
@@ -614,15 +615,206 @@ def render_video_preview(job_id: str, job_dir: Path) -> None:
             run_stage_via_service(job_id, "ingest")
 
 
+def _parse_time_seconds(raw: Any) -> float | None:
+    """Parse timestamp values from float/int/HH:MM:SS-like strings."""
+    parsed: float | None = None
+
+    if isinstance(raw, (int, float)):
+        parsed = float(raw)
+    elif isinstance(raw, str):
+        text = raw.strip()
+        if text:
+            with contextlib.suppress(ValueError):
+                parsed = float(text)
+            if parsed is None:
+                parts = text.split(":")
+                if 1 <= len(parts) <= 3:
+                    seconds = 0.0
+                    valid = True
+                    for part in parts:
+                        try:
+                            seconds = (seconds * 60.0) + float(part)
+                        except ValueError:
+                            valid = False
+                            break
+                    if valid:
+                        parsed = seconds
+
+    if parsed is None or parsed < 0:
+        return None
+    return parsed
+
+
+def _format_time_seconds(value: float) -> str:
+    """Format seconds as HH:MM:SS.ss or MM:SS.ss."""
+    safe_seconds = max(0.0, float(value))
+    hours = int(safe_seconds // 3600)
+    minutes = int((safe_seconds % 3600) // 60)
+    seconds = safe_seconds % 60
+    if hours > 0:
+        return f"{hours:02d}:{minutes:02d}:{seconds:05.2f}"
+    return f"{minutes:02d}:{seconds:05.2f}"
+
+
+def _clone_timeline_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return a shallow-cloned list of timeline row dicts."""
+    return [{**row} for row in rows]
+
+
+def _timeline_rows_from_artifacts(
+    job_dir: Path,
+    analysis: dict[str, Any],
+    decisions: ReviewDecisions,
+) -> list[dict[str, Any]]:
+    """Load timeline rows from edit_plan first, then analysis+review defaults."""
+    edit_plan_path = job_dir / "review" / "edit_plan.json"
+    if edit_plan_path.exists():
+        try:
+            payload = json.loads(edit_plan_path.read_text())
+            raw_cuts = payload.get("content_cuts", []) if isinstance(payload, dict) else []
+            rows: list[dict[str, Any]] = []
+            for idx, cut in enumerate(raw_cuts):
+                if not isinstance(cut, dict):
+                    continue
+                start_seconds = _parse_time_seconds(cut.get("start_seconds"))
+                end_seconds = _parse_time_seconds(cut.get("end_seconds"))
+                if start_seconds is None or end_seconds is None:
+                    continue
+                rows.append(
+                    {
+                        "id": f"plan-{idx}",
+                        "enabled": True,
+                        "start_seconds": start_seconds,
+                        "end_seconds": end_seconds,
+                        "reason": str(cut.get("reason", "")),
+                    }
+                )
+            if rows:
+                return rows
+        except Exception as exc:
+            logger.warning(
+                "timeline_edit_plan_load_failed", path=str(edit_plan_path), error=str(exc)
+            )
+
+    approved_indices = set(decisions.approved_content_cuts)
+    analysis_cuts = analysis.get("content_cuts", [])
+    analysis_rows: list[dict[str, Any]] = []
+    if not isinstance(analysis_cuts, list):
+        return analysis_rows
+
+    for idx, cut in enumerate(analysis_cuts):
+        if not isinstance(cut, dict):
+            continue
+        start_seconds = _parse_time_seconds(cut.get("start_seconds", cut.get("start")))
+        end_seconds = _parse_time_seconds(cut.get("end_seconds", cut.get("end")))
+        if start_seconds is None or end_seconds is None:
+            continue
+        analysis_rows.append(
+            {
+                "id": f"analysis-{idx}",
+                "enabled": idx in approved_indices,
+                "start_seconds": start_seconds,
+                "end_seconds": end_seconds,
+                "reason": str(cut.get("reason", "")),
+            }
+        )
+
+    return analysis_rows
+
+
+def _validate_timeline_rows(
+    rows: list[dict[str, Any]], duration_seconds: float | None
+) -> list[str]:
+    """Validate timeline rows and return user-facing error messages."""
+    errors: list[str] = []
+    enabled_rows: list[tuple[int, float, float]] = []
+
+    for row_index, row in enumerate(rows, start=1):
+        if not row.get("enabled", True):
+            continue
+        start_seconds = _parse_time_seconds(row.get("start_seconds"))
+        end_seconds = _parse_time_seconds(row.get("end_seconds"))
+        if start_seconds is None or end_seconds is None:
+            errors.append(f"Cut {row_index}: start/end must be valid numeric timestamps.")
+            continue
+        if end_seconds <= start_seconds:
+            errors.append(f"Cut {row_index}: end must be greater than start.")
+            continue
+        if duration_seconds and end_seconds > duration_seconds:
+            errors.append(
+                f"Cut {row_index}: end {end_seconds:.2f}s exceeds source duration {duration_seconds:.2f}s."
+            )
+        enabled_rows.append((row_index, start_seconds, end_seconds))
+
+    ordered = sorted(enabled_rows, key=lambda item: item[1])
+    for previous, current in pairwise(ordered):
+        if current[1] < previous[2]:
+            errors.append(
+                f"Cuts {previous[0]} and {current[0]} overlap ({previous[1]:.2f}-{previous[2]:.2f}s "
+                f"vs {current[1]:.2f}-{current[2]:.2f}s)."
+            )
+
+    return errors
+
+
+def _serialize_enabled_timeline_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Convert enabled timeline rows into analysis-compatible content cuts."""
+    serialized: list[dict[str, Any]] = []
+    for row in rows:
+        if not row.get("enabled", True):
+            continue
+        start_seconds = _parse_time_seconds(row.get("start_seconds"))
+        end_seconds = _parse_time_seconds(row.get("end_seconds"))
+        if start_seconds is None or end_seconds is None:
+            continue
+        serialized.append(
+            {
+                "start_seconds": round(start_seconds, 3),
+                "end_seconds": round(end_seconds, 3),
+                "start": _format_time_seconds(start_seconds),
+                "end": _format_time_seconds(end_seconds),
+                "reason": str(row.get("reason", "")),
+            }
+        )
+    return serialized
+
+
+def _persist_timeline_edit_plan(
+    job_dir: Path,
+    decisions: ReviewDecisions,
+    analysis: dict[str, Any],
+    fillers: list[dict[str, Any]],
+    timeline_rows: list[dict[str, Any]],
+) -> None:
+    """Persist review state and regenerate edit plan using edited timeline rows."""
+    enabled_content_cuts = _serialize_enabled_timeline_rows(timeline_rows)
+
+    review_dir = job_dir / "review"
+    review_dir.mkdir(parents=True, exist_ok=True)
+
+    decisions_for_plan = decisions.model_copy(deep=True)
+    decisions_for_plan.approved_content_cuts = list(range(len(enabled_content_cuts)))
+    decisions.approved_content_cuts = list(decisions_for_plan.approved_content_cuts)
+
+    review_path = review_dir / "review_state.json"
+    review_path.write_text(decisions.model_dump_json(indent=2))
+
+    analysis_for_plan = analysis.copy()
+    analysis_for_plan["content_cuts"] = enabled_content_cuts
+    write_edit_plan(job_dir, decisions_for_plan, analysis_for_plan, fillers)
+
+
 def render_timeline_editor(job_id: str, job_dir: Path) -> None:
-    """Render visual cut editor with timeline markers."""
+    """Render timeline-capable cut editor with persisted range edits."""
     st.subheader("Timeline Editor")
 
+    source_duration: float | None = None
     ingest_metadata = _load_ingest_metadata(job_dir)
     if ingest_metadata is not None:
         with contextlib.suppress(TypeError, ValueError):
             duration_seconds = float(ingest_metadata.get("duration", 0))
             if duration_seconds > 0:
+                source_duration = duration_seconds
                 st.caption(f"Source duration: {duration_seconds:.1f}s")
 
     # Load analysis data
@@ -650,36 +842,125 @@ def render_timeline_editor(job_id: str, job_dir: Path) -> None:
 
     # Content Cuts Section
     st.markdown("#### Content Cuts")
-    content_cuts = analysis.get("content_cuts", [])
+    timeline_state_key = f"timeline_rows_{job_id}"
+    timeline_defaults = _timeline_rows_from_artifacts(job_dir, analysis, decisions)
+    if timeline_state_key not in st.session_state:
+        st.session_state[timeline_state_key] = _clone_timeline_rows(timeline_defaults)
 
-    if not content_cuts:
-        st.info("No content cuts suggested.")
+    timeline_rows = st.session_state.get(timeline_state_key, [])
+    if not isinstance(timeline_rows, list):
+        timeline_rows = _clone_timeline_rows(timeline_defaults)
+        st.session_state[timeline_state_key] = timeline_rows
+
+    if not timeline_rows:
+        st.info("No content cuts suggested yet. Add ranges below if needed.")
     else:
-        approved_cuts = list(decisions.approved_content_cuts)
+        st.caption("Adjust start/end timestamps, disable ranges, or remove rows before saving.")
 
-        for i, cut in enumerate(content_cuts):
-            with st.container():
-                col1, col2, col3, col4 = st.columns([1, 3, 2, 1])
-                with col1:
-                    is_approved = i in approved_cuts
-                    if st.checkbox(
-                        "✓",
-                        value=is_approved,
-                        key=f"cut_approve_{i}",
-                        label_visibility="collapsed",
-                    ):
-                        if i not in approved_cuts:
-                            approved_cuts.append(i)
-                    elif i in approved_cuts:
-                        approved_cuts.remove(i)
-                with col2:
-                    st.markdown(f"**{cut.get('start', '')} - {cut.get('end', '')}**")
-                with col3:
-                    st.caption(cut.get("reason", ""))
-                with col4:
-                    st.caption(f"Cut #{i + 1}")
+    updated_rows: list[dict[str, Any]] = []
+    remove_target_id: str | None = None
 
-        decisions.approved_content_cuts = sorted(set(approved_cuts))
+    for row_index, row in enumerate(timeline_rows):
+        row_id = str(row.get("id", f"row-{row_index}"))
+        with st.container():
+            col1, col2, col3, col4, col5 = st.columns([1, 2, 2, 3, 1])
+            with col1:
+                enabled = st.checkbox(
+                    "Use",
+                    value=bool(row.get("enabled", True)),
+                    key=f"timeline_enabled_{job_id}_{row_id}",
+                )
+            with col2:
+                start_seconds = st.number_input(
+                    "Start (s)",
+                    min_value=0.0,
+                    value=float(row.get("start_seconds", 0.0)),
+                    step=0.1,
+                    format="%.2f",
+                    key=f"timeline_start_{job_id}_{row_id}",
+                )
+            with col3:
+                end_seconds = st.number_input(
+                    "End (s)",
+                    min_value=0.0,
+                    value=float(row.get("end_seconds", 0.0)),
+                    step=0.1,
+                    format="%.2f",
+                    key=f"timeline_end_{job_id}_{row_id}",
+                )
+            with col4:
+                reason = st.text_input(
+                    "Reason",
+                    value=str(row.get("reason", "")),
+                    key=f"timeline_reason_{job_id}_{row_id}",
+                )
+            with col5:
+                if st.button("🗑", key=f"timeline_remove_{job_id}_{row_id}"):
+                    remove_target_id = row_id
+
+        if remove_target_id == row_id:
+            continue
+
+        updated_rows.append(
+            {
+                "id": row_id,
+                "enabled": enabled,
+                "start_seconds": float(start_seconds),
+                "end_seconds": float(end_seconds),
+                "reason": reason,
+            }
+        )
+
+    if remove_target_id is not None:
+        st.session_state[timeline_state_key] = updated_rows
+        st.rerun()
+
+    st.divider()
+
+    st.markdown("**Add Cut Range**")
+    add_col1, add_col2, add_col3, add_col4 = st.columns([2, 2, 3, 1])
+    with add_col1:
+        new_start = st.number_input(
+            "New start (s)",
+            min_value=0.0,
+            value=0.0,
+            step=0.1,
+            format="%.2f",
+            key=f"timeline_new_start_{job_id}",
+        )
+    with add_col2:
+        new_end = st.number_input(
+            "New end (s)",
+            min_value=0.0,
+            value=1.0,
+            step=0.1,
+            format="%.2f",
+            key=f"timeline_new_end_{job_id}",
+        )
+    with add_col3:
+        new_reason = st.text_input(
+            "New reason",
+            value="",
+            key=f"timeline_new_reason_{job_id}",
+            placeholder="Optional reason for this cut",
+        )
+    with add_col4:
+        if st.button("Add", key=f"timeline_add_{job_id}"):
+            if new_end <= new_start:
+                st.error("New cut must have end greater than start.")
+            else:
+                new_id = f"custom-{datetime.now(UTC).strftime('%Y%m%d%H%M%S%f')}"
+                updated_rows.append(
+                    {
+                        "id": new_id,
+                        "enabled": True,
+                        "start_seconds": float(new_start),
+                        "end_seconds": float(new_end),
+                        "reason": new_reason.strip(),
+                    }
+                )
+                st.session_state[timeline_state_key] = updated_rows
+                st.rerun()
 
     st.divider()
 
@@ -715,7 +996,7 @@ def render_timeline_editor(job_id: str, job_dir: Path) -> None:
             select_all = st.checkbox(
                 "Select All Fillers",
                 value=len(approved_fillers) == len(fillers),
-                key="select_all_fillers",
+                key=f"select_all_fillers_{job_id}",
             )
 
             if select_all:
@@ -727,7 +1008,7 @@ def render_timeline_editor(job_id: str, job_dir: Path) -> None:
                     selected = st.checkbox(
                         "✓",
                         value=j in approved_fillers,
-                        key=f"filler_{j}",
+                        key=f"filler_{job_id}_{j}",
                         label_visibility="collapsed",
                     )
                     if selected and j not in approved_fillers:
@@ -747,8 +1028,19 @@ def render_timeline_editor(job_id: str, job_dir: Path) -> None:
 
     # Save changes button
     if st.button("💾 Save Timeline Changes", key="save_timeline"):
-        save_review_decisions(job_dir, decisions)
-        st.success("Timeline changes saved!")
+        validation_errors = _validate_timeline_rows(updated_rows, source_duration)
+        if validation_errors:
+            for issue in validation_errors:
+                st.error(issue)
+            return
+
+        st.session_state[timeline_state_key] = _clone_timeline_rows(updated_rows)
+        try:
+            _persist_timeline_edit_plan(job_dir, decisions, analysis, fillers, updated_rows)
+        except Exception as exc:
+            st.error(f"Failed to persist timeline edits: {exc}")
+            return
+        st.success("Timeline changes saved to review state and edit plan.")
 
 
 def render_thumbnail_selector(job_dir: Path) -> None:
@@ -1036,7 +1328,9 @@ def render_marketing_editor(job_dir: Path) -> None:
                         until_stage="review",
                     )
                     if result.status in {"complete", "running"}:
-                        st.success("Regenerated through review workflow. Reloading latest analysis...")
+                        st.success(
+                            "Regenerated through review workflow. Reloading latest analysis..."
+                        )
                         st.rerun()
                     else:
                         st.error(f"Regeneration failed: {result.message}")

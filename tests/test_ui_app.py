@@ -144,3 +144,114 @@ def test_ui_app_marketing_review_flow_regeneration_resets_review_state(tmp_path:
     updated = ReviewDecisions.model_validate_json((review_dir / "review_state.json").read_text())
     assert updated.review_complete is False
     assert updated.marketing_edits == {}
+
+
+def test_ui_app_timeline_edit_prefers_saved_edit_plan(tmp_path: Path) -> None:
+    """Timeline rows should load from review/edit_plan.json when available."""
+    from podcast_pipeline.stages.review import ReviewDecisions
+    from podcast_pipeline.ui.app import _timeline_rows_from_artifacts
+
+    _write_json(
+        tmp_path / "analysis" / "analysis.json",
+        {
+            "content_cuts": [
+                {
+                    "start_seconds": 1.0,
+                    "end_seconds": 2.0,
+                    "reason": "analysis-cut",
+                }
+            ]
+        },
+    )
+    _write_json(
+        tmp_path / "review" / "edit_plan.json",
+        {
+            "content_cuts": [
+                {
+                    "start_seconds": 10.5,
+                    "end_seconds": 12.25,
+                    "reason": "saved-cut",
+                }
+            ]
+        },
+    )
+
+    rows = _timeline_rows_from_artifacts(
+        tmp_path,
+        analysis={"content_cuts": []},
+        decisions=ReviewDecisions(),
+    )
+
+    assert len(rows) == 1
+    assert rows[0]["start_seconds"] == 10.5
+    assert rows[0]["end_seconds"] == 12.25
+    assert rows[0]["reason"] == "saved-cut"
+    assert rows[0]["enabled"] is True
+
+
+def test_ui_app_timeline_edit_validation_reports_overlap_and_bounds() -> None:
+    """Timeline validation should reject overlaps and out-of-bounds ranges."""
+    from podcast_pipeline.ui.app import _validate_timeline_rows
+
+    errors = _validate_timeline_rows(
+        [
+            {"enabled": True, "start_seconds": 5.0, "end_seconds": 7.0, "reason": "A"},
+            {"enabled": True, "start_seconds": 6.5, "end_seconds": 8.0, "reason": "B"},
+            {"enabled": True, "start_seconds": 20.0, "end_seconds": 40.0, "reason": "C"},
+        ],
+        duration_seconds=30.0,
+    )
+
+    assert any("overlap" in error.lower() for error in errors)
+    assert any("exceeds source duration" in error for error in errors)
+
+
+def test_ui_app_review_state_timeline_save_writes_custom_edit_plan(tmp_path: Path) -> None:
+    """Saving timeline edits should persist review state and custom edit plan ranges."""
+    from podcast_pipeline.stages.review import ReviewDecisions
+    from podcast_pipeline.ui.app import _persist_timeline_edit_plan
+
+    _write_json(
+        tmp_path / "analysis" / "analysis.json",
+        {
+            "content_cuts": [],
+            "viral_clips": [],
+            "thumbnail_frames": [],
+        },
+    )
+
+    decisions = ReviewDecisions()
+    timeline_rows = [
+        {
+            "id": "row-1",
+            "enabled": True,
+            "start_seconds": 12.0,
+            "end_seconds": 18.5,
+            "reason": "tighten intro",
+        },
+        {
+            "id": "row-2",
+            "enabled": False,
+            "start_seconds": 30.0,
+            "end_seconds": 35.0,
+            "reason": "disabled cut",
+        },
+    ]
+
+    _persist_timeline_edit_plan(
+        tmp_path,
+        decisions,
+        analysis={"content_cuts": []},
+        fillers=[],
+        timeline_rows=timeline_rows,
+    )
+
+    review_state = ReviewDecisions.model_validate_json(
+        (tmp_path / "review" / "review_state.json").read_text()
+    )
+    assert review_state.approved_content_cuts == [0]
+
+    edit_plan = json.loads((tmp_path / "review" / "edit_plan.json").read_text())
+    assert len(edit_plan["content_cuts"]) == 1
+    assert edit_plan["content_cuts"][0]["start_seconds"] == 12.0
+    assert edit_plan["content_cuts"][0]["end_seconds"] == 18.5
