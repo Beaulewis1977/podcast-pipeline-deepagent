@@ -1,8 +1,8 @@
 # Project State: Podcast Pipeline
 
 **Last updated:** 2026-02-13
-**Current phase:** Phase 4 in progress (6/10 plans complete)
-**Overall progress:** 85% (23/27 plans complete)
+**Current phase:** Phase 4 in progress (7/10 plans complete)
+**Overall progress:** 89% (24/27 plans complete)
 
 ## Project Reference
 
@@ -15,14 +15,14 @@ See: `.planning/PROJECT.md`
 
 ```
 Phase:    3 of 4 complete (Phase 4 execution in progress)
-Plan:     23 completed overall; 6/10 complete in Phase 4
+Plan:     24 completed overall; 7/10 complete in Phase 4
 Status:   Executing Phase 4 hardening plans
-Last activity: 2026-02-13 - Completed 04-03-PLAN.md
+Last activity: 2026-02-13 - Completed 04-07-PLAN.md
 
-Progress: [█████████████████████░░░░] 85% (23/27 plans complete)
+Progress: [██████████████████████░░░] 89% (24/27 plans complete)
 ```
 
-**Next Phase:** Phase 4 - Post-release hardening (`04-07-PLAN.md`)
+**Next Phase:** Phase 4 - Post-release hardening (`04-08-PLAN.md`)
 
 ## Phase Status
 
@@ -31,13 +31,13 @@ Progress: [█████████████████████░░
 | 1 | Wiring + Stability | Complete | 6/6 | 100% |
 | 2 | Research + Viral Integration | Complete | 5/5 | 100% |
 | 3 | Polishing + Desktop Distribution | Complete | 6/6 | 100% |
-| 4 | Post-release hardening | In progress | 6/10 | 60% |
+| 4 | Post-release hardening | In progress | 7/10 | 70% |
 
 ## Performance Metrics
 
 | Metric | Value |
 |--------|-------|
-| Plans completed | 23 |
+| Plans completed | 24 |
 | Requirements done | 35/83 (21 partial) |
 | Phases complete | 3/4 |
 | Estimated completion | In progress |
@@ -100,6 +100,9 @@ Progress: [█████████████████████░░
 | Persist uploads in jobs/_uploads before service create_job | Keeps pipeline/service as source of truth for job directory lifecycle and removes orphan pre-job directories | 2026-02-13 |
 | Streamlit preview/timeline metadata source is intermediate/metadata.json with logged legacy fallback | Aligns UI duration/timestamp reads with ingest outputs while preserving backward compatibility | 2026-02-13 |
 | Marketing save/regenerate persists via review_state and analyze→review regeneration | Preserves review-governed editorial audit trail and avoids direct analysis.json mutation | 2026-02-13 |
+| Render stage now reports explicit degraded/failed outcomes with per-platform status maps | Prevents hidden partial export failures from being reported as generic success | 2026-02-13 |
+| Quality controls flow through run payload schemas into persisted job config and render runtime settings | Converts Streamlit quality widgets from display-only state into effective encoding behavior | 2026-02-13 |
+| Ingest/render now enforce disk preflight and post-FFmpeg output existence checks | Fails early on low-capacity conditions and loudly on missing/empty artifacts | 2026-02-13 |
 
 ### Roadmap Evolution
 
@@ -111,6 +114,7 @@ Progress: [█████████████████████░░
 - Phase 4 execution continued: completed 04-05 provider reliability hardening
 - Phase 4 execution continued: completed 04-06 service runtime hardening (auth gate + timeout heartbeats + reconciliation diagnostics)
 - Phase 4 execution continued: completed 04-03 UI truthfulness hardening (full-run semantics + metadata path fix + review-governed marketing flow)
+- Phase 4 execution continued: completed 04-07 render truthfulness and quality wiring hardening (platform failure contract + quality payload wiring + preflight/output checks)
 
 ### Technical Notes
 
@@ -150,16 +154,17 @@ Progress: [█████████████████████░░
 - 2026-02-13: Completed 04-05-PLAN.md (provider parse failure hardening + degraded fallback signaling + Gemini upload/retry reliability tests)
 - 2026-02-13: Completed 04-06-PLAN.md (production auth gate + sanitized errors + supervisor timeout heartbeat + periodic reconciliation diagnostics)
 - 2026-02-13: Completed 04-03-PLAN.md (truthful full-run UI action, canonical metadata/timeline loading, review-governed marketing save/regenerate flow)
+- 2026-02-13: Completed 04-07-PLAN.md (render truthful partial-failure semantics, quality-control run payload wiring, ingest/render preflight and artifact verification guardrails)
 
 ## Session Continuity
 
 ### Last session
 
-Executed `04-03-PLAN.md`, aligned Streamlit full-run semantics and upload ownership, fixed canonical metadata/timeline loading, and moved marketing save/regenerate flows into review-state workflow artifacts.
+Executed `04-07-PLAN.md`, hardened render outcome truthfulness, wired Streamlit quality controls into validated run payloads, and added ingest/render preflight plus output-verification guardrails.
 
 ### Stopped at
 
-Completed `04-03-PLAN.md`; next action is execute `04-07-PLAN.md`.
+Completed `04-07-PLAN.md`; next action is execute `04-08-PLAN.md`.
 
 ### Resume file
 
