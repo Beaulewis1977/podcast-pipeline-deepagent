@@ -3,7 +3,10 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from podcast_pipeline.config import Config
+from podcast_pipeline.models.job import Job, StageStatus
 from podcast_pipeline.pipeline import Pipeline
 
 
@@ -93,3 +96,28 @@ class TestReviewStage:
         assert len(decisions.selected_clips) == 1
         assert decisions.selected_thumbnail == 0
         assert "youtube" in decisions.export_platforms
+
+
+class TestStageValidation:
+    """Tests for strict stage validation at pipeline entry points."""
+
+    def test_invalid_stage_rejected_with_validation_error(self, config: Config) -> None:
+        """Invalid explicit stage names should fail fast."""
+        pipeline = Pipeline(config)
+        job = Job(job_id="invalid-stage-job", input_file="/tmp/test.mp4")  # noqa: S108
+
+        with pytest.raises(ValueError, match="Unknown stage: invalid-stage"):
+            pipeline.run(job, stage="invalid-stage")
+
+        assert job.status == StageStatus.PENDING
+        assert all(stage.status == StageStatus.PENDING for stage in job.stages.values())
+
+    def test_invalid_stage_validation_for_until_stage(self, config: Config) -> None:
+        """Invalid until_stage values should fail fast."""
+        pipeline = Pipeline(config)
+        job = Job(job_id="invalid-until-job", input_file="/tmp/test.mp4")  # noqa: S108
+
+        with pytest.raises(ValueError, match="Unknown stage: not-a-stage"):
+            pipeline.run(job, until_stage="not-a-stage")
+
+        assert job.status == StageStatus.PENDING

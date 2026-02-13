@@ -3,7 +3,7 @@
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 from pydantic import BaseModel, Field
 
@@ -36,6 +36,14 @@ class JobStage(BaseModel):
 class Job(BaseModel):
     """Complete job state."""
 
+    DEFAULT_STAGES: ClassVar[tuple[str, ...]] = (
+        "ingest",
+        "transcribe",
+        "analyze",
+        "review",
+        "render",
+    )
+
     job_id: str
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
@@ -47,10 +55,16 @@ class Job(BaseModel):
 
     def model_post_init(self, __context: Any) -> None:
         """Initialize default stages if not provided."""
-        default_stages = ["ingest", "transcribe", "analyze", "review", "render"]
-        for stage_name in default_stages:
+        for stage_name in self.DEFAULT_STAGES:
             if stage_name not in self.stages:
                 self.stages[stage_name] = JobStage()
+
+    @classmethod
+    def validate_stage_name(cls, stage_name: str) -> None:
+        """Validate that a stage name is part of the supported pipeline."""
+        if stage_name not in cls.DEFAULT_STAGES:
+            valid_stages = ", ".join(cls.DEFAULT_STAGES)
+            raise ValueError(f"Unknown stage: {stage_name}. Expected one of: {valid_stages}")
 
     def get_job_dir(self, base_path: Path) -> Path:
         """Get the job directory path."""
@@ -85,6 +99,7 @@ class Job(BaseModel):
         model: str | None = None,
     ) -> None:
         """Update a stage's status."""
+        self.validate_stage_name(stage_name)
         if stage_name not in self.stages:
             self.stages[stage_name] = JobStage()
 
@@ -115,6 +130,7 @@ class Job(BaseModel):
         progress_message: str | None = None,
     ) -> None:
         """Update a stage's progress without changing status."""
+        self.validate_stage_name(stage_name)
         if stage_name not in self.stages:
             self.stages[stage_name] = JobStage()
 

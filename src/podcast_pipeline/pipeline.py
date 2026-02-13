@@ -20,7 +20,7 @@ logger = get_logger(__name__)
 class Pipeline:
     """Pipeline orchestrator."""
 
-    STAGE_ORDER = ["ingest", "transcribe", "analyze", "review", "render"]
+    STAGE_ORDER = list(Job.DEFAULT_STAGES)
 
     def __init__(self, config: Config | None = None):
         self.config = config or load_config()
@@ -140,18 +140,7 @@ class Pipeline:
         """
         job_dir = job.get_job_dir(self.config.paths.jobs_dir)
         results: dict[str, StageResult] = {}
-
-        # Determine which stages to run
-        if stage:
-            stages_to_run = [stage]
-        elif until_stage:
-            try:
-                idx = self.STAGE_ORDER.index(until_stage)
-                stages_to_run = self.STAGE_ORDER[: idx + 1]
-            except ValueError as e:
-                raise ValueError(f"Unknown stage: {until_stage}") from e
-        else:
-            stages_to_run = self.STAGE_ORDER
+        stages_to_run = self._resolve_stages_to_run(stage=stage, until_stage=until_stage)
 
         logger.info(
             "pipeline_starting",
@@ -160,10 +149,6 @@ class Pipeline:
         )
 
         for stage_name in stages_to_run:
-            if stage_name not in self.stages:
-                logger.warning("unknown_stage", stage=stage_name)
-                continue
-
             stage_impl = self.stages[stage_name]
 
             # Check if stage should run
@@ -206,6 +191,21 @@ class Pipeline:
         )
 
         return results
+
+    def _resolve_stages_to_run(
+        self,
+        stage: str | None = None,
+        until_stage: str | None = None,
+    ) -> list[str]:
+        """Resolve and validate requested stages."""
+        if stage:
+            Job.validate_stage_name(stage)
+            return [stage]
+        if until_stage:
+            Job.validate_stage_name(until_stage)
+            idx = self.STAGE_ORDER.index(until_stage)
+            return self.STAGE_ORDER[: idx + 1]
+        return self.STAGE_ORDER.copy()
 
 
 def create_and_run_pipeline(
