@@ -14,13 +14,11 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
-import os
 import re
 import shutil
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, List, Tuple
-
 
 TARGET_GLOBS = (
     "prompts/gsd-*.md",
@@ -31,7 +29,7 @@ TARGET_GLOBS = (
 )
 
 
-CANONICAL_HINTS: Dict[str, str] = {
+CANONICAL_HINTS: dict[str, str] = {
     "add-phase": 'description="<text>"',
     "add-todo": 'description="<text>"',
     "audit-milestone": 'version="<milestone-version>"',
@@ -58,11 +56,11 @@ ARG_HINT_RE = re.compile(r"^(\s*argument-hint:\s*)(.+?)\s*$", re.IGNORECASE)
 class Change:
     rel_path: str
     changed: bool
-    notes: List[str]
+    notes: list[str]
 
 
-def iter_target_files(codex_root: Path) -> List[Path]:
-    files: List[Path] = []
+def iter_target_files(codex_root: Path) -> list[Path]:
+    files: list[Path] = []
     for pattern in TARGET_GLOBS:
         files.extend(codex_root.glob(pattern))
     gsd_dir = codex_root / "gsd"
@@ -88,8 +86,8 @@ def yaml_quote(value: str) -> str:
     return f"'{escaped}'"
 
 
-def replace_argument_hint(text: str, rel_path: str) -> Tuple[str, List[str]]:
-    notes: List[str] = []
+def replace_argument_hint(text: str, rel_path: str) -> tuple[str, list[str]]:
+    notes: list[str] = []
     cmd = command_name_from_path(rel_path)
     if not cmd:
         return text, notes
@@ -98,7 +96,7 @@ def replace_argument_hint(text: str, rel_path: str) -> Tuple[str, List[str]]:
     if not canonical:
         return text, notes
 
-    out_lines: List[str] = []
+    out_lines: list[str] = []
     changed = False
     for line in text.splitlines():
         m = ARG_HINT_RE.match(line)
@@ -121,11 +119,11 @@ def _cmd_regex(cmd_name: str) -> str:
     return rf"(?:/gsd:{re.escape(cmd_name)}|/prompts:gsd-{re.escape(cmd_name)})"
 
 
-def replace_single_arg_commands(text: str) -> Tuple[str, List[str]]:
-    notes: List[str] = []
+def replace_single_arg_commands(text: str) -> tuple[str, list[str]]:
+    notes: list[str] = []
 
     placeholder_pat = r"[0-9]+(?:\.[0-9]+)?|\{[^}]+\}|\[[^\]]+\]|<[^>]+>|\$\{[^}]+\}"
-    single_arg_cmds: List[Tuple[str, str, str]] = [
+    single_arg_cmds: list[tuple[str, str, str]] = [
         ("plan-phase", "phase", placeholder_pat),
         ("execute-phase", "phase", placeholder_pat),
         ("verify-work", "phase", placeholder_pat),
@@ -158,8 +156,8 @@ def replace_single_arg_commands(text: str) -> Tuple[str, List[str]]:
     return out, notes
 
 
-def replace_description_commands(text: str) -> Tuple[str, List[str]]:
-    notes: List[str] = []
+def replace_description_commands(text: str) -> tuple[str, list[str]]:
+    notes: list[str] = []
     out = text
 
     # Replace backticked add-phase/add-todo examples with unkeyed multiword descriptions.
@@ -186,8 +184,8 @@ def replace_description_commands(text: str) -> Tuple[str, List[str]]:
     return out, notes
 
 
-def replace_plain_add_commands(text: str) -> Tuple[str, List[str]]:
-    notes: List[str] = []
+def replace_plain_add_commands(text: str) -> tuple[str, list[str]]:
+    notes: list[str] = []
     out = text
 
     def quote_desc(desc: str) -> str:
@@ -201,7 +199,7 @@ def replace_plain_add_commands(text: str) -> Tuple[str, List[str]]:
         # Usage: /gsd:add-phase <description>
         out, n1 = re.subn(
             rf"(\bUsage:\s*)(?P<cmd>{cmd_re})\s+<description>",
-            rf"\\1\\g<cmd> description=\"<text>\"",
+            r"\\1\\g<cmd> description=\"<text>\"",
             out,
         )
         if n1:
@@ -223,8 +221,8 @@ def replace_plain_add_commands(text: str) -> Tuple[str, List[str]]:
     return out, notes
 
 
-def replace_help_parentheticals(text: str) -> Tuple[str, List[str]]:
-    notes: List[str] = []
+def replace_help_parentheticals(text: str) -> tuple[str, list[str]]:
+    notes: list[str] = []
     out = text
 
     # Avoid positional-arg looking tails by using a dash separator.
@@ -241,8 +239,8 @@ def replace_help_parentheticals(text: str) -> Tuple[str, List[str]]:
     return out, notes
 
 
-def replace_plain_todo_and_debug_lines(text: str) -> Tuple[str, List[str]]:
-    notes: List[str] = []
+def replace_plain_todo_and_debug_lines(text: str) -> tuple[str, list[str]]:
+    notes: list[str] = []
     out = text
 
     # Lines like: /gsd:add-todo Fix modal z-index  # ...
@@ -274,8 +272,8 @@ def replace_plain_todo_and_debug_lines(text: str) -> Tuple[str, List[str]]:
     return out, notes
 
 
-def replace_insert_phase(text: str) -> Tuple[str, List[str]]:
-    notes: List[str] = []
+def replace_insert_phase(text: str) -> tuple[str, list[str]]:
+    notes: list[str] = []
     out = text
     cmd = "insert-phase"
     cmd_re = _cmd_regex(cmd)
@@ -344,8 +342,8 @@ def replace_insert_phase(text: str) -> Tuple[str, List[str]]:
     return out, notes
 
 
-def fix_research_phase_normalization(text: str) -> Tuple[str, List[str]]:
-    notes: List[str] = []
+def fix_research_phase_normalization(text: str) -> tuple[str, list[str]]:
+    notes: list[str] = []
     # Update normalization block to support key=value args: phase=...
     # Applies to both prompts and commands versions of research-phase.
     if 'PHASE=$(printf "%02d" "$ARGUMENTS")' not in text:
@@ -361,22 +359,22 @@ def fix_research_phase_normalization(text: str) -> Tuple[str, List[str]]:
         return (
             "```bash\n"
             "# Extract phase from key=value args (phase=...) if present.\n"
-            "PHASE_RAW=\"$ARGUMENTS\"\n"
+            'PHASE_RAW="$ARGUMENTS"\n'
             "for tok in $ARGUMENTS; do\n"
-            "  case \"$tok\" in\n"
-            "    phase=*) PHASE_RAW=\"${tok#phase=}\" ;;\n"
+            '  case "$tok" in\n'
+            '    phase=*) PHASE_RAW="${tok#phase=}" ;;\n'
             "  esac\n"
             "done\n"
-            "PHASE_RAW=\"${PHASE_RAW#\\\"}\"; PHASE_RAW=\"${PHASE_RAW%\\\"}\"\n"
-            "PHASE_RAW=\"${PHASE_RAW#\\'}\"; PHASE_RAW=\"${PHASE_RAW%\\'}\"\n"
+            'PHASE_RAW="${PHASE_RAW#\\"}"; PHASE_RAW="${PHASE_RAW%\\"}"\n'
+            'PHASE_RAW="${PHASE_RAW#\\\'}"; PHASE_RAW="${PHASE_RAW%\\\'}"\n'
             "\n"
             "# Normalize phase number (8 -> 08, but preserve decimals like 2.1 -> 02.1)\n"
-            "if [[ \"$PHASE_RAW\" =~ ^[0-9]+$ ]]; then\n"
-            "  PHASE=$(printf \"%02d\" \"$PHASE_RAW\")\n"
-            "elif [[ \"$PHASE_RAW\" =~ ^([0-9]+)\\.([0-9]+)$ ]]; then\n"
-            "  PHASE=$(printf \"%02d.%s\" \"${BASH_REMATCH[1]}\" \"${BASH_REMATCH[2]}\")\n"
+            'if [[ "$PHASE_RAW" =~ ^[0-9]+$ ]]; then\n'
+            '  PHASE=$(printf "%02d" "$PHASE_RAW")\n'
+            'elif [[ "$PHASE_RAW" =~ ^([0-9]+)\\.([0-9]+)$ ]]; then\n'
+            '  PHASE=$(printf "%02d.%s" "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}")\n'
             "else\n"
-            "  PHASE=\"$PHASE_RAW\"\n"
+            '  PHASE="$PHASE_RAW"\n'
             "fi\n"
             "\n"
             f"{grep_line}\n"
@@ -389,8 +387,8 @@ def fix_research_phase_normalization(text: str) -> Tuple[str, List[str]]:
     return out, notes
 
 
-def apply_fixes_to_text(text: str, rel_path: str) -> Tuple[str, List[str]]:
-    notes: List[str] = []
+def apply_fixes_to_text(text: str, rel_path: str) -> tuple[str, list[str]]:
+    notes: list[str] = []
 
     text2, n = replace_argument_hint(text, rel_path)
     if n:
@@ -454,7 +452,7 @@ def main() -> int:
         backup_root.mkdir(parents=True, exist_ok=True)
         backup_files(codex_root, files, backup_root)
 
-    changes: List[Change] = []
+    changes: list[Change] = []
     changed_count = 0
     for path in files:
         rel_path = str(path.relative_to(codex_root))

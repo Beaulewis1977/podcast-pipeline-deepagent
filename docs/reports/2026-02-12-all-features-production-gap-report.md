@@ -6,7 +6,7 @@ Scope: production runtime behavior only (not release/signing/distribution proces
 
 ## 1. Executive Summary
 
-The project is meaningfully implemented, but it is not yet production-grade across all features.  
+The project is meaningfully implemented, but it is not yet production-grade across all features.
 Real execution exists for ingest/transcribe/analyze/review/render, but several high-impact gaps still prevent reliable, high-quality, intelligent outcomes in real-world use.
 
 Most important reality:

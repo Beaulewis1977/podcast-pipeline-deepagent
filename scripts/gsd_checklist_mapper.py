@@ -11,10 +11,9 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, List, Tuple
-
 
 TARGET_GLOBS = (
     "prompts/gsd-*.md",
@@ -33,7 +32,7 @@ BARE_COMMAND_LINE_RE = re.compile(
 )
 
 # Recommended canonical forms for key=value migration.
-CANONICAL_FORMS: Dict[str, str] = {
+CANONICAL_FORMS: dict[str, str] = {
     "add-phase": 'description="<text>"',
     "add-todo": 'description="<text>"',
     "audit-milestone": 'version="<milestone-version>"',
@@ -63,8 +62,8 @@ class Finding:
     suggestion: str
 
 
-def iter_target_files(codex_root: Path) -> List[Path]:
-    files: List[Path] = []
+def iter_target_files(codex_root: Path) -> list[Path]:
+    files: list[Path] = []
     for pattern in TARGET_GLOBS:
         files.extend(codex_root.glob(pattern))
     gsd_dir = codex_root / "gsd"
@@ -77,7 +76,7 @@ def clean_token(token: str) -> str:
     return token.strip().strip("`.,;:()[]")
 
 
-def split_tokens(rest: str) -> List[str]:
+def split_tokens(rest: str) -> list[str]:
     if not rest.strip():
         return []
     text = rest.replace("`", " ")
@@ -118,7 +117,7 @@ def build_suggestion(command: str) -> str:
     return f"{command} <name>=<value>"
 
 
-def is_positional_arg_usage(tokens: List[str]) -> bool:
+def is_positional_arg_usage(tokens: list[str]) -> bool:
     if not tokens:
         return False
     non_flags = [tok for tok in tokens if not tok.startswith("--")]
@@ -142,7 +141,7 @@ def is_usage_context(line: str) -> bool:
     return False
 
 
-def truncate_arg_tokens(tokens: List[str]) -> List[str]:
+def truncate_arg_tokens(tokens: list[str]) -> list[str]:
     stopwords = {
         "and",
         "or",
@@ -161,7 +160,7 @@ def truncate_arg_tokens(tokens: List[str]) -> List[str]:
         "so",
         "because",
     }
-    out: List[str] = []
+    out: list[str] = []
     for tok in tokens:
         low = tok.lower()
         if tok.startswith("/"):
@@ -178,8 +177,8 @@ def truncate_arg_tokens(tokens: List[str]) -> List[str]:
 
 def collect_command_findings_from_text(
     rel_path: str, line_no: int, line_text: str, text: str
-) -> List[Finding]:
-    findings: List[Finding] = []
+) -> list[Finding]:
+    findings: list[Finding] = []
     for cmd_match in COMMAND_RE.finditer(text):
         command = cmd_match.group(0)
         cmd_name = normalize_command_name(command)
@@ -202,9 +201,9 @@ def collect_command_findings_from_text(
     return findings
 
 
-def collect_findings(codex_root: Path, files: Iterable[Path]) -> List[Finding]:
-    findings: List[Finding] = []
-    seen: set[Tuple[str, int, str, str, str]] = set()
+def collect_findings(codex_root: Path, files: Iterable[Path]) -> list[Finding]:
+    findings: list[Finding] = []
+    seen: set[tuple[str, int, str, str, str]] = set()
     for path in files:
         rel_path = str(path.relative_to(codex_root))
         try:
@@ -238,26 +237,20 @@ def collect_findings(codex_root: Path, files: Iterable[Path]) -> List[Finding]:
             for span_match in CODE_SPAN_RE.finditer(line):
                 span_text = span_match.group(1)
                 findings.extend(
-                    collect_command_findings_from_text(
-                        rel_path, line_no, line, span_text
-                    )
+                    collect_command_findings_from_text(rel_path, line_no, line, span_text)
                 )
 
             # Command checks in bare command lines.
             bare = BARE_COMMAND_LINE_RE.match(line)
             if bare:
                 text = f"{bare.group('cmd')}{bare.group('tail')}"
-                findings.extend(
-                    collect_command_findings_from_text(rel_path, line_no, line, text)
-                )
+                findings.extend(collect_command_findings_from_text(rel_path, line_no, line, text))
                 continue
 
             # Plain-text usage lines that are not in code spans.
             if is_usage_context(line):
-                findings.extend(
-                    collect_command_findings_from_text(rel_path, line_no, line, line)
-                )
-    deduped: List[Finding] = []
+                findings.extend(collect_command_findings_from_text(rel_path, line_no, line, line))
+    deduped: list[Finding] = []
     for finding in findings:
         key = (
             finding.rel_path,
@@ -274,17 +267,17 @@ def collect_findings(codex_root: Path, files: Iterable[Path]) -> List[Finding]:
 
 
 def render_report(
-    codex_root: Path, files: List[Path], findings: List[Finding], out_path: Path
+    codex_root: Path, files: list[Path], findings: list[Finding], out_path: Path
 ) -> str:
     now = dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     files_with_issues = sorted({f.rel_path for f in findings})
-    by_category: Dict[str, int] = {}
-    by_file: Dict[str, int] = {}
+    by_category: dict[str, int] = {}
+    by_file: dict[str, int] = {}
     for f in findings:
         by_category[f.category] = by_category.get(f.category, 0) + 1
         by_file[f.rel_path] = by_file.get(f.rel_path, 0) + 1
 
-    lines: List[str] = []
+    lines: list[str] = []
     lines.append("# GSD Key=Value Migration Checklist")
     lines.append("")
     lines.append(f"- Audit time: `{now}`")
@@ -312,7 +305,7 @@ def render_report(
     lines.append("")
     lines.append("- [ ] Update all `argument-hint:` entries that are still positional.")
     lines.append("- [ ] Update all command examples that pass bare values (e.g. `... 4`).")
-    lines.append("- [ ] Update all routing/\"next command\" snippets to key=value form.")
+    lines.append('- [ ] Update all routing/"next command" snippets to key=value form.')
     lines.append("- [ ] Re-run this mapper and confirm `Total checklist items: 0`.")
     lines.append("")
     lines.append("## Hotspots (Fix First)")
@@ -328,7 +321,7 @@ def render_report(
     if not findings:
         lines.append("- [x] No file-level changes required.")
     else:
-        grouped: Dict[str, List[Finding]] = {}
+        grouped: dict[str, list[Finding]] = {}
         for finding in findings:
             grouped.setdefault(finding.rel_path, []).append(finding)
 
@@ -337,9 +330,7 @@ def render_report(
             lines.append(f"### `{rel_path}`")
             lines.append("")
             for finding in file_findings:
-                lines.append(
-                    f"- [ ] `{rel_path}:{finding.line_no}` `{finding.category}`"
-                )
+                lines.append(f"- [ ] `{rel_path}:{finding.line_no}` `{finding.category}`")
                 lines.append(f"  Current: `{finding.line_text}`")
                 lines.append(f"  Suggest: `{finding.suggestion}`")
             lines.append("")

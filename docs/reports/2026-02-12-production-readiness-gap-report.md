@@ -1,6 +1,6 @@
 # Production Readiness Gap Report
 
-Date: 2026-02-12  
+Date: 2026-02-12
 Scope reviewed: full repository + `docs/plans/2026-01-29-podcast-pipeline-design.md`
 
 ## Executive Summary
