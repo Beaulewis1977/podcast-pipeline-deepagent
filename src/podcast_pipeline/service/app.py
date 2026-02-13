@@ -15,10 +15,10 @@ Usage::
 """
 
 import asyncio
-from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager, suppress
 import hmac
 import os
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from typing import Annotated
 
@@ -103,9 +103,7 @@ def _load_service_auth_policy() -> ServiceAuthPolicy:
     )
 
     if environment == "production" and api_key is None:
-        raise RuntimeError(
-            "Production mode requires PODCAST_PIPELINE_SERVICE_API_KEY to be set."
-        )
+        raise RuntimeError("Production mode requires PODCAST_PIPELINE_SERVICE_API_KEY to be set.")
 
     return ServiceAuthPolicy(
         environment=environment,

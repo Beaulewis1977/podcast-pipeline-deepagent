@@ -363,7 +363,9 @@ class RenderStage(Stage):
             normalized.append(
                 {
                     "analysis_index": index,
-                    "timestamp": str(raw.get("timestamp") or self._format_timestamp(timestamp_seconds)),
+                    "timestamp": str(
+                        raw.get("timestamp") or self._format_timestamp(timestamp_seconds)
+                    ),
                     "timestamp_seconds": timestamp_seconds,
                     "visual_description": str(raw.get("visual_description", "")),
                     "suggested_text_overlay": str(raw.get("suggested_text_overlay", "")),
@@ -411,7 +413,10 @@ class RenderStage(Stage):
         total = len(candidates)
         for index, candidate in enumerate(candidates):
             score = float(total - index)
-            if selected_thumbnail is not None and candidate.get("analysis_index") == selected_thumbnail:
+            if (
+                selected_thumbnail is not None
+                and candidate.get("analysis_index") == selected_thumbnail
+            ):
                 score += 5.0
             if candidate.get("suggested_text_overlay"):
                 score += 0.8
@@ -477,9 +482,7 @@ class RenderStage(Stage):
         extraction_errors: list[str] = []
 
         max_timestamp = (
-            max(video_duration - MIN_THUMBNAIL_OFFSET_SECONDS, 0.0)
-            if video_duration > 0
-            else None
+            max(video_duration - MIN_THUMBNAIL_OFFSET_SECONDS, 0.0) if video_duration > 0 else None
         )
 
         for rank, candidate in enumerate(ranked_candidates, start=1):
@@ -505,7 +508,9 @@ class RenderStage(Stage):
                 run_ffmpeg(args)
                 self._assert_output_exists(thumbnail_path, f"thumbnail_{rank:02d}")
             except (FFmpegError, FileNotFoundError, RuntimeError) as e:
-                extraction_errors.append(f"{candidate.get('timestamp')} ({timestamp_seconds:.2f}s): {e}")
+                extraction_errors.append(
+                    f"{candidate.get('timestamp')} ({timestamp_seconds:.2f}s): {e}"
+                )
                 continue
 
             relative_path = str(thumbnail_path.relative_to(job_dir))
@@ -561,39 +566,34 @@ class RenderStage(Stage):
         """Parse timestamp-like values into seconds."""
         if isinstance(value, (int, float)):
             return max(float(value), 0.0)
-        if not isinstance(value, str):
-            return None
+        total_seconds = 0.0
+        is_valid = False
 
-        normalized = value.strip()
-        if not normalized:
-            return None
+        if isinstance(value, str):
+            normalized = value.strip()
+            parts = normalized.split(":") if normalized else []
 
-        parts = normalized.split(":")
-        if len(parts) not in {2, 3}:
-            return None
+            if len(parts) in {2, 3}:
+                try:
+                    numbers = [float(part) for part in parts]
+                except ValueError:
+                    numbers = []
 
-        try:
-            numbers = [float(part) for part in parts]
-        except ValueError:
-            return None
+                if numbers and all(number >= 0 for number in numbers):
+                    if len(numbers) == 2:
+                        minutes, seconds = numbers
+                        is_valid = seconds < 60
+                        total_seconds = (minutes * 60.0) + seconds
+                    else:
+                        hours, minutes, seconds = numbers
+                        is_valid = minutes < 60 and seconds < 60
+                        total_seconds = (hours * 3600.0) + (minutes * 60.0) + seconds
 
-        if any(number < 0 for number in numbers):
-            return None
-
-        if len(numbers) == 2:
-            minutes, seconds = numbers
-            if seconds >= 60:
-                return None
-            return (minutes * 60.0) + seconds
-
-        hours, minutes, seconds = numbers
-        if minutes >= 60 or seconds >= 60:
-            return None
-        return (hours * 3600.0) + (minutes * 60.0) + seconds
+        return total_seconds if is_valid else None
 
     def _format_timestamp(self, seconds: float) -> str:
         """Format seconds as MM:SS or HH:MM:SS."""
-        rounded = max(int(round(seconds)), 0)
+        rounded = max(round(seconds), 0)
         minutes, second = divmod(rounded, 60)
         hours, minute = divmod(minutes, 60)
         if hours > 0:
@@ -637,7 +637,7 @@ class RenderStage(Stage):
         scaled_value = value * factor
         if unit.lower() == "k":
             scaled_value = max(32.0, scaled_value)
-            value_text = str(int(round(scaled_value)))
+            value_text = str(round(scaled_value))
         else:
             scaled_value = max(0.1, scaled_value)
             value_text = f"{scaled_value:.2f}".rstrip("0").rstrip(".")
@@ -1064,7 +1064,7 @@ class RenderStage(Stage):
             except (FFmpegError, FileNotFoundError, RuntimeError) as e:
                 error_msg = f"clip_{idx:02d}: {e}"
                 clip_errors.append(error_msg)
-                self.logger.error("clip_export_failed", clip=idx, error=str(e))
+                self.logger.exception("clip_export_failed", clip=idx, error=str(e))
 
         if outputs:
             self.logger.info("clips_exported", count=len(outputs))

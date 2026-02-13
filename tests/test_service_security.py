@@ -131,6 +131,7 @@ def test_auth_requires_key_when_dev_override_disabled(make_security_client) -> N
 
 def test_exception_handler_sanitizes_unhandled_errors(make_security_client) -> None:
     """Unhandled exceptions return structured non-leaky 500 responses."""
+
     def _configure_route(app: Any) -> None:
         @app.get("/debug/unhandled")
         async def debug_unhandled() -> dict[str, str]:
@@ -152,6 +153,7 @@ def test_exception_handler_sanitizes_unhandled_errors(make_security_client) -> N
 
 def test_exception_handler_sanitizes_http_500_details(make_security_client) -> None:
     """Raised HTTP 500 exceptions do not expose raw internal detail strings."""
+
     def _configure_route(app: Any) -> None:
         @app.get("/debug/http-error")
         async def debug_http_error() -> None:

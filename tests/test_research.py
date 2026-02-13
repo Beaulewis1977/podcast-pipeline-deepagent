@@ -138,7 +138,9 @@ class TestYouTubeResearcher:
             cache_ttl_seconds=300,
             cache_path=cache_path,
         )
-        with patch.object(researcher, "_get_video_stats", return_value={"abc123": {"view_count": 5}}):
+        with patch.object(
+            researcher, "_get_video_stats", return_value={"abc123": {"view_count": 5}}
+        ):
             researcher.search_videos("cache persist query", max_results=1)
         researcher.close()
 
@@ -193,12 +195,16 @@ class TestYouTubeResearcher:
                 cache_ttl_seconds=30,
                 cache_path=cache_path,
             )
-            with patch.object(researcher, "_get_video_stats", return_value={"abc123": {"view_count": 5}}):
+            with patch.object(
+                researcher, "_get_video_stats", return_value={"abc123": {"view_count": 5}}
+            ):
                 researcher.search_videos("cache ttl query", max_results=1)
             researcher.close()
 
         mock_get.reset_mock()
-        with patch.object(YouTubeResearcher, "_utcnow", return_value=base_time + timedelta(seconds=45)):
+        with patch.object(
+            YouTubeResearcher, "_utcnow", return_value=base_time + timedelta(seconds=45)
+        ):
             restarted = YouTubeResearcher(
                 api_key="test-key",
                 cache_ttl_seconds=30,

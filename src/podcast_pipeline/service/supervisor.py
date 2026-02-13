@@ -202,7 +202,7 @@ class Supervisor:
             run_future.cancel()
             meta.status = "timed_out"
             meta.timed_out_at = datetime.now(UTC).isoformat()
-            logger.error(
+            logger.exception(
                 "background_run_timed_out",
                 job_id=job.job_id,
                 timeout_seconds=self.run_timeout_seconds,

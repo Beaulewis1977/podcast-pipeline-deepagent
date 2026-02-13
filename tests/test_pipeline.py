@@ -185,8 +185,8 @@ class TestPipelineLocking:
         worker.start()
         assert stage_started.wait(timeout=5)
 
+        second_job = pipeline_two.load_job(job.job_id)
         with pytest.raises(JobLockAcquisitionError, match="already running"):
-            second_job = pipeline_two.load_job(job.job_id)
             pipeline_two.run(second_job, stage="ingest")
 
         stage_release.set()

@@ -1,7 +1,7 @@
 """Tests for render stage and platform exports."""
 
-from collections import namedtuple
 import json
+from collections import namedtuple
 from pathlib import Path
 
 from podcast_pipeline.config import PlatformSpec, load_config
@@ -438,7 +438,9 @@ class TestRenderStatusSemantics:
         assert result.success is False
         assert result.data["status"] == "failed"
         assert result.data["platform_results"]["unknown_platform"]["status"] == "failed"
-        assert "Unsupported platform" in result.data["platform_results"]["unknown_platform"]["error"]
+        assert (
+            "Unsupported platform" in result.data["platform_results"]["unknown_platform"]["error"]
+        )
 
 
 class TestRenderGuardrails:

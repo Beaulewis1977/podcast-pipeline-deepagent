@@ -21,7 +21,11 @@ from podcast_pipeline.service.app import (
     SERVICE_ENVIRONMENT_ENV_VAR,
     create_app,
 )
-from podcast_pipeline.service.recovery import periodic_reconcile, prepare_resume, run_reconcile_cycle
+from podcast_pipeline.service.recovery import (
+    periodic_reconcile,
+    prepare_resume,
+    run_reconcile_cycle,
+)
 from podcast_pipeline.service.supervisor import RuntimeMeta, Supervisor
 
 
@@ -54,21 +58,24 @@ def _write_runtime(
     jobs_dir: Path,
     job_id: str,
     *,
-    status: str = "running",
     heartbeat_age_seconds: float = 0.0,
-    pid: int = 99999,
-    last_known_stage: str | None = None,
+    meta_overrides: dict[str, Any] | None = None,
 ) -> RuntimeMeta:
     """Persist a runtime.json record with controlled heartbeat age."""
     now = datetime.now(UTC)
     heartbeat = now - timedelta(seconds=heartbeat_age_seconds)
+    payload: dict[str, Any] = {
+        "job_id": job_id,
+        "pid": 99999,
+        "started_at": now.isoformat(),
+        "heartbeat": heartbeat.isoformat(),
+        "status": "running",
+        "last_known_stage": None,
+    }
+    if meta_overrides:
+        payload.update(meta_overrides)
     meta = RuntimeMeta(
-        job_id=job_id,
-        pid=pid,
-        started_at=now.isoformat(),
-        heartbeat=heartbeat.isoformat(),
-        status=status,
-        last_known_stage=last_known_stage,
+        **payload,
     )
     meta.save(jobs_dir / job_id)
     return meta
@@ -179,7 +186,7 @@ def test_reconcile_cycle_corrects_stale_runtime_reconcile(tmp_path: Path) -> Non
     live.update_stage("ingest", StageStatus.COMPLETE)
     live.update_stage("transcribe", StageStatus.RUNNING)
     live.save(tmp_path)
-    _write_runtime(tmp_path, job.job_id, heartbeat_age_seconds=120, status="running")
+    _write_runtime(tmp_path, job.job_id, heartbeat_age_seconds=120)
 
     summary = run_reconcile_cycle(tmp_path)
 
@@ -198,7 +205,7 @@ async def test_periodic_reconcile_updates_stale_runtime_reconcile(tmp_path: Path
     live.update_stage("ingest", StageStatus.COMPLETE)
     live.update_stage("transcribe", StageStatus.RUNNING)
     live.save(tmp_path)
-    _write_runtime(tmp_path, job.job_id, heartbeat_age_seconds=120, status="running")
+    _write_runtime(tmp_path, job.job_id, heartbeat_age_seconds=120)
 
     stop_event = asyncio.Event()
     task = asyncio.create_task(
@@ -262,9 +269,8 @@ def test_runtime_diagnostics_reports_orphaned_jobs_reconcile(
         _write_runtime(
             tmp_path,
             "job-orphan",
-            status="running",
             heartbeat_age_seconds=120,
-            last_known_stage="transcribe",
+            meta_overrides={"last_known_stage": "transcribe"},
         )
 
         response = client.get("/system/runtime")

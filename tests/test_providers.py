@@ -265,7 +265,7 @@ def test_gemini_upload_without_identifier_raises_provider_error(
     provider = GeminiProvider(api_key="test-key")
 
     class _InvalidUploadFiles(_FakeGeminiFiles):
-        def upload(self, file: Path) -> Any:  # noqa: ARG002
+        def upload(self, file: Path) -> Any:
             self.upload_calls += 1
             return SimpleNamespace(name=None, state=SimpleNamespace(name="ACTIVE"))
 

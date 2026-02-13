@@ -340,7 +340,9 @@ class YouTubeResearcher:
             if normalized_topic not in normalized_metadata_topics:
                 normalized_metadata_topics.append(normalized_topic)
             weight = max(6.0 - index, 2.0)
-            candidate_scores[normalized_topic] = candidate_scores.get(normalized_topic, 0.0) + weight
+            candidate_scores[normalized_topic] = (
+                candidate_scores.get(normalized_topic, 0.0) + weight
+            )
             candidate_sources.setdefault(normalized_topic, set()).add("metadata")
 
         transcript_chunks: list[str] = []
@@ -384,7 +386,11 @@ class YouTubeResearcher:
 
         normalized_fallback = cls._fallback_query(fallback_query)
         if not ranked_candidates:
-            source = "fallback_sparse_transcript" if has_transcript_tokens else "fallback_missing_evidence"
+            source = (
+                "fallback_sparse_transcript"
+                if has_transcript_tokens
+                else "fallback_missing_evidence"
+            )
             return normalized_fallback, [], source
 
         query, top_score = ranked_candidates[0]
