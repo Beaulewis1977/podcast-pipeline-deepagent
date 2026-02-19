@@ -147,6 +147,36 @@ class TestPlatformSpecs:
         assert apple.audio_codec == "aac"
         assert apple.audio_bitrate == "128k"
 
+    def test_apple_hls_platform_spec_defaults(self) -> None:
+        """apple_hls target should parse typed VOD HLS defaults."""
+        config = load_config()
+        spec = config.platforms.apple_hls
+
+        assert spec.container == "hls"
+        assert spec.video_codec == "libx264"
+        assert spec.hls is not None
+        assert spec.hls.playlist_type == "vod"
+        assert spec.hls.master_playlist_name == "master.m3u8"
+        assert spec.hls.variant_playlist_pattern == "variant_%v.m3u8"
+        assert spec.hls.segment_filename_pattern == "segment_%v_%03d.ts"
+
+    def test_hls_config_validation_requires_variant_token(self, tmp_path: Path) -> None:
+        """HLS variant pattern should fail fast when '%v' placeholder is missing."""
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "\n".join(
+                [
+                    "platforms:",
+                    "  apple_hls:",
+                    "    hls:",
+                    "      variant_playlist_pattern: variant.m3u8",
+                ]
+            )
+        )
+
+        with pytest.raises(ValueError, match=r"variant_playlist_pattern|%v"):
+            load_config(config_path)
+
     def test_video_profile_validation_includes_platform_name(self, tmp_path: Path) -> None:
         """Invalid H.264 profile values should fail with target context."""
         config_path = tmp_path / "config.yaml"

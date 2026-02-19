@@ -169,6 +169,57 @@ class AudioConfig(BaseModel):
     sample_rate: int = 44100
 
 
+class HLSConfig(BaseModel):
+    """Typed HLS muxer configuration for provider hand-off artifacts."""
+
+    segment_duration: int = Field(default=6, ge=1, le=30)
+    playlist_type: str = "vod"
+    master_playlist_name: str = "master.m3u8"
+    variant_playlist_pattern: str = "variant_%v.m3u8"
+    segment_filename_pattern: str = "segment_%v_%03d.ts"
+    var_stream_map: str = "v:0,a:0"
+
+    @field_validator("playlist_type")
+    @classmethod
+    def validate_playlist_type(cls, value: str) -> str:
+        """Restrict playlist type to FFmpeg HLS muxer-safe values."""
+        normalized = value.strip().lower()
+        if normalized not in {"vod", "event"}:
+            raise ValueError("playlist_type must be one of: vod, event")
+        return normalized
+
+    @field_validator("variant_playlist_pattern")
+    @classmethod
+    def validate_variant_pattern(cls, value: str) -> str:
+        """Ensure variant pattern can generate indexed playlists."""
+        pattern = value.strip()
+        if "%v" not in pattern:
+            raise ValueError("variant_playlist_pattern must include '%v'")
+        if not pattern.endswith(".m3u8"):
+            raise ValueError("variant_playlist_pattern must end with '.m3u8'")
+        return pattern
+
+    @field_validator("master_playlist_name")
+    @classmethod
+    def validate_master_name(cls, value: str) -> str:
+        """Ensure master playlist naming remains deterministic."""
+        name = value.strip()
+        if not name.endswith(".m3u8"):
+            raise ValueError("master_playlist_name must end with '.m3u8'")
+        return name
+
+    @field_validator("segment_filename_pattern")
+    @classmethod
+    def validate_segment_pattern(cls, value: str) -> str:
+        """Ensure segment pattern supports deterministic stream/segment naming."""
+        pattern = value.strip()
+        if "%v" not in pattern or "%03d" not in pattern:
+            raise ValueError("segment_filename_pattern must include '%v' and '%03d' placeholders")
+        if not pattern.endswith(".ts"):
+            raise ValueError("segment_filename_pattern must end with '.ts'")
+        return pattern
+
+
 class PlatformSpec(BaseModel):
     """Export specifications for a platform."""
 
@@ -192,6 +243,7 @@ class PlatformSpec(BaseModel):
     fps: int | None = None
     gop: int | None = Field(default=None, ge=1)
     keyint_min: int | None = Field(default=None, ge=1)
+    hls: HLSConfig | None = None
     crop_mode: str = "center"  # center, top, bottom, smart
     audio_only: bool = False  # True for audio-only platforms
 
@@ -326,6 +378,34 @@ class PlatformSpecs(BaseModel):
             keyint_min=30,
             pix_fmt="yuv420p",
             preset="medium",
+        )
+    )
+    apple_hls: PlatformSpec = Field(
+        default_factory=lambda: PlatformSpec(
+            container="hls",
+            video_codec="libx264",
+            video_profile="high",
+            video_level="4.0",
+            video_bitrate="8M",
+            audio_codec="aac",
+            audio_bitrate="160k",
+            loudness_lufs=-16.0,
+            width=1920,
+            height=1080,
+            aspect_ratio="16:9",
+            fps=30,
+            gop=30,
+            keyint_min=30,
+            pix_fmt="yuv420p",
+            preset="medium",
+            hls=HLSConfig(
+                segment_duration=6,
+                playlist_type="vod",
+                master_playlist_name="master.m3u8",
+                variant_playlist_pattern="variant_%v.m3u8",
+                segment_filename_pattern="segment_%v_%03d.ts",
+                var_stream_map="v:0,a:0",
+            ),
         )
     )
     tiktok: PlatformSpec = Field(
