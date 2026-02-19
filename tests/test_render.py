@@ -130,6 +130,23 @@ class TestPlatformSpecs:
         assert spec.gop == 30
         assert spec.keyint_min == 30
 
+    def test_platform_spec_defaults_preserve_legacy_audio_only_targets(self) -> None:
+        """Dedicated video targets must not change legacy spotify/apple audio-only presets."""
+        config = load_config()
+
+        spotify = config.platforms.spotify
+        apple = config.platforms.apple
+
+        assert spotify.audio_only is True
+        assert spotify.container == "mp3"
+        assert spotify.audio_codec == "libmp3lame"
+        assert spotify.audio_bitrate == "320k"
+
+        assert apple.audio_only is True
+        assert apple.container == "m4a"
+        assert apple.audio_codec == "aac"
+        assert apple.audio_bitrate == "128k"
+
     def test_video_profile_validation_includes_platform_name(self, tmp_path: Path) -> None:
         """Invalid H.264 profile values should fail with target context."""
         config_path = tmp_path / "config.yaml"
