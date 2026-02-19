@@ -177,6 +177,37 @@ class TestPlatformSpecs:
         with pytest.raises(ValueError, match=r"variant_playlist_pattern|%v"):
             load_config(config_path)
 
+    @pytest.mark.parametrize(
+        ("field_name", "value"),
+        [
+            ("master_playlist_name", "../master.m3u8"),
+            ("master_playlist_name", "/absolute/master.m3u8"),
+            ("variant_playlist_pattern", "variants/variant_%v.m3u8"),
+            ("segment_filename_pattern", r"..\\segment_%v_%03d.ts"),
+        ],
+    )
+    def test_hls_config_validation_rejects_unsafe_filenames(
+        self,
+        tmp_path: Path,
+        field_name: str,
+        value: str,
+    ) -> None:
+        """HLS config names must remain simple filenames in the output directory."""
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "\n".join(
+                [
+                    "platforms:",
+                    "  apple_hls:",
+                    "    hls:",
+                    f"      {field_name}: '{value}'",
+                ]
+            )
+        )
+
+        with pytest.raises(ValueError, match=field_name):
+            load_config(config_path)
+
     def test_video_profile_validation_includes_platform_name(self, tmp_path: Path) -> None:
         """Invalid H.264 profile values should fail with target context."""
         config_path = tmp_path / "config.yaml"
@@ -216,6 +247,26 @@ class TestPlatformSpecs:
         message = str(exc.value)
         assert "apple_video" in message
         assert "video_level" in message
+
+    def test_video_level_validation_accepts_h264_level_1_3(self, tmp_path: Path) -> None:
+        """H.264 level 1.3 should parse cleanly for compliant video targets."""
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "\n".join(
+                [
+                    "platforms:",
+                    "  apple_video:",
+                    "    video_profile: high",
+                    "    video_level: '1.3'",
+                    "    pix_fmt: yuv420p",
+                    "    gop: 30",
+                    "    keyint_min: 30",
+                ]
+            )
+        )
+
+        config = load_config(config_path)
+        assert config.platforms.apple_video.video_level == "1.3"
 
     def test_pix_fmt_validation_rejects_codec_mismatch(self, tmp_path: Path) -> None:
         """Unsupported pixel format + codec combinations should fail fast."""
@@ -1073,13 +1124,67 @@ class TestRenderHLSArtifacts:
                 normalize_audio=False,
             )
 
+    def test_render_hls_rejects_unsafe_segment_template(self, tmp_path: Path) -> None:
+        """Runtime must reject unsafe templates even if model validation is bypassed."""
+        config = load_config()
+        stage = RenderStage(config)
+        spec = config.platforms.apple_hls.model_copy(deep=True)
+        assert spec.hls is not None
+        spec.hls.segment_filename_pattern = "../segment_%v_%03d.ts"
+
+        output_dir = tmp_path / "output" / "apple_hls"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        input_video = tmp_path / "input.mp4"
+        input_video.write_bytes(b"video")
+
+        with pytest.raises(ValueError, match="segment_filename_pattern"):
+            stage._render_hls(
+                output_dir=output_dir,
+                input_video=input_video,
+                platform="apple_hls",
+                spec=spec,
+                video_info={"width": 1920, "height": 1080, "duration": 30.0},
+                edit_plan=None,
+                normalize_audio=False,
+            )
+
+    def test_validate_hls_artifacts_rejects_variant_path_traversal(self, tmp_path: Path) -> None:
+        """Playlist references that escape output_dir must fail validation."""
+        config = load_config()
+        stage = RenderStage(config)
+        spec = config.platforms.apple_hls
+        output_dir = tmp_path / "output" / "apple_hls"
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        (output_dir / "master.m3u8").write_text(
+            "\n".join(
+                [
+                    "#EXTM3U",
+                    "#EXT-X-STREAM-INF:BANDWIDTH=1200000",
+                    "variant_0.m3u8",
+                ]
+            )
+        )
+        (output_dir / "variant_0.m3u8").write_text(
+            "\n".join(
+                [
+                    "#EXTM3U",
+                    "#EXTINF:6.0,",
+                    "../segment_0_000.ts",
+                ]
+            )
+        )
+
+        with pytest.raises(RuntimeError, match=r"path traversal|escapes output directory"):
+            stage._validate_hls_artifacts(output_dir=output_dir, platform="apple_hls", spec=spec)
+
 
 class TestVideoWorkflowDocs:
     """Tests for operator-facing workflow boundary documentation."""
 
     def test_readme_documents_apple_video_and_apple_hls_boundaries(self) -> None:
         """README should clearly separate artifact generation from publication workflows."""
-        readme = Path("README.md").read_text().lower()
+        readme = (Path(__file__).resolve().parents[1] / "README.md").read_text().lower()
 
         assert "apple_video" in readme
         assert "apple_hls" in readme

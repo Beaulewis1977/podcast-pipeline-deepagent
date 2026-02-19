@@ -13,7 +13,7 @@ See: `.planning/PROJECT.md`
 
 ## Current Position
 
-```
+```text
 Phase:    4 of 5 complete (+ Phase 4 human verification checklist pending)
 Plan:     30 completed overall; 3/3 complete in Phase 5
 Status:   Phase 5 verified (passed)

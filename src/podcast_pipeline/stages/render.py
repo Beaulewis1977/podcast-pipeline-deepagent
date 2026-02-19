@@ -2,7 +2,7 @@
 
 import json
 import shutil
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
 from podcast_pipeline.config import Config, PlatformSpec
@@ -39,7 +39,7 @@ class PlatformComplianceError(RuntimeError):
         platform: str,
         issues: list[str],
         warnings: list[str] | None = None,
-    ):
+    ) -> None:
         self.platform = platform
         self.issues = issues
         self.warnings = warnings or []
@@ -341,6 +341,54 @@ class RenderStage(Stage):
             raise RuntimeError(
                 f"Render output verification failed: {artifact_name} is empty at {output_path}."
             )
+
+    def _resolve_hls_template_path(self, output_dir: Path, template: str, field_name: str) -> Path:
+        """Resolve HLS output template path while preventing directory escape."""
+        value = template.strip()
+        if not value:
+            raise ValueError(f"HLS {field_name} cannot be empty")
+
+        posix = PurePosixPath(value)
+        windows = PureWindowsPath(value)
+        if posix.is_absolute() or windows.is_absolute() or windows.drive:
+            raise ValueError(f"HLS {field_name} must be a relative filename")
+        if "/" in value or "\\" in value or len(posix.parts) != 1:
+            raise ValueError(f"HLS {field_name} must not include directory separators")
+        if any(part in {".", ".."} for part in posix.parts):
+            raise ValueError(f"HLS {field_name} must not include '.' or '..' segments")
+
+        output_root = output_dir.resolve()
+        candidate = (output_root / value).resolve()
+        if not candidate.is_relative_to(output_root):
+            raise ValueError(f"HLS {field_name} resolves outside output directory: {value}")
+        return candidate
+
+    def _resolve_hls_reference_path(
+        self,
+        *,
+        base_dir: Path,
+        reference: str,
+        output_root: Path,
+        artifact_name: str,
+    ) -> Path:
+        """Resolve HLS playlist references while blocking absolute/escaped targets."""
+        ref = reference.strip()
+        if not ref:
+            raise RuntimeError(f"{artifact_name} contains an empty artifact reference")
+        if "://" in ref:
+            raise RuntimeError(f"{artifact_name} contains unsupported URI reference: {ref}")
+
+        posix = PurePosixPath(ref)
+        windows = PureWindowsPath(ref)
+        if posix.is_absolute() or windows.is_absolute() or windows.drive:
+            raise RuntimeError(f"{artifact_name} contains absolute path reference: {ref}")
+        if any(part in {".", ".."} for part in posix.parts):
+            raise RuntimeError(f"{artifact_name} contains unsafe path traversal reference: {ref}")
+
+        resolved = (base_dir / ref).resolve()
+        if not resolved.is_relative_to(output_root):
+            raise RuntimeError(f"{artifact_name} reference escapes output directory: {ref}")
+        return resolved
 
     def _build_audio_enhancement_filters(self) -> list[str]:
         """Build speech-focused enhancement chain for export audio tracks."""
@@ -863,6 +911,17 @@ class RenderStage(Stage):
         if spec.fps:
             args.extend(["-r", str(spec.fps)])
 
+        segment_template_path = self._resolve_hls_template_path(
+            output_dir,
+            spec.hls.segment_filename_pattern,
+            "segment_filename_pattern",
+        )
+        variant_playlist_path = self._resolve_hls_template_path(
+            output_dir,
+            spec.hls.variant_playlist_pattern,
+            "variant_playlist_pattern",
+        )
+
         args.extend(
             [
                 "-c:a",
@@ -882,8 +941,8 @@ class RenderStage(Stage):
                 "-var_stream_map",
                 spec.hls.var_stream_map,
                 "-hls_segment_filename",
-                str(output_dir / spec.hls.segment_filename_pattern),
-                str(output_dir / spec.hls.variant_playlist_pattern),
+                str(segment_template_path),
+                str(variant_playlist_path),
             ]
         )
 
@@ -909,7 +968,8 @@ class RenderStage(Stage):
         if spec.hls is None:
             raise ValueError("HLS validation requires platform.hls configuration")
 
-        master_playlist = output_dir / spec.hls.master_playlist_name
+        output_root = output_dir.resolve()
+        master_playlist = output_root / spec.hls.master_playlist_name
         self._assert_output_exists(master_playlist, f"{platform} master playlist")
 
         master_entries = [
@@ -925,7 +985,12 @@ class RenderStage(Stage):
 
         artifact_paths: list[Path] = [master_playlist]
         for variant_ref in variant_playlists:
-            variant_path = (master_playlist.parent / variant_ref).resolve()
+            variant_path = self._resolve_hls_reference_path(
+                base_dir=master_playlist.parent,
+                reference=variant_ref,
+                output_root=output_root,
+                artifact_name=f"{platform} master playlist",
+            )
             self._assert_output_exists(variant_path, f"{platform} variant playlist")
             artifact_paths.append(variant_path)
 
@@ -940,7 +1005,12 @@ class RenderStage(Stage):
                 )
 
             for segment_ref in segment_entries:
-                segment_path = (variant_path.parent / segment_ref).resolve()
+                segment_path = self._resolve_hls_reference_path(
+                    base_dir=variant_path.parent,
+                    reference=segment_ref,
+                    output_root=output_root,
+                    artifact_name=f"{platform} variant playlist",
+                )
                 self._assert_output_exists(segment_path, f"{platform} HLS segment")
                 artifact_paths.append(segment_path)
 

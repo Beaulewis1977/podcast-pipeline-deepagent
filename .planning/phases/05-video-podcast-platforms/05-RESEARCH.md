@@ -19,6 +19,7 @@ For this repository, the safest plan remains: (1) dedicated `spotify_video` and 
 The established libraries/tools for this domain:
 
 ### Core
+
 | Library | Version | Purpose | Why Standard |
 |---------|---------|---------|--------------|
 | FFmpeg CLI | Local runtime: 6.1.1; current stable branch observed in FFmpeg release index: 8.0.x (8.0.1 listed) | Encoding and HLS packaging | Required for codec/profile control and HLS muxer options (`var_stream_map`, `master_pl_name`, `hls_segment_filename`, `hls_playlist_type`) |
@@ -26,12 +27,14 @@ The established libraries/tools for this domain:
 | Pydantic v2 | `>=2.10.0` (project) | Typed config/schema validation | Existing project pattern for failing early on invalid platform specs |
 
 ### Supporting
+
 | Library | Version | Purpose | When to Use |
 |---------|---------|---------|-------------|
 | pytest | project dev dependency | Regression coverage for config/render behavior | Every new platform/export path and compliance check |
 | structlog | `>=24.4.0` | Structured operator diagnostics | Surface actionable publish/compliance failures |
 
 ### Alternatives Considered
+
 | Instead of | Could Use | Tradeoff |
 |------------|-----------|----------|
 | Always encoding Spotify to H.264 only | Optional HEVC/H.265 support behind explicit config | Spotify supports both in current specs, but H.264 remains the safest default for compatibility |

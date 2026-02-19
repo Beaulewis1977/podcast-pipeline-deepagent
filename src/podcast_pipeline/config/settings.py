@@ -3,7 +3,7 @@
 import ipaddress
 import os
 import re
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Self
 
 import yaml
@@ -28,7 +28,7 @@ SUPPORTED_MODELS_BY_PROVIDER = {
 }
 
 SERVICE_HOST_PATTERN = re.compile(r"^[A-Za-z0-9.-]+$")
-VIDEO_LEVEL_PATTERN = re.compile(r"^[1-6](?:\.[0-2])?$")
+VIDEO_LEVEL_PATTERN = re.compile(r"^(?:[1-6](?:\.[0-2])?|1\.3)$")
 H264_CODECS = {"h264", "libx264"}
 H265_CODECS = {"h265", "hevc", "libx265"}
 CODECS_WITH_PROFILE_LEVEL = H264_CODECS | H265_CODECS
@@ -179,6 +179,23 @@ class HLSConfig(BaseModel):
     segment_filename_pattern: str = "segment_%v_%03d.ts"
     var_stream_map: str = "v:0,a:0"
 
+    @staticmethod
+    def _validate_safe_filename(value: str, field_name: str) -> str:
+        """Restrict HLS artifact names to simple, relative filenames."""
+        name = value.strip()
+        if not name:
+            raise ValueError(f"{field_name} cannot be empty")
+
+        posix = PurePosixPath(name)
+        windows = PureWindowsPath(name)
+        if posix.is_absolute() or windows.is_absolute() or windows.drive:
+            raise ValueError(f"{field_name} must be a relative filename")
+        if "/" in name or "\\" in name or len(posix.parts) != 1:
+            raise ValueError(f"{field_name} must not include directory separators")
+        if any(part in {".", ".."} for part in posix.parts):
+            raise ValueError(f"{field_name} must not include '.' or '..' segments")
+        return name
+
     @field_validator("playlist_type")
     @classmethod
     def validate_playlist_type(cls, value: str) -> str:
@@ -192,7 +209,7 @@ class HLSConfig(BaseModel):
     @classmethod
     def validate_variant_pattern(cls, value: str) -> str:
         """Ensure variant pattern can generate indexed playlists."""
-        pattern = value.strip()
+        pattern = cls._validate_safe_filename(value, "variant_playlist_pattern")
         if "%v" not in pattern:
             raise ValueError("variant_playlist_pattern must include '%v'")
         if not pattern.endswith(".m3u8"):
@@ -203,7 +220,7 @@ class HLSConfig(BaseModel):
     @classmethod
     def validate_master_name(cls, value: str) -> str:
         """Ensure master playlist naming remains deterministic."""
-        name = value.strip()
+        name = cls._validate_safe_filename(value, "master_playlist_name")
         if not name.endswith(".m3u8"):
             raise ValueError("master_playlist_name must end with '.m3u8'")
         return name
@@ -212,7 +229,7 @@ class HLSConfig(BaseModel):
     @classmethod
     def validate_segment_pattern(cls, value: str) -> str:
         """Ensure segment pattern supports deterministic stream/segment naming."""
-        pattern = value.strip()
+        pattern = cls._validate_safe_filename(value, "segment_filename_pattern")
         if "%v" not in pattern or "%03d" not in pattern:
             raise ValueError("segment_filename_pattern must include '%v' and '%03d' placeholders")
         if not pattern.endswith(".ts"):
