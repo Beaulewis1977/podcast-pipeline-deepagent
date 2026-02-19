@@ -156,12 +156,13 @@ Plans are ordered in 5 execution waves to prioritize P0 runtime correctness firs
 
 **Goal:** Deliver publish-ready Spotify and Apple video podcast export artifacts (MP4 plus optional HLS packaging) with compliance validation and truthful operator workflow guidance.
 **Depends on:** Phase 4
-**Plans:** 3 plans
+**Status:** Complete (verified 2026-02-19)
+**Plans:** 3/3 complete
 
 Plans:
-- [ ] 05-01-PLAN.md — Research-led platform schema defaults and fail-fast validation for `spotify_video`/`apple_video`
-- [ ] 05-02-PLAN.md — Render compliance wiring with ffprobe topology/timing checks and truthful failure contracts
-- [ ] 05-03-PLAN.md — Optional `apple_hls` hand-off packaging plus Apple/Spotify workflow-boundary documentation
+- [x] 05-01-PLAN.md — Research-led platform schema defaults and fail-fast validation for `spotify_video`/`apple_video`
+- [x] 05-02-PLAN.md — Render compliance wiring with ffprobe topology/timing checks and truthful failure contracts
+- [x] 05-03-PLAN.md — Optional `apple_hls` hand-off packaging plus Apple/Spotify workflow-boundary documentation
 
 **Details:**
 Plans are sequenced in 3 waves:
