@@ -830,6 +830,77 @@ class TestRenderComplianceWiring:
                 spec=config.platforms.spotify_video,
             )
 
+    def test_apple_video_compliance_accepts_mp4_topology(self, tmp_path: Path, monkeypatch) -> None:
+        """Apple video compliance should pass for valid mp4 topology and metadata."""
+        config = load_config()
+        stage = RenderStage(config)
+
+        monkeypatch.setattr(
+            "podcast_pipeline.stages.render.run_ffprobe",
+            lambda _path: {
+                "format": {"format_name": "mov,mp4,m4a,3gp,3g2,mj2", "duration": "30.0"},
+                "streams": [
+                    {
+                        "codec_type": "video",
+                        "codec_name": "h264",
+                        "profile": "High",
+                        "level": 40,
+                        "pix_fmt": "yuv420p",
+                        "duration": "30.0",
+                    },
+                    {
+                        "codec_type": "audio",
+                        "codec_name": "aac",
+                        "duration": "30.0",
+                    },
+                ],
+            },
+        )
+
+        stage._validate_video_platform_compliance(
+            platform="apple_video",
+            output_file=tmp_path / "final.mp4",
+            spec=config.platforms.apple_video,
+        )
+
+    def test_apple_video_compliance_rejects_non_mp4_container(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        """Apple video compliance should reject non mp4/mov outputs."""
+        config = load_config()
+        stage = RenderStage(config)
+
+        monkeypatch.setattr(
+            "podcast_pipeline.stages.render.run_ffprobe",
+            lambda _path: {
+                "format": {"format_name": "matroska,webm", "duration": "30.0"},
+                "streams": [
+                    {
+                        "codec_type": "video",
+                        "codec_name": "h264",
+                        "profile": "High",
+                        "level": 40,
+                        "pix_fmt": "yuv420p",
+                        "duration": "30.0",
+                    },
+                    {
+                        "codec_type": "audio",
+                        "codec_name": "aac",
+                        "duration": "30.0",
+                    },
+                ],
+            },
+        )
+
+        with pytest.raises(PlatformComplianceError, match="container mismatch"):
+            stage._validate_video_platform_compliance(
+                platform="apple_video",
+                output_file=tmp_path / "final.mp4",
+                spec=config.platforms.apple_video,
+            )
+
     def test_platform_status_includes_validation_details_for_compliance_error(
         self,
         tmp_path: Path,

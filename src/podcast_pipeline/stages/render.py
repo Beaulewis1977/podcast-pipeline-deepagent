@@ -1046,6 +1046,13 @@ class RenderStage(Stage):
                     warnings.append(
                         "configured keyframe cadence exceeds 2s; may degrade seek behavior"
                     )
+        elif platform == "apple_video":
+            format_name = str(format_info.get("format_name", "")).lower()
+            if format_name and "mp4" not in format_name and "mov" not in format_name:
+                issues.append(
+                    "container mismatch: expected MP4/MOV-compatible Apple video format, "
+                    f"found {format_name}"
+                )
 
         if warnings:
             self.logger.warning(
