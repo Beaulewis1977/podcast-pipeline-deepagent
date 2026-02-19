@@ -87,6 +87,70 @@ platforms:
     loudness_lufs: -16.0
     audio_only: true
 
+  # Spotify Video - MP4 mezzanine profile
+  spotify_video:
+    container: mp4
+    video_codec: libx264
+    video_profile: high
+    video_level: "4.1"
+    video_bitrate: 8M
+    audio_codec: aac
+    audio_bitrate: 192k
+    loudness_lufs: -14.0
+    width: 1920
+    height: 1080
+    aspect_ratio: "16:9"
+    fps: 30
+    gop: 30
+    keyint_min: 30
+    pix_fmt: yuv420p
+    preset: medium
+
+  # Apple Video - MP4 mezzanine profile
+  apple_video:
+    container: mp4
+    video_codec: libx264
+    video_profile: high
+    video_level: "4.0"
+    video_bitrate: 8M
+    audio_codec: aac
+    audio_bitrate: 160k
+    loudness_lufs: -16.0
+    width: 1920
+    height: 1080
+    aspect_ratio: "16:9"
+    fps: 30
+    gop: 30
+    keyint_min: 30
+    pix_fmt: yuv420p
+    preset: medium
+
+  # Apple HLS - provider hand-off packaging profile (VOD)
+  apple_hls:
+    container: hls
+    video_codec: libx264
+    video_profile: high
+    video_level: "4.0"
+    video_bitrate: 8M
+    audio_codec: aac
+    audio_bitrate: 160k
+    loudness_lufs: -16.0
+    width: 1920
+    height: 1080
+    aspect_ratio: "16:9"
+    fps: 30
+    gop: 30
+    keyint_min: 30
+    pix_fmt: yuv420p
+    preset: medium
+    hls:
+      segment_duration: 6
+      playlist_type: vod
+      master_playlist_name: master.m3u8
+      variant_playlist_pattern: variant_%v.m3u8
+      segment_filename_pattern: segment_%v_%03d.ts
+      var_stream_map: "v:0,a:0"
+
   # TikTok - Vertical short-form (60s max)
   tiktok:
     container: mp4

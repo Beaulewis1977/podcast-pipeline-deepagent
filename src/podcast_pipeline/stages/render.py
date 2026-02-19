@@ -2,7 +2,7 @@
 
 import json
 import shutil
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
 from podcast_pipeline.config import Config, PlatformSpec
@@ -10,7 +10,7 @@ from podcast_pipeline.models.edit_plan import EditPlan
 from podcast_pipeline.models.job import Job
 from podcast_pipeline.stages.base import Stage, StageResult
 from podcast_pipeline.stages.review import ReviewDecisions
-from podcast_pipeline.utils.ffmpeg import FFmpegError, get_video_info, run_ffmpeg
+from podcast_pipeline.utils.ffmpeg import FFmpegError, get_video_info, run_ffmpeg, run_ffprobe
 from podcast_pipeline.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -28,6 +28,22 @@ VIDEO_QUALITY_BITRATE_FACTOR = {
 }
 MAX_THUMBNAIL_EXPORTS = 4
 MIN_THUMBNAIL_OFFSET_SECONDS = 0.5
+PROFILE_LEVEL_CODECS = {"h264", "libx264", "h265", "hevc", "libx265"}
+
+
+class PlatformComplianceError(RuntimeError):
+    """Raised when post-render platform compliance checks fail."""
+
+    def __init__(
+        self,
+        platform: str,
+        issues: list[str],
+        warnings: list[str] | None = None,
+    ) -> None:
+        self.platform = platform
+        self.issues = issues
+        self.warnings = warnings or []
+        super().__init__("; ".join(issues))
 
 
 class RenderStage(Stage):
@@ -132,6 +148,29 @@ class RenderStage(Stage):
                     settings=platform_results[platform]["settings"],
                 )
 
+            except PlatformComplianceError as e:
+                error_msg = f"{platform}: compliance validation failed - {e}"
+                errors.append(error_msg)
+                platform_results[platform] = {
+                    "status": "failed",
+                    "outputs": [],
+                    "error_type": "compliance_error",
+                    "error": error_msg,
+                    "validation": {
+                        "issues": e.issues,
+                        "warnings": e.warnings,
+                    },
+                    "settings": {
+                        "video_quality": quality_controls["video_quality"],
+                        "audio_normalize": quality_controls["audio_normalize"],
+                    },
+                }
+                self.logger.exception(
+                    "render_platform_compliance_failed",
+                    platform=platform,
+                    issues=e.issues,
+                    warnings=e.warnings,
+                )
             except FFmpegError as e:
                 error_msg = f"{platform}: FFmpeg error - {e}"
                 errors.append(error_msg)
@@ -302,6 +341,54 @@ class RenderStage(Stage):
             raise RuntimeError(
                 f"Render output verification failed: {artifact_name} is empty at {output_path}."
             )
+
+    def _resolve_hls_template_path(self, output_dir: Path, template: str, field_name: str) -> Path:
+        """Resolve HLS output template path while preventing directory escape."""
+        value = template.strip()
+        if not value:
+            raise ValueError(f"HLS {field_name} cannot be empty")
+
+        posix = PurePosixPath(value)
+        windows = PureWindowsPath(value)
+        if posix.is_absolute() or windows.is_absolute() or windows.drive:
+            raise ValueError(f"HLS {field_name} must be a relative filename")
+        if "/" in value or "\\" in value or len(posix.parts) != 1:
+            raise ValueError(f"HLS {field_name} must not include directory separators")
+        if any(part in {".", ".."} for part in posix.parts):
+            raise ValueError(f"HLS {field_name} must not include '.' or '..' segments")
+
+        output_root = output_dir.resolve()
+        candidate = (output_root / value).resolve()
+        if not candidate.is_relative_to(output_root):
+            raise ValueError(f"HLS {field_name} resolves outside output directory: {value}")
+        return candidate
+
+    def _resolve_hls_reference_path(
+        self,
+        *,
+        base_dir: Path,
+        reference: str,
+        output_root: Path,
+        artifact_name: str,
+    ) -> Path:
+        """Resolve HLS playlist references while blocking absolute/escaped targets."""
+        ref = reference.strip()
+        if not ref:
+            raise RuntimeError(f"{artifact_name} contains an empty artifact reference")
+        if "://" in ref:
+            raise RuntimeError(f"{artifact_name} contains unsupported URI reference: {ref}")
+
+        posix = PurePosixPath(ref)
+        windows = PureWindowsPath(ref)
+        if posix.is_absolute() or windows.is_absolute() or windows.drive:
+            raise RuntimeError(f"{artifact_name} contains absolute path reference: {ref}")
+        if any(part in {".", ".."} for part in posix.parts):
+            raise RuntimeError(f"{artifact_name} contains unsafe path traversal reference: {ref}")
+
+        resolved = (base_dir / ref).resolve()
+        if not resolved.is_relative_to(output_root):
+            raise RuntimeError(f"{artifact_name} reference escapes output directory: {ref}")
+        return resolved
 
     def _build_audio_enhancement_filters(self) -> list[str]:
         """Build speech-focused enhancement chain for export audio tracks."""
@@ -683,6 +770,18 @@ class RenderStage(Stage):
         output_dir = job_dir / "output" / platform
         output_dir.mkdir(parents=True, exist_ok=True)
 
+        # HLS packaging target
+        if platform == "apple_hls" or spec.container == "hls":
+            return self._render_hls(
+                output_dir,
+                input_video,
+                platform,
+                spec,
+                video_info,
+                edit_plan,
+                normalize_audio,
+            )
+
         # Audio-only platforms
         if spec.audio_only:
             return self._render_audio_only(output_dir, input_video, platform, spec, normalize_audio)
@@ -740,6 +839,186 @@ class RenderStage(Stage):
 
         self.logger.info(f"{platform}_rendered", output=str(output_file))
         return [str(output_file.relative_to(output_dir.parent.parent))]
+
+    def _render_hls(
+        self,
+        output_dir: Path,
+        input_video: Path,
+        platform: str,
+        spec: PlatformSpec,
+        video_info: dict[str, Any],
+        edit_plan: EditPlan | None,
+        normalize_audio: bool,
+    ) -> list[str]:
+        """Render Apple-focused HLS VOD artifacts and verify playlist integrity."""
+        if spec.hls is None:
+            raise ValueError("HLS render requires platform.hls configuration")
+
+        src_width = video_info.get("width", 1920)
+        src_height = video_info.get("height", 1080)
+        src_duration = video_info.get("duration", 0)
+
+        target_width = spec.width or src_width
+        target_height = spec.height or src_height
+        vf_filters = self._build_video_filters(
+            src_width, src_height, target_width, target_height, spec
+        )
+        af_filters = self._build_audio_enhancement_filters()
+        edit_filter = self._build_edit_plan_filter(
+            edit_plan,
+            src_duration,
+            vf_filters,
+            af_filters,
+        )
+
+        duration_args: list[str] = []
+        if spec.max_duration and src_duration > spec.max_duration:
+            duration_args = ["-t", str(spec.max_duration)]
+
+        args = ["-i", str(input_video), *duration_args]
+
+        if edit_filter:
+            filter_complex, video_map, audio_map = edit_filter
+            args.extend(["-filter_complex", filter_complex, "-map", video_map, "-map", audio_map])
+        else:
+            args.extend(["-map", "0:v:0", "-map", "0:a:0"])
+            if vf_filters:
+                args.extend(["-vf", ",".join(vf_filters)])
+            if af_filters:
+                args.extend(["-af", ",".join(af_filters)])
+
+        args.extend(
+            [
+                "-c:v",
+                spec.video_codec,
+                "-preset",
+                spec.preset,
+                "-b:v",
+                spec.video_bitrate,
+                "-pix_fmt",
+                spec.pix_fmt,
+            ]
+        )
+        codec_supports_profile_level = self._supports_profile_level_flags(spec.video_codec)
+        if codec_supports_profile_level and spec.video_profile:
+            args.extend(["-profile:v", spec.video_profile])
+        if codec_supports_profile_level and spec.video_level:
+            args.extend(["-level:v", spec.video_level])
+        if codec_supports_profile_level and spec.gop is not None:
+            args.extend(["-g", str(spec.gop)])
+        if codec_supports_profile_level and spec.keyint_min is not None:
+            args.extend(["-keyint_min", str(spec.keyint_min)])
+        if spec.fps:
+            args.extend(["-r", str(spec.fps)])
+
+        segment_template_path = self._resolve_hls_template_path(
+            output_dir,
+            spec.hls.segment_filename_pattern,
+            "segment_filename_pattern",
+        )
+        variant_playlist_path = self._resolve_hls_template_path(
+            output_dir,
+            spec.hls.variant_playlist_pattern,
+            "variant_playlist_pattern",
+        )
+
+        args.extend(
+            [
+                "-c:a",
+                spec.audio_codec,
+                "-b:a",
+                spec.audio_bitrate,
+                "-ac",
+                str(spec.audio_channels),
+                "-f",
+                "hls",
+                "-hls_time",
+                str(spec.hls.segment_duration),
+                "-hls_playlist_type",
+                spec.hls.playlist_type,
+                "-master_pl_name",
+                spec.hls.master_playlist_name,
+                "-var_stream_map",
+                spec.hls.var_stream_map,
+                "-hls_segment_filename",
+                str(segment_template_path),
+                str(variant_playlist_path),
+            ]
+        )
+
+        run_ffmpeg(args)
+        if normalize_audio:
+            self.logger.info(
+                "hls_loudness_normalization_skipped",
+                platform=platform,
+                reason="HLS variant ladder generated in a single ffmpeg invocation",
+            )
+
+        outputs = self._validate_hls_artifacts(output_dir=output_dir, platform=platform, spec=spec)
+        self.logger.info(f"{platform}_rendered", outputs=outputs)
+        return outputs
+
+    def _validate_hls_artifacts(
+        self,
+        output_dir: Path,
+        platform: str,
+        spec: PlatformSpec,
+    ) -> list[str]:
+        """Validate HLS master/variant playlists and referenced segment files."""
+        if spec.hls is None:
+            raise ValueError("HLS validation requires platform.hls configuration")
+
+        output_root = output_dir.resolve()
+        master_playlist = output_root / spec.hls.master_playlist_name
+        self._assert_output_exists(master_playlist, f"{platform} master playlist")
+
+        master_entries = [
+            line.strip()
+            for line in master_playlist.read_text().splitlines()
+            if line.strip() and not line.strip().startswith("#")
+        ]
+        variant_playlists = [entry for entry in master_entries if entry.endswith(".m3u8")]
+        if not variant_playlists:
+            raise RuntimeError(
+                f"{platform} master playlist missing variant playlist references: {master_playlist}"
+            )
+
+        artifact_paths: list[Path] = [master_playlist]
+        for variant_ref in variant_playlists:
+            variant_path = self._resolve_hls_reference_path(
+                base_dir=master_playlist.parent,
+                reference=variant_ref,
+                output_root=output_root,
+                artifact_name=f"{platform} master playlist",
+            )
+            self._assert_output_exists(variant_path, f"{platform} variant playlist")
+            artifact_paths.append(variant_path)
+
+            segment_entries = [
+                line.strip()
+                for line in variant_path.read_text().splitlines()
+                if line.strip() and not line.strip().startswith("#")
+            ]
+            if not segment_entries:
+                raise RuntimeError(
+                    f"{platform} variant playlist missing segment entries: {variant_path}"
+                )
+
+            for segment_ref in segment_entries:
+                segment_path = self._resolve_hls_reference_path(
+                    base_dir=variant_path.parent,
+                    reference=segment_ref,
+                    output_root=output_root,
+                    artifact_name=f"{platform} variant playlist",
+                )
+                self._assert_output_exists(segment_path, f"{platform} HLS segment")
+                artifact_paths.append(segment_path)
+
+        deduped = sorted(
+            {path: path for path in artifact_paths}.values(), key=lambda item: str(item)
+        )
+        job_root = output_dir.parent.parent.resolve()
+        return [str(path.relative_to(job_root)) for path in deduped]
 
     def _render_video(
         self,
@@ -822,6 +1101,16 @@ class RenderStage(Stage):
             ]
         )
 
+        codec_supports_profile_level = self._supports_profile_level_flags(spec.video_codec)
+        if codec_supports_profile_level and spec.video_profile:
+            args.extend(["-profile:v", spec.video_profile])
+        if codec_supports_profile_level and spec.video_level:
+            args.extend(["-level:v", spec.video_level])
+        if codec_supports_profile_level and spec.gop is not None:
+            args.extend(["-g", str(spec.gop)])
+        if codec_supports_profile_level and spec.keyint_min is not None:
+            args.extend(["-keyint_min", str(spec.keyint_min)])
+
         # FPS if specified
         if spec.fps:
             args.extend(["-r", str(spec.fps)])
@@ -852,9 +1141,170 @@ class RenderStage(Stage):
         else:
             self.logger.info("loudness_normalization_disabled", platform=platform)
         self._assert_output_exists(output_file, f"{platform} video export")
+        self._validate_video_platform_compliance(
+            platform=platform,
+            output_file=output_file,
+            spec=spec,
+        )
 
         self.logger.info(f"{platform}_rendered", output=str(output_file))
         return [str(output_file.relative_to(output_dir.parent.parent))]
+
+    def _supports_profile_level_flags(self, video_codec: str) -> bool:
+        """Return whether a codec supports profile/level and GOP cadence flags."""
+        return video_codec.strip().lower() in PROFILE_LEVEL_CODECS
+
+    def _expected_probe_codec(self, configured_codec: str) -> str | None:
+        """Map encoder names to ffprobe codec_name values for compliance checks."""
+        normalized = configured_codec.strip().lower()
+        if normalized in {"h264", "libx264"}:
+            return "h264"
+        if normalized in {"h265", "hevc", "libx265"}:
+            return "hevc"
+        return None
+
+    def _parse_numeric_probe_value(self, value: Any) -> float | None:
+        """Parse ffprobe numeric fields that may be strings or numbers."""
+        if value is None:
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _parse_probe_level(self, value: Any) -> float | None:
+        """Parse ffprobe level values (e.g., 41 -> 4.1)."""
+        if value is None:
+            return None
+        if isinstance(value, int):
+            return value / 10.0
+        parsed = self._parse_numeric_probe_value(value)
+        if parsed is None:
+            return None
+        return parsed / 10.0 if parsed > 10 else parsed
+
+    def _validate_video_platform_compliance(
+        self,
+        platform: str,
+        output_file: Path,
+        spec: PlatformSpec,
+    ) -> None:
+        """Run post-render compliance checks for strict video podcast targets."""
+        if platform not in {"spotify_video", "apple_video"}:
+            return
+
+        probe_data = run_ffprobe(output_file)
+        streams = probe_data.get("streams", [])
+        format_info = probe_data.get("format", {})
+        video_streams = [s for s in streams if s.get("codec_type") == "video"]
+        audio_streams = [s for s in streams if s.get("codec_type") == "audio"]
+
+        issues: list[str] = []
+        warnings: list[str] = []
+
+        if len(video_streams) != 1 or len(audio_streams) != 1:
+            issues.append(
+                "topology check failed: expected exactly 1 video stream and 1 audio stream"
+            )
+
+        if video_streams:
+            video_stream = video_streams[0]
+            expected_codec = self._expected_probe_codec(spec.video_codec)
+            actual_codec = str(video_stream.get("codec_name", "")).strip().lower()
+            if expected_codec and actual_codec and actual_codec != expected_codec:
+                issues.append(f"codec mismatch: expected {expected_codec}, found {actual_codec}")
+
+            actual_pix_fmt = str(video_stream.get("pix_fmt", "")).strip().lower()
+            expected_pix_fmt = spec.pix_fmt.strip().lower()
+            if expected_pix_fmt and actual_pix_fmt and actual_pix_fmt != expected_pix_fmt:
+                issues.append(
+                    f"pix_fmt mismatch: expected {expected_pix_fmt}, found {actual_pix_fmt}"
+                )
+
+            if spec.video_profile:
+                expected_profile = spec.video_profile.strip().lower()
+                actual_profile = str(video_stream.get("profile", "")).strip().lower()
+                if actual_profile and actual_profile != expected_profile:
+                    issues.append(
+                        f"profile mismatch: expected {expected_profile}, found {actual_profile}"
+                    )
+                elif not actual_profile:
+                    warnings.append("profile metadata missing from ffprobe output")
+
+            if spec.video_level:
+                expected_level = self._parse_numeric_probe_value(spec.video_level)
+                actual_level = self._parse_probe_level(video_stream.get("level"))
+                if expected_level is not None and actual_level is not None:
+                    if abs(actual_level - expected_level) > 0.05:
+                        issues.append(
+                            f"level mismatch: expected {spec.video_level}, found {actual_level:.1f}"
+                        )
+                elif expected_level is not None:
+                    warnings.append("level metadata missing from ffprobe output")
+
+        if len(video_streams) == 1 and len(audio_streams) == 1:
+            video_stream = video_streams[0]
+            audio_stream = audio_streams[0]
+            fallback_duration = self._parse_numeric_probe_value(format_info.get("duration"))
+            video_duration = self._parse_numeric_probe_value(video_stream.get("duration"))
+            audio_duration = self._parse_numeric_probe_value(audio_stream.get("duration"))
+            if video_duration is None:
+                video_duration = fallback_duration
+            if audio_duration is None:
+                audio_duration = fallback_duration
+
+            if video_duration is not None and audio_duration is not None:
+                delta = abs(video_duration - audio_duration)
+                if delta > 0.25:
+                    issues.append(
+                        "duration parity check failed: "
+                        f"audio/video delta {delta:.3f}s exceeds 0.250s"
+                    )
+            else:
+                warnings.append("duration metadata unavailable for parity check")
+
+        if platform == "spotify_video":
+            format_name = str(format_info.get("format_name", "")).lower()
+            if format_name and "mp4" not in format_name and "mov" not in format_name:
+                issues.append(
+                    f"container mismatch: expected mp4-compatible format, found {format_name}"
+                )
+
+            # Spotify docs flag edit-list (EDL) risk; ffprobe-only detection is heuristic.
+            non_zero_starts = []
+            for stream in video_streams + audio_streams:
+                start_value = self._parse_numeric_probe_value(stream.get("start_time"))
+                if start_value is not None and abs(start_value) > 0.1:
+                    non_zero_starts.append(start_value)
+            if non_zero_starts:
+                warnings.append(
+                    "non-zero stream start_time detected; possible EDL/timeline offset risk"
+                )
+
+            if spec.gop is not None and spec.fps:
+                keyframe_interval = spec.gop / spec.fps
+                if keyframe_interval > 2.0:
+                    warnings.append(
+                        "configured keyframe cadence exceeds 2s; may degrade seek behavior"
+                    )
+        elif platform == "apple_video":
+            format_name = str(format_info.get("format_name", "")).lower()
+            if format_name and "mp4" not in format_name and "mov" not in format_name:
+                issues.append(
+                    "container mismatch: expected MP4/MOV-compatible Apple video format, "
+                    f"found {format_name}"
+                )
+
+        if warnings:
+            self.logger.warning(
+                "render_platform_compliance_warnings",
+                platform=platform,
+                warnings=warnings,
+                output=str(output_file),
+            )
+
+        if issues:
+            raise PlatformComplianceError(platform=platform, issues=issues, warnings=warnings)
 
     def _build_video_filters(
         self,

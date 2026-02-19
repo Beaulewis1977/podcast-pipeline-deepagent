@@ -2,6 +2,17 @@
 
 AI-powered podcast production pipeline for multi-platform content. Transform raw podcast recordings into optimized exports for YouTube, Spotify, TikTok, Instagram, LinkedIn, Twitter, and more.
 
+## 🛡️ Phase 4 Hardening Highlights
+
+- **Deterministic Runtime Safety**: Strict stage validation, per-job execution locks, and state reload boundaries prevent invalid or concurrent same-job mutation.
+- **Typed Service Contracts**: `run`/`resume` now enforce stage-window validation and return explicit execution outcomes (`started`, `completed`, `rejected`).
+- **Resume Through Completion**: `POST /jobs/{job_id}/resume` continues to `render` by default unless `until_stage` is set.
+- **Service Security + Reliability**: Production API-key auth, sanitized 5xx errors, timeout-aware supervisor heartbeats, and reconciliation loops for stale/orphaned runs.
+- **Truthful Render Semantics**: Per-platform result maps, ingest/render preflight checks, and output artifact verification remove false-success paths.
+- **Provider Fallback Transparency**: Transcript-only fallback is persisted as `metadata.degraded_mode` in `analysis/analysis.json`.
+- **Operator UX Completion**: Streamlit and desktop now expose full lifecycle controls (create/run/resume/delete/reconcile) plus runtime diagnostics.
+- **Confidence Gates**: Runtime-critical regression suites expanded with stricter coverage thresholds for `providers`, `service`, and `stages`.
+
 ## ✨ Features
 
 ### Core Pipeline
@@ -12,11 +23,12 @@ AI-powered podcast production pipeline for multi-platform content. Transform raw
 - **Marketing Copy Generation**: AI-generated titles, descriptions, and hashtags
 
 ### Streamlit Web UI
-- **Dashboard**: Job overview with status tracking
+- **Dashboard + Recovery**: Job overview with service-backed run/resume/delete/reconcile actions
 - **Video Preview**: Timeline scrubbing and playback
-- **Visual Cut Editor**: Drag timeline markers for editing
+- **Timeline Cut Editor**: Start/end/reason editing with validation and persisted `review/edit_plan.json`
 - **Thumbnail Selector**: Grid view of candidate frames
-- **Marketing Editor**: Interactive copy editing for all platforms
+- **Marketing Editor**: Interactive copy editing persisted in review artifacts
+- **Runtime Diagnostics**: Active/stale/orphaned run visibility for operator recovery
 
 ### Platform Exports
 | Platform | Format | Resolution | Max Duration | Features |
@@ -30,10 +42,27 @@ AI-powered podcast production pipeline for multi-platform content. Transform raw
 | Twitter/X | MP4 | 1280×720 | 2:20 | 16:9 landscape |
 | Facebook | MP4 | 1920×1080 | 4hrs | 16:9 landscape |
 
+### Video Podcast Publication Paths (Spotify + Apple)
+
+Phase 5 adds artifact generation for video podcast workflows:
+
+- `spotify_video`: compliant MP4 export artifact for Spotify ingest checks.
+- `apple_video`: MP4 artifact for Apple RSS enclosure workflows.
+- `apple_hls`: optional HLS VOD package (`master.m3u8`, variant playlists, and segments) for Apple provider-mediated hand-off.
+
+Publication is still an operator workflow outside this repository:
+
+- Spotify publication/replacement steps differ for hosted vs non-hosted shows and are completed in Spotify for Creators.
+- Apple `apple_hls` publication is provider-mediated through Apple Podcasts Connect + eligible hosting providers.
+- Apple subscriptions remain audio-only; video subscription automation is out of scope.
+
+This pipeline intentionally produces compliant artifacts only. It does not perform direct platform upload automation.
+
 ### Desktop App (Tauri v2)
 - **Cross-Platform**: Native installers for Windows (.msi), macOS (.dmg), and Linux (.deb/.AppImage)
 - **Bundled Backend**: FastAPI service runs as a sidecar process -- no separate server setup
-- **Crash Recovery**: Automatic detection and resume of interrupted jobs on restart
+- **Full Job Lifecycle**: Create, run, run-to-stage, resume, inspect, delete, and reconcile jobs from desktop UI
+- **Crash Recovery**: Detection and resume of interrupted jobs with runtime diagnostics
 - **Offline-Ready**: FFmpeg and backend bundled; models downloaded on first use
 
 ### Advanced Features
@@ -60,10 +89,11 @@ uv sync
 
 ### Configuration
 
-1. Copy the example config:
-```bash
-cp config.yaml.example config.yaml
-```
+1. Configure `config.yaml` (tracked in this repo) for your environment:
+
+- `paths.jobs_dir` for job/work artifact storage
+- `models.provider` / `models.model` primary analysis provider
+- `models.fallback_provider` / `models.fallback_model` transcript-only fallback behavior
 
 2. Create a `.env` file with your API keys:
 ```bash
@@ -82,12 +112,13 @@ YOUTUBE_API_KEY=your_youtube_api_key
 #### Google Gemini (Primary Provider)
 | Model | Description | Best For |
 |-------|-------------|----------|
-| `gemini-2.5-flash-latest` | Best cost/performance balance | **Recommended for video analysis** |
-| `gemini-3-flash` | Latest model with Agentic Vision | Cutting-edge video features |
-| `gemini-3-pro` | Most intelligent model | Complex analysis (higher cost) |
+| `gemini-2.5-flash` | Best cost/performance balance | **Recommended default for video analysis** |
+| `gemini-2.5-flash-latest` | Alias for latest 2.5 Flash release | Drop-in replacement for `gemini-2.5-flash` |
+| `gemini-3-flash-preview` | Latest preview model with Agentic Vision | Cutting-edge video features |
+| `gemini-3-pro-preview` | Most intelligent preview model | Complex analysis (higher cost) |
 | `gemini-2.5-pro` | 2M token context window | Long-form video (>2 hours) |
 
-> ⚠️ **Note:** `gemini-2.0-flash` is **retiring March 3, 2026**. Use `gemini-2.5-flash-latest` instead.
+> ⚠️ **Note:** `gemini-2.0-flash` is retiring in March 2026. Prefer `gemini-2.5-flash` or `gemini-2.5-flash-latest`.
 
 #### Kimi K2.5 (Fallback Provider)
 | Model | Description | Best For |
@@ -152,13 +183,32 @@ curl -X POST http://127.0.0.1:8787/jobs/<job-id>/resume \
 - `POST /jobs/{job_id}/run` supports `stage`, `until_stage`, and `quality_controls`
 - `POST /jobs/{job_id}/resume` defaults to resume-through-completion (from the first incomplete stage through `render`)
 - `resume` also accepts `from_stage`, `until_stage`, and `background` for explicit control
+- run/resume responses include explicit `started`, `completed`, and `rejected` booleans
+- invalid stage windows are rejected with schema-level `422` responses
+- invalid persisted job state is surfaced as `409` (`Delete or repair this job`)
 - Streamlit **Run Full Pipeline** triggers end-to-end execution semantics, not ingest-only behavior
+
+### Lifecycle + recovery endpoints
+
+- `DELETE /jobs/{job_id}` removes a job when no active background run exists
+- `GET /jobs/resumable` returns interrupted jobs that can be resumed
+- `POST /jobs/reconcile` repairs stale runtime metadata across all jobs
+- `GET /system/runtime` reports `active_jobs`, `stale_jobs`, and `orphaned_jobs`
 
 ### Degraded-mode and quality controls
 
 - Analyze writes provider fallback state to `analysis/analysis.json` at `metadata.degraded_mode`
 - Render quality controls (`video_quality`, `audio_normalize`) are persisted on run and reused in render execution
+- Supported `video_quality` profiles: `draft`, `standard`, `high`, `ultra`
 - Use degraded-mode metadata in ops/debug workflows to distinguish full-video analysis from transcript-only fallback
+
+Example run request with quality controls:
+
+```bash
+curl -X POST http://127.0.0.1:8787/jobs/<job-id>/run \
+  -H "Content-Type: application/json" \
+  -d '{"stage":"analyze","until_stage":"render","quality_controls":{"video_quality":"high","audio_normalize":true}}'
+```
 
 ## 📋 Pipeline Stages
 
@@ -167,6 +217,7 @@ curl -X POST http://127.0.0.1:8787/jobs/<job-id>/resume \
 - Extracts audio (16kHz mono WAV for transcription)
 - Creates proxy video (720p for AI analysis)
 - Extracts video metadata
+- Enforces preflight disk-capacity checks and output artifact existence checks
 
 ### 2. Transcribe
 - GPU-accelerated transcription with faster-whisper
@@ -181,19 +232,33 @@ curl -X POST http://127.0.0.1:8787/jobs/<job-id>/resume \
 - Viral clip identification
 - Thumbnail frame recommendations
 - Marketing copy generation
+- Raises explicit parse failures and annotates transcript-only fallback with `metadata.degraded_mode`
 
 ### 4. Review
 - Human review of AI suggestions
-- Approve/modify cuts and clips
+- Edit/approve cuts and clips with timeline range validation
 - Select thumbnail
 - Edit marketing copy
 - Choose export platforms
+- Persists review decisions through `review_state.json` and `review/edit_plan.json`
 
 ### 5. Render
 - Platform-specific encoding
 - Aspect ratio conversion
 - Audio loudness normalization
 - Marketing document generation
+- Applies run-scoped quality controls, emits per-platform status map, and verifies non-empty outputs
+- Generates concrete thumbnail artifacts and `output/thumbnails/manifest.json`
+
+## 📦 Job Output Layout
+
+For each job, artifacts are written under `jobs/<job_id>/`:
+
+- `output/` — final platform exports (video/audio files)
+- `output/thumbnails/` — generated thumbnail images + `manifest.json`
+- `analysis/analysis.json` — analysis output and `metadata.degraded_mode`
+- `review/review_state.json` — persisted review decisions and marketing edits
+- `review/edit_plan.json` — validated timeline cuts/clips used by render
 
 ## 🔧 Configuration
 
@@ -209,7 +274,7 @@ paths:
 # See "Supported AI Models" section for available options
 models:
   provider: gemini
-  model: gemini-2.5-flash-latest  # Best cost/performance for video
+  model: gemini-2.5-flash  # Best cost/performance for video
   fallback_provider: kimi
   fallback_model: kimi-k2.5  # Latest Kimi multimodal model
 
@@ -255,7 +320,7 @@ podcast-pipeline/
 │   │   └── render.py
 │   ├── ui/                 # Streamlit web interface
 │   └── utils/              # Utilities (ffmpeg, logging, etc.)
-├── tests/                  # Test suite (102 tests)
+├── tests/                  # Automated test suite
 ├── config.yaml             # Configuration file
 └── pyproject.toml          # Project metadata
 ```

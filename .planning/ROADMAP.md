@@ -1,9 +1,9 @@
 # Roadmap: Podcast Pipeline
 
 **Created:** 2026-01-29
-**Last Updated:** 2026-02-12
+**Last Updated:** 2026-02-19
 **Milestone:** v1.0 (Streamlit-first)
-**Phases:** 4
+**Phases:** 5
 
 ## Overview
 
@@ -149,6 +149,26 @@ Plans:
 
 **Details:**
 Plans are ordered in 5 execution waves to prioritize P0 runtime correctness first, then reliability/security, then output quality and UX completion, and finally confidence gates.
+
+---
+
+### Phase 5: Video Podcast Platforms
+
+**Goal:** Deliver publish-ready Spotify and Apple video podcast export artifacts (MP4 plus optional HLS packaging) with compliance validation and truthful operator workflow guidance.
+**Depends on:** Phase 4
+**Status:** Complete (verified 2026-02-19)
+**Plans:** 3/3 complete
+
+Plans:
+- [x] 05-01-PLAN.md — Research-led platform schema defaults and fail-fast validation for `spotify_video`/`apple_video`
+- [x] 05-02-PLAN.md — Render compliance wiring with ffprobe topology/timing checks and truthful failure contracts
+- [x] 05-03-PLAN.md — Optional `apple_hls` hand-off packaging plus Apple/Spotify workflow-boundary documentation
+
+**Details:**
+Plans are sequenced in 3 waves:
+- Wave 1 locks conservative mezzanine-first defaults and schema guardrails from Phase 05 research.
+- Wave 2 enforces Spotify/Apple compliance behavior in render with deterministic post-render validation.
+- Wave 3 adds optional Apple HLS artifacts and codifies provider/dashboard workflow constraints for operators.
 
 ---
 

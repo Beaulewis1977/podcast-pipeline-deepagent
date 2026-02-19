@@ -1,28 +1,28 @@
 # Project State: Podcast Pipeline
 
-**Last updated:** 2026-02-13
-**Current phase:** Phase 4 execution complete (10/10 plans complete; verification pending)
-**Overall progress:** 100% (27/27 plans complete)
+**Last updated:** 2026-02-19
+**Current phase:** Phase 5 complete (goal verified)
+**Overall progress:** 100% (30/30 plans complete)
 
 ## Project Reference
 
 See: `.planning/PROJECT.md`
 
 **Core value:** Turn raw podcast recording into multi-platform content without editing software or manual copywriting.
-**Current focus:** Verify Phase 4 goal achievement and close post-release hardening phase.
+**Current focus:** Prepare milestone audit and close remaining manual verification checkpoints.
 
 ## Current Position
 
-```
-Phase:    3 of 4 complete (Phase 4 execution complete; verification pending)
-Plan:     27 completed overall; 10/10 complete in Phase 4
-Status:   Awaiting Phase 4 verification
-Last activity: 2026-02-13 - Completed 04-10-PLAN.md
+```text
+Phase:    4 of 5 complete (+ Phase 4 human verification checklist pending)
+Plan:     30 completed overall; 3/3 complete in Phase 5
+Status:   Phase 5 verified (passed)
+Last activity: 2026-02-19 - Verified Phase 5 goal (9/9 must-haves)
 
-Progress: [█████████████████████████] 100% (27/27 plans complete)
+Progress: [█████████████████████████] 100% (30/30 plans complete)
 ```
 
-**Next Phase:** Verify Phase 4 - Post-release hardening
+**Next Phase:** Milestone audit / resolve any human-verification checklists
 
 ## Phase Status
 
@@ -31,15 +31,16 @@ Progress: [███████████████████████
 | 1 | Wiring + Stability | Complete | 6/6 | 100% |
 | 2 | Research + Viral Integration | Complete | 5/5 | 100% |
 | 3 | Polishing + Desktop Distribution | Complete | 6/6 | 100% |
-| 4 | Post-release hardening | Execution complete | 10/10 | 100% |
+| 4 | Post-release hardening | Human verification needed | 10/10 | 100% |
+| 5 | Video Podcast Platforms | Complete (verified) | 3/3 | 100% |
 
 ## Performance Metrics
 
 | Metric | Value |
 |--------|-------|
-| Plans completed | 27 |
+| Plans completed | 30 |
 | Requirements done | 35/83 (21 partial) |
-| Phases complete | 3/4 |
+| Phases complete | 4/5 |
 | Estimated completion | In progress |
 
 ## Accumulated Context
@@ -126,6 +127,11 @@ Progress: [███████████████████████
 - Phase 4 execution continued: completed 04-08 output quality backbone hardening (render enhancement + thumbnail artifacts + transcript-grounded research query/cache hardening)
 - Phase 4 execution continued: completed 04-09 operator UX hardening (desktop full lifecycle controls, Streamlit timeline range editing, cross-surface recovery diagnostics + reconcile controls)
 - Phase 4 execution completed: finished 04-10 confidence gates and docs alignment (provider reliability regressions, stronger coverage policy, runtime contract documentation)
+- Phase 5 added: Video Podcast Platforms
+- Phase 5 execution started: completed 05-01 platform defaults and fail-fast schema validation for spotify/apple video targets
+- Phase 5 execution continued: completed 05-02 render compliance wiring and truthful failure contracts
+- Phase 5 execution completed: finished 05-03 apple_hls packaging and platform workflow-boundary documentation
+- Phase 5 verified: 9/9 must-haves passed with no structural gaps
 
 ### Technical Notes
 
@@ -169,16 +175,21 @@ Progress: [███████████████████████
 - 2026-02-13: Completed 04-08-PLAN.md (concrete render enhancement + thumbnail artifacts, transcript-grounded research query derivation, persistent TTL cache restart behavior)
 - 2026-02-13: Completed 04-09-PLAN.md (desktop full lifecycle control plane, validated timeline edit persistence, runtime diagnostics/reconcile controls in desktop + Streamlit)
 - 2026-02-13: Completed 04-10-PLAN.md (provider reliability regressions, raised coverage gates, and runtime contract docs alignment)
+- 2026-02-19: Added Phase 5 (Video Podcast Platforms) to roadmap for upcoming planning/execution
+- 2026-02-19: Completed 05-01-PLAN.md (video-target defaults, compliance schema validation, and regression coverage)
+- 2026-02-19: Completed 05-02-PLAN.md (render profile/level wiring, ffprobe compliance gates, structured compliance status reporting)
+- 2026-02-19: Completed 05-03-PLAN.md (typed apple_hls config, deterministic playlist/segment checks, and truthful Apple/Spotify workflow docs)
+- 2026-02-19: Verified Phase 5 goal (05-video-podcast-platforms-VERIFICATION.md, status: passed)
 
 ## Session Continuity
 
 ### Last session
 
-2026-02-13 04:27 UTC — Executed `04-10-PLAN.md`, strengthened confidence gates/docs alignment, and completed all Phase 4 plan executions.
+2026-02-19 20:25 UTC — Verified `05-video-podcast-platforms` goal (passed, 9/9 must-haves).
 
 ### Stopped at
 
-Completed `04-10-PLAN.md`; next action is phase verification (`gsd-verifier`) for Phase 4 goal.
+Completed `05-video-podcast-platforms-VERIFICATION.md`; next action is milestone audit or pending human-verification checklist closure.
 
 ### Resume file
 
@@ -186,4 +197,4 @@ None
 
 ---
 
-*State updated: 2026-02-13*
+*State updated: 2026-02-19*

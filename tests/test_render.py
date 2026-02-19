@@ -4,9 +4,11 @@ import json
 from collections import namedtuple
 from pathlib import Path
 
+import pytest
+
 from podcast_pipeline.config import PlatformSpec, load_config
 from podcast_pipeline.models.job import Job
-from podcast_pipeline.stages.render import RenderStage
+from podcast_pipeline.stages.render import PlatformComplianceError, RenderStage
 from podcast_pipeline.stages.review import ReviewDecisions
 from podcast_pipeline.utils.ffmpeg import FFmpegError
 
@@ -99,6 +101,213 @@ class TestPlatformSpecs:
 
         assert spec.audio_only is True
         assert spec.audio_codec == "aac"
+
+    def test_spotify_video_spec_defaults(self) -> None:
+        """Spotify video target should use conservative H.264 MP4 defaults."""
+        config = load_config()
+        spec = config.platforms.spotify_video
+
+        assert spec.audio_only is False
+        assert spec.container == "mp4"
+        assert spec.video_codec == "libx264"
+        assert spec.video_profile == "high"
+        assert spec.video_level == "4.1"
+        assert spec.pix_fmt == "yuv420p"
+        assert spec.gop == 30
+        assert spec.keyint_min == 30
+
+    def test_apple_video_spec_defaults(self) -> None:
+        """Apple video target should use conservative MP4 defaults."""
+        config = load_config()
+        spec = config.platforms.apple_video
+
+        assert spec.audio_only is False
+        assert spec.container == "mp4"
+        assert spec.video_codec == "libx264"
+        assert spec.video_profile == "high"
+        assert spec.video_level == "4.0"
+        assert spec.pix_fmt == "yuv420p"
+        assert spec.gop == 30
+        assert spec.keyint_min == 30
+
+    def test_platform_spec_defaults_preserve_legacy_audio_only_targets(self) -> None:
+        """Dedicated video targets must not change legacy spotify/apple audio-only presets."""
+        config = load_config()
+
+        spotify = config.platforms.spotify
+        apple = config.platforms.apple
+
+        assert spotify.audio_only is True
+        assert spotify.container == "mp3"
+        assert spotify.audio_codec == "libmp3lame"
+        assert spotify.audio_bitrate == "320k"
+
+        assert apple.audio_only is True
+        assert apple.container == "m4a"
+        assert apple.audio_codec == "aac"
+        assert apple.audio_bitrate == "128k"
+
+    def test_apple_hls_platform_spec_defaults(self) -> None:
+        """apple_hls target should parse typed VOD HLS defaults."""
+        config = load_config()
+        spec = config.platforms.apple_hls
+
+        assert spec.container == "hls"
+        assert spec.video_codec == "libx264"
+        assert spec.hls is not None
+        assert spec.hls.playlist_type == "vod"
+        assert spec.hls.master_playlist_name == "master.m3u8"
+        assert spec.hls.variant_playlist_pattern == "variant_%v.m3u8"
+        assert spec.hls.segment_filename_pattern == "segment_%v_%03d.ts"
+
+    def test_hls_config_validation_requires_variant_token(self, tmp_path: Path) -> None:
+        """HLS variant pattern should fail fast when '%v' placeholder is missing."""
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "\n".join(
+                [
+                    "platforms:",
+                    "  apple_hls:",
+                    "    hls:",
+                    "      variant_playlist_pattern: variant.m3u8",
+                ]
+            )
+        )
+
+        with pytest.raises(ValueError, match=r"variant_playlist_pattern|%v"):
+            load_config(config_path)
+
+    @pytest.mark.parametrize(
+        ("field_name", "value"),
+        [
+            ("master_playlist_name", "../master.m3u8"),
+            ("master_playlist_name", "/absolute/master.m3u8"),
+            ("variant_playlist_pattern", "variants/variant_%v.m3u8"),
+            ("segment_filename_pattern", r"..\\segment_%v_%03d.ts"),
+        ],
+    )
+    def test_hls_config_validation_rejects_unsafe_filenames(
+        self,
+        tmp_path: Path,
+        field_name: str,
+        value: str,
+    ) -> None:
+        """HLS config names must remain simple filenames in the output directory."""
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "\n".join(
+                [
+                    "platforms:",
+                    "  apple_hls:",
+                    "    hls:",
+                    f"      {field_name}: '{value}'",
+                ]
+            )
+        )
+
+        with pytest.raises(ValueError, match=field_name):
+            load_config(config_path)
+
+    def test_video_profile_validation_includes_platform_name(self, tmp_path: Path) -> None:
+        """Invalid H.264 profile values should fail with target context."""
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "\n".join(
+                [
+                    "platforms:",
+                    "  spotify_video:",
+                    "    video_profile: superhigh",
+                ]
+            )
+        )
+
+        with pytest.raises(ValueError, match=r"video_profile|spotify_video") as exc:
+            load_config(config_path)
+
+        message = str(exc.value)
+        assert "spotify_video" in message
+        assert "video_profile" in message
+
+    def test_video_level_validation_rejects_invalid_values(self, tmp_path: Path) -> None:
+        """Invalid video levels should fail before render starts."""
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "\n".join(
+                [
+                    "platforms:",
+                    "  apple_video:",
+                    "    video_level: level-4",
+                ]
+            )
+        )
+
+        with pytest.raises(ValueError, match=r"video_level|apple_video") as exc:
+            load_config(config_path)
+
+        message = str(exc.value)
+        assert "apple_video" in message
+        assert "video_level" in message
+
+    def test_video_level_validation_accepts_h264_level_1_3(self, tmp_path: Path) -> None:
+        """H.264 level 1.3 should parse cleanly for compliant video targets."""
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "\n".join(
+                [
+                    "platforms:",
+                    "  apple_video:",
+                    "    video_profile: high",
+                    "    video_level: '1.3'",
+                    "    pix_fmt: yuv420p",
+                    "    gop: 30",
+                    "    keyint_min: 30",
+                ]
+            )
+        )
+
+        config = load_config(config_path)
+        assert config.platforms.apple_video.video_level == "1.3"
+
+    def test_pix_fmt_validation_rejects_codec_mismatch(self, tmp_path: Path) -> None:
+        """Unsupported pixel format + codec combinations should fail fast."""
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "\n".join(
+                [
+                    "platforms:",
+                    "  spotify_video:",
+                    "    pix_fmt: yuv444p10le",
+                ]
+            )
+        )
+
+        with pytest.raises(ValueError, match=r"pix_fmt|spotify_video") as exc:
+            load_config(config_path)
+
+        message = str(exc.value)
+        assert "spotify_video" in message
+        assert "pix_fmt" in message
+
+    def test_keyframe_validation_rejects_keyint_min_over_gop(self, tmp_path: Path) -> None:
+        """Invalid keyframe cadence should fail at config load."""
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "\n".join(
+                [
+                    "platforms:",
+                    "  spotify_video:",
+                    "    gop: 30",
+                    "    keyint_min: 45",
+                ]
+            )
+        )
+
+        with pytest.raises(ValueError, match=r"keyint_min|spotify_video") as exc:
+            load_config(config_path)
+
+        message = str(exc.value)
+        assert "spotify_video" in message
+        assert "keyint_min" in message
 
 
 class TestRenderStage:
@@ -498,3 +707,488 @@ class TestRenderGuardrails:
         youtube_result = result.data["platform_results"]["youtube"]
         assert youtube_result["status"] == "failed"
         assert "output verification failed" in youtube_result["error"].lower()
+
+
+class TestRenderComplianceWiring:
+    """Tests for profile/level flags and ffprobe-backed compliance validation."""
+
+    def test_profile_flag_and_level_flag_and_gop_keyframe_flags_for_h264(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        """H.264 exports should include profile/level and keyframe cadence flags."""
+        config = load_config()
+        stage = RenderStage(config)
+        spec = config.platforms.spotify_video
+        output_dir = tmp_path / "output"
+        input_video = tmp_path / "input.mp4"
+        input_video.write_bytes(b"video")
+        captured: dict[str, list[str]] = {}
+
+        def _fake_ffmpeg(args: list[str]) -> None:
+            captured["args"] = args
+            output_file = Path(args[-1])
+            output_file.parent.mkdir(parents=True, exist_ok=True)
+            output_file.write_bytes(b"rendered")
+
+        monkeypatch.setattr("podcast_pipeline.stages.render.run_ffmpeg", _fake_ffmpeg)
+        monkeypatch.setattr(stage, "_validate_video_platform_compliance", lambda *_a, **_k: None)
+
+        stage._render_video(
+            output_dir=output_dir,
+            input_video=input_video,
+            platform="spotify_video",
+            spec=spec,
+            decisions=ReviewDecisions(review_complete=True),
+            video_info={"width": 1920, "height": 1080, "duration": 30.0},
+            edit_plan=None,
+            normalize_audio=False,
+        )
+
+        args = captured["args"]
+        assert "-profile:v" in args
+        assert args[args.index("-profile:v") + 1] == "high"
+        assert "-level:v" in args
+        assert args[args.index("-level:v") + 1] == "4.1"
+        assert "-g" in args
+        assert args[args.index("-g") + 1] == "30"
+        assert "-keyint_min" in args
+        assert args[args.index("-keyint_min") + 1] == "30"
+
+    def test_keyframe_flags_skip_when_codec_not_profile_level_compatible(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        """Non-H.264/H.265 codecs should skip profile/level and keyframe flags."""
+        config = load_config()
+        stage = RenderStage(config)
+        spec = PlatformSpec(
+            container="mp4",
+            video_codec="vp9",
+            video_bitrate="4M",
+            audio_codec="aac",
+            audio_bitrate="128k",
+            pix_fmt="yuv420p",
+            gop=30,
+            keyint_min=30,
+        )
+        output_dir = tmp_path / "output"
+        input_video = tmp_path / "input.mp4"
+        input_video.write_bytes(b"video")
+        captured: dict[str, list[str]] = {}
+
+        def _fake_ffmpeg(args: list[str]) -> None:
+            captured["args"] = args
+            output_file = Path(args[-1])
+            output_file.parent.mkdir(parents=True, exist_ok=True)
+            output_file.write_bytes(b"rendered")
+
+        monkeypatch.setattr("podcast_pipeline.stages.render.run_ffmpeg", _fake_ffmpeg)
+        monkeypatch.setattr(stage, "_validate_video_platform_compliance", lambda *_a, **_k: None)
+
+        stage._render_video(
+            output_dir=output_dir,
+            input_video=input_video,
+            platform="youtube",
+            spec=spec,
+            decisions=ReviewDecisions(review_complete=True),
+            video_info={"width": 1920, "height": 1080, "duration": 30.0},
+            edit_plan=None,
+            normalize_audio=False,
+        )
+
+        args = captured["args"]
+        assert "-profile:v" not in args
+        assert "-level:v" not in args
+        assert "-g" not in args
+        assert "-keyint_min" not in args
+
+    def test_spotify_video_compliance_topology_and_duration_parity_pass(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        """Valid Spotify probe output should pass topology and duration checks."""
+        config = load_config()
+        stage = RenderStage(config)
+
+        monkeypatch.setattr(
+            "podcast_pipeline.stages.render.run_ffprobe",
+            lambda _path: {
+                "format": {"format_name": "mov,mp4,m4a,3gp,3g2,mj2", "duration": "60.0"},
+                "streams": [
+                    {
+                        "codec_type": "video",
+                        "codec_name": "h264",
+                        "profile": "High",
+                        "level": 41,
+                        "pix_fmt": "yuv420p",
+                        "duration": "60.0",
+                        "start_time": "0.0",
+                    },
+                    {
+                        "codec_type": "audio",
+                        "codec_name": "aac",
+                        "duration": "60.02",
+                        "start_time": "0.0",
+                    },
+                ],
+            },
+        )
+
+        stage._validate_video_platform_compliance(
+            platform="spotify_video",
+            output_file=tmp_path / "final.mp4",
+            spec=config.platforms.spotify_video,
+        )
+
+    def test_spotify_video_compliance_fails_topology(self, tmp_path: Path, monkeypatch) -> None:
+        """Spotify validation should fail when expected stream topology is missing."""
+        config = load_config()
+        stage = RenderStage(config)
+
+        monkeypatch.setattr(
+            "podcast_pipeline.stages.render.run_ffprobe",
+            lambda _path: {
+                "format": {"format_name": "mov,mp4,m4a,3gp,3g2,mj2", "duration": "60.0"},
+                "streams": [
+                    {
+                        "codec_type": "video",
+                        "codec_name": "h264",
+                        "profile": "High",
+                        "level": 41,
+                        "pix_fmt": "yuv420p",
+                        "duration": "60.0",
+                    }
+                ],
+            },
+        )
+
+        with pytest.raises(PlatformComplianceError, match="topology"):
+            stage._validate_video_platform_compliance(
+                platform="spotify_video",
+                output_file=tmp_path / "final.mp4",
+                spec=config.platforms.spotify_video,
+            )
+
+    def test_spotify_video_duration_parity_compliance_fails(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        """Spotify validation should fail when audio/video durations diverge."""
+        config = load_config()
+        stage = RenderStage(config)
+
+        monkeypatch.setattr(
+            "podcast_pipeline.stages.render.run_ffprobe",
+            lambda _path: {
+                "format": {"format_name": "mov,mp4,m4a,3gp,3g2,mj2", "duration": "60.0"},
+                "streams": [
+                    {
+                        "codec_type": "video",
+                        "codec_name": "h264",
+                        "profile": "High",
+                        "level": 41,
+                        "pix_fmt": "yuv420p",
+                        "duration": "60.0",
+                    },
+                    {
+                        "codec_type": "audio",
+                        "codec_name": "aac",
+                        "duration": "58.9",
+                    },
+                ],
+            },
+        )
+
+        with pytest.raises(PlatformComplianceError, match="duration parity"):
+            stage._validate_video_platform_compliance(
+                platform="spotify_video",
+                output_file=tmp_path / "final.mp4",
+                spec=config.platforms.spotify_video,
+            )
+
+    def test_apple_video_compliance_accepts_mp4_topology(self, tmp_path: Path, monkeypatch) -> None:
+        """Apple video compliance should pass for valid mp4 topology and metadata."""
+        config = load_config()
+        stage = RenderStage(config)
+
+        monkeypatch.setattr(
+            "podcast_pipeline.stages.render.run_ffprobe",
+            lambda _path: {
+                "format": {"format_name": "mov,mp4,m4a,3gp,3g2,mj2", "duration": "30.0"},
+                "streams": [
+                    {
+                        "codec_type": "video",
+                        "codec_name": "h264",
+                        "profile": "High",
+                        "level": 40,
+                        "pix_fmt": "yuv420p",
+                        "duration": "30.0",
+                    },
+                    {
+                        "codec_type": "audio",
+                        "codec_name": "aac",
+                        "duration": "30.0",
+                    },
+                ],
+            },
+        )
+
+        stage._validate_video_platform_compliance(
+            platform="apple_video",
+            output_file=tmp_path / "final.mp4",
+            spec=config.platforms.apple_video,
+        )
+
+    def test_apple_video_compliance_rejects_non_mp4_container(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        """Apple video compliance should reject non mp4/mov outputs."""
+        config = load_config()
+        stage = RenderStage(config)
+
+        monkeypatch.setattr(
+            "podcast_pipeline.stages.render.run_ffprobe",
+            lambda _path: {
+                "format": {"format_name": "matroska,webm", "duration": "30.0"},
+                "streams": [
+                    {
+                        "codec_type": "video",
+                        "codec_name": "h264",
+                        "profile": "High",
+                        "level": 40,
+                        "pix_fmt": "yuv420p",
+                        "duration": "30.0",
+                    },
+                    {
+                        "codec_type": "audio",
+                        "codec_name": "aac",
+                        "duration": "30.0",
+                    },
+                ],
+            },
+        )
+
+        with pytest.raises(PlatformComplianceError, match="container mismatch"):
+            stage._validate_video_platform_compliance(
+                platform="apple_video",
+                output_file=tmp_path / "final.mp4",
+                spec=config.platforms.apple_video,
+            )
+
+    def test_platform_status_includes_validation_details_for_compliance_error(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        """Compliance failures should propagate with structured validation details."""
+        config = load_config()
+        stage = RenderStage(config)
+        job = _create_review_ready_job(tmp_path, ["spotify_video"])
+
+        monkeypatch.setattr(
+            "podcast_pipeline.stages.render.get_video_info",
+            lambda _input: {"width": 1920, "height": 1080, "duration": 30.0, "fps": 30.0},
+        )
+        monkeypatch.setattr(stage, "_generate_marketing_doc", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr(stage, "_export_clips", lambda *_args, **_kwargs: [])
+
+        def _raise_compliance_error(
+            _job_dir: Path,
+            _input_video: Path,
+            _platform: str,
+            *_args,
+            **_kwargs,
+        ) -> list[str]:
+            raise PlatformComplianceError(
+                platform="spotify_video",
+                issues=["duration parity check failed"],
+                warnings=["possible EDL risk"],
+            )
+
+        monkeypatch.setattr(stage, "_render_platform", _raise_compliance_error)
+
+        result = stage.run(job, tmp_path)
+
+        assert result.success is False
+        platform_result = result.data["platform_results"]["spotify_video"]
+        assert platform_result["status"] == "failed"
+        assert platform_result["error_type"] == "compliance_error"
+        assert "compliance validation failed" in platform_result["error"]
+        assert platform_result["validation"]["issues"] == ["duration parity check failed"]
+        assert platform_result["validation"]["warnings"] == ["possible EDL risk"]
+
+
+class TestRenderHLSArtifacts:
+    """Tests for apple_hls rendering and playlist integrity validation."""
+
+    def test_render_hls_writes_master_playlist_and_variant_playlist(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        """HLS render should require and validate master + variant + segment artifacts."""
+        config = load_config()
+        stage = RenderStage(config)
+        spec = config.platforms.apple_hls
+        output_dir = tmp_path / "output" / "apple_hls"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        input_video = tmp_path / "input.mp4"
+        input_video.write_bytes(b"video")
+
+        def _fake_ffmpeg(args: list[str]) -> None:
+            assert "-f" in args
+            assert args[args.index("-f") + 1] == "hls"
+            assert "-master_pl_name" in args
+            assert "-var_stream_map" in args
+
+            (output_dir / "master.m3u8").write_text(
+                "\n".join(
+                    [
+                        "#EXTM3U",
+                        "#EXT-X-VERSION:3",
+                        "#EXT-X-STREAM-INF:BANDWIDTH=1200000",
+                        "variant_0.m3u8",
+                    ]
+                )
+            )
+            (output_dir / "variant_0.m3u8").write_text(
+                "\n".join(
+                    [
+                        "#EXTM3U",
+                        "#EXT-X-TARGETDURATION:6",
+                        "#EXTINF:6.0,",
+                        "segment_0_000.ts",
+                    ]
+                )
+            )
+            (output_dir / "segment_0_000.ts").write_bytes(b"segment-data")
+
+        monkeypatch.setattr("podcast_pipeline.stages.render.run_ffmpeg", _fake_ffmpeg)
+
+        outputs = stage._render_hls(
+            output_dir=output_dir,
+            input_video=input_video,
+            platform="apple_hls",
+            spec=spec,
+            video_info={"width": 1920, "height": 1080, "duration": 30.0},
+            edit_plan=None,
+            normalize_audio=False,
+        )
+
+        assert "output/apple_hls/master.m3u8" in outputs
+        assert "output/apple_hls/variant_0.m3u8" in outputs
+        assert "output/apple_hls/segment_0_000.ts" in outputs
+
+    def test_master_playlist_validation_fails_when_variant_playlist_missing(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        """Master playlist validation should fail when referenced variant is missing."""
+        config = load_config()
+        stage = RenderStage(config)
+        spec = config.platforms.apple_hls
+        output_dir = tmp_path / "output" / "apple_hls"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        input_video = tmp_path / "input.mp4"
+        input_video.write_bytes(b"video")
+
+        def _fake_ffmpeg(_args: list[str]) -> None:
+            (output_dir / "master.m3u8").write_text(
+                "\n".join(
+                    [
+                        "#EXTM3U",
+                        "#EXT-X-STREAM-INF:BANDWIDTH=1200000",
+                        "variant_0.m3u8",
+                    ]
+                )
+            )
+
+        monkeypatch.setattr("podcast_pipeline.stages.render.run_ffmpeg", _fake_ffmpeg)
+
+        with pytest.raises((FileNotFoundError, RuntimeError), match="variant playlist"):
+            stage._render_hls(
+                output_dir=output_dir,
+                input_video=input_video,
+                platform="apple_hls",
+                spec=spec,
+                video_info={"width": 1920, "height": 1080, "duration": 30.0},
+                edit_plan=None,
+                normalize_audio=False,
+            )
+
+    def test_render_hls_rejects_unsafe_segment_template(self, tmp_path: Path) -> None:
+        """Runtime must reject unsafe templates even if model validation is bypassed."""
+        config = load_config()
+        stage = RenderStage(config)
+        spec = config.platforms.apple_hls.model_copy(deep=True)
+        assert spec.hls is not None
+        spec.hls.segment_filename_pattern = "../segment_%v_%03d.ts"
+
+        output_dir = tmp_path / "output" / "apple_hls"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        input_video = tmp_path / "input.mp4"
+        input_video.write_bytes(b"video")
+
+        with pytest.raises(ValueError, match="segment_filename_pattern"):
+            stage._render_hls(
+                output_dir=output_dir,
+                input_video=input_video,
+                platform="apple_hls",
+                spec=spec,
+                video_info={"width": 1920, "height": 1080, "duration": 30.0},
+                edit_plan=None,
+                normalize_audio=False,
+            )
+
+    def test_validate_hls_artifacts_rejects_variant_path_traversal(self, tmp_path: Path) -> None:
+        """Playlist references that escape output_dir must fail validation."""
+        config = load_config()
+        stage = RenderStage(config)
+        spec = config.platforms.apple_hls
+        output_dir = tmp_path / "output" / "apple_hls"
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        (output_dir / "master.m3u8").write_text(
+            "\n".join(
+                [
+                    "#EXTM3U",
+                    "#EXT-X-STREAM-INF:BANDWIDTH=1200000",
+                    "variant_0.m3u8",
+                ]
+            )
+        )
+        (output_dir / "variant_0.m3u8").write_text(
+            "\n".join(
+                [
+                    "#EXTM3U",
+                    "#EXTINF:6.0,",
+                    "../segment_0_000.ts",
+                ]
+            )
+        )
+
+        with pytest.raises(RuntimeError, match=r"path traversal|escapes output directory"):
+            stage._validate_hls_artifacts(output_dir=output_dir, platform="apple_hls", spec=spec)
+
+
+class TestVideoWorkflowDocs:
+    """Tests for operator-facing workflow boundary documentation."""
+
+    def test_readme_documents_apple_video_and_apple_hls_boundaries(self) -> None:
+        """README should clearly separate artifact generation from publication workflows."""
+        readme = (Path(__file__).resolve().parents[1] / "README.md").read_text().lower()
+
+        assert "apple_video" in readme
+        assert "apple_hls" in readme
+        assert "provider-mediated" in readme
+        assert "hosted vs non-hosted" in readme
+        assert "subscriptions remain audio-only" in readme
+        assert "does not perform direct platform upload automation" in readme
