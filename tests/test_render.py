@@ -1072,3 +1072,18 @@ class TestRenderHLSArtifacts:
                 edit_plan=None,
                 normalize_audio=False,
             )
+
+
+class TestVideoWorkflowDocs:
+    """Tests for operator-facing workflow boundary documentation."""
+
+    def test_readme_documents_apple_video_and_apple_hls_boundaries(self) -> None:
+        """README should clearly separate artifact generation from publication workflows."""
+        readme = Path("README.md").read_text().lower()
+
+        assert "apple_video" in readme
+        assert "apple_hls" in readme
+        assert "provider-mediated" in readme
+        assert "hosted vs non-hosted" in readme
+        assert "subscriptions remain audio-only" in readme
+        assert "does not perform direct platform upload automation" in readme
