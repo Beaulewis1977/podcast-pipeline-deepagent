@@ -938,6 +938,7 @@ class TestRenderComplianceWiring:
         assert result.success is False
         platform_result = result.data["platform_results"]["spotify_video"]
         assert platform_result["status"] == "failed"
+        assert platform_result["error_type"] == "compliance_error"
         assert "compliance validation failed" in platform_result["error"]
         assert platform_result["validation"]["issues"] == ["duration parity check failed"]
         assert platform_result["validation"]["warnings"] == ["possible EDL risk"]

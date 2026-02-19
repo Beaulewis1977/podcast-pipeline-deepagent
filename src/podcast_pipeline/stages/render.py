@@ -154,6 +154,7 @@ class RenderStage(Stage):
                 platform_results[platform] = {
                     "status": "failed",
                     "outputs": [],
+                    "error_type": "compliance_error",
                     "error": error_msg,
                     "validation": {
                         "issues": e.issues,
