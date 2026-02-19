@@ -173,8 +173,12 @@ class PlatformSpec(BaseModel):
     max_duration: int | None = None  # seconds
     min_duration: int | None = None  # seconds
     pix_fmt: str = "yuv420p"
+    video_profile: str | None = None
+    video_level: str | None = None
     preset: str = "medium"
     fps: int | None = None
+    gop: int | None = None
+    keyint_min: int | None = None
     crop_mode: str = "center"  # center, top, bottom, smart
     audio_only: bool = False  # True for audio-only platforms
 
@@ -213,6 +217,46 @@ class PlatformSpecs(BaseModel):
             audio_bitrate="128k",
             loudness_lufs=-16.0,
             audio_only=True,
+        )
+    )
+    spotify_video: PlatformSpec = Field(
+        default_factory=lambda: PlatformSpec(
+            container="mp4",
+            video_codec="libx264",
+            video_profile="high",
+            video_level="4.1",
+            video_bitrate="8M",
+            audio_codec="aac",
+            audio_bitrate="192k",
+            loudness_lufs=-14.0,
+            width=1920,
+            height=1080,
+            aspect_ratio="16:9",
+            fps=30,
+            gop=30,
+            keyint_min=30,
+            pix_fmt="yuv420p",
+            preset="medium",
+        )
+    )
+    apple_video: PlatformSpec = Field(
+        default_factory=lambda: PlatformSpec(
+            container="mp4",
+            video_codec="libx264",
+            video_profile="high",
+            video_level="4.0",
+            video_bitrate="8M",
+            audio_codec="aac",
+            audio_bitrate="160k",
+            loudness_lufs=-16.0,
+            width=1920,
+            height=1080,
+            aspect_ratio="16:9",
+            fps=30,
+            gop=30,
+            keyint_min=30,
+            pix_fmt="yuv420p",
+            preset="medium",
         )
     )
     tiktok: PlatformSpec = Field(

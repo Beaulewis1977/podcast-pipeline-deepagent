@@ -100,6 +100,34 @@ class TestPlatformSpecs:
         assert spec.audio_only is True
         assert spec.audio_codec == "aac"
 
+    def test_spotify_video_spec_defaults(self) -> None:
+        """Spotify video target should use conservative H.264 MP4 defaults."""
+        config = load_config()
+        spec = config.platforms.spotify_video
+
+        assert spec.audio_only is False
+        assert spec.container == "mp4"
+        assert spec.video_codec == "libx264"
+        assert spec.video_profile == "high"
+        assert spec.video_level == "4.1"
+        assert spec.pix_fmt == "yuv420p"
+        assert spec.gop == 30
+        assert spec.keyint_min == 30
+
+    def test_apple_video_spec_defaults(self) -> None:
+        """Apple video target should use conservative MP4 defaults."""
+        config = load_config()
+        spec = config.platforms.apple_video
+
+        assert spec.audio_only is False
+        assert spec.container == "mp4"
+        assert spec.video_codec == "libx264"
+        assert spec.video_profile == "high"
+        assert spec.video_level == "4.0"
+        assert spec.pix_fmt == "yuv420p"
+        assert spec.gop == 30
+        assert spec.keyint_min == 30
+
 
 class TestRenderStage:
     """Tests for RenderStage class."""

@@ -87,6 +87,44 @@ platforms:
     loudness_lufs: -16.0
     audio_only: true
 
+  # Spotify Video - MP4 mezzanine profile
+  spotify_video:
+    container: mp4
+    video_codec: libx264
+    video_profile: high
+    video_level: "4.1"
+    video_bitrate: 8M
+    audio_codec: aac
+    audio_bitrate: 192k
+    loudness_lufs: -14.0
+    width: 1920
+    height: 1080
+    aspect_ratio: "16:9"
+    fps: 30
+    gop: 30
+    keyint_min: 30
+    pix_fmt: yuv420p
+    preset: medium
+
+  # Apple Video - MP4 mezzanine profile
+  apple_video:
+    container: mp4
+    video_codec: libx264
+    video_profile: high
+    video_level: "4.0"
+    video_bitrate: 8M
+    audio_codec: aac
+    audio_bitrate: 160k
+    loudness_lufs: -16.0
+    width: 1920
+    height: 1080
+    aspect_ratio: "16:9"
+    fps: 30
+    gop: 30
+    keyint_min: 30
+    pix_fmt: yuv420p
+    preset: medium
+
   # TikTok - Vertical short-form (60s max)
   tiktok:
     container: mp4
