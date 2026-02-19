@@ -10,7 +10,7 @@ from podcast_pipeline.models.edit_plan import EditPlan
 from podcast_pipeline.models.job import Job
 from podcast_pipeline.stages.base import Stage, StageResult
 from podcast_pipeline.stages.review import ReviewDecisions
-from podcast_pipeline.utils.ffmpeg import FFmpegError, get_video_info, run_ffmpeg
+from podcast_pipeline.utils.ffmpeg import FFmpegError, get_video_info, run_ffmpeg, run_ffprobe
 from podcast_pipeline.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -28,6 +28,22 @@ VIDEO_QUALITY_BITRATE_FACTOR = {
 }
 MAX_THUMBNAIL_EXPORTS = 4
 MIN_THUMBNAIL_OFFSET_SECONDS = 0.5
+PROFILE_LEVEL_CODECS = {"h264", "libx264", "h265", "hevc", "libx265"}
+
+
+class PlatformComplianceError(RuntimeError):
+    """Raised when post-render platform compliance checks fail."""
+
+    def __init__(
+        self,
+        platform: str,
+        issues: list[str],
+        warnings: list[str] | None = None,
+    ):
+        self.platform = platform
+        self.issues = issues
+        self.warnings = warnings or []
+        super().__init__("; ".join(issues))
 
 
 class RenderStage(Stage):
@@ -132,6 +148,28 @@ class RenderStage(Stage):
                     settings=platform_results[platform]["settings"],
                 )
 
+            except PlatformComplianceError as e:
+                error_msg = f"{platform}: compliance validation failed - {e}"
+                errors.append(error_msg)
+                platform_results[platform] = {
+                    "status": "failed",
+                    "outputs": [],
+                    "error": error_msg,
+                    "validation": {
+                        "issues": e.issues,
+                        "warnings": e.warnings,
+                    },
+                    "settings": {
+                        "video_quality": quality_controls["video_quality"],
+                        "audio_normalize": quality_controls["audio_normalize"],
+                    },
+                }
+                self.logger.exception(
+                    "render_platform_compliance_failed",
+                    platform=platform,
+                    issues=e.issues,
+                    warnings=e.warnings,
+                )
             except FFmpegError as e:
                 error_msg = f"{platform}: FFmpeg error - {e}"
                 errors.append(error_msg)
@@ -822,6 +860,16 @@ class RenderStage(Stage):
             ]
         )
 
+        codec_supports_profile_level = self._supports_profile_level_flags(spec.video_codec)
+        if codec_supports_profile_level and spec.video_profile:
+            args.extend(["-profile:v", spec.video_profile])
+        if codec_supports_profile_level and spec.video_level:
+            args.extend(["-level:v", spec.video_level])
+        if codec_supports_profile_level and spec.gop is not None:
+            args.extend(["-g", str(spec.gop)])
+        if codec_supports_profile_level and spec.keyint_min is not None:
+            args.extend(["-keyint_min", str(spec.keyint_min)])
+
         # FPS if specified
         if spec.fps:
             args.extend(["-r", str(spec.fps)])
@@ -852,9 +900,163 @@ class RenderStage(Stage):
         else:
             self.logger.info("loudness_normalization_disabled", platform=platform)
         self._assert_output_exists(output_file, f"{platform} video export")
+        self._validate_video_platform_compliance(
+            platform=platform,
+            output_file=output_file,
+            spec=spec,
+        )
 
         self.logger.info(f"{platform}_rendered", output=str(output_file))
         return [str(output_file.relative_to(output_dir.parent.parent))]
+
+    def _supports_profile_level_flags(self, video_codec: str) -> bool:
+        """Return whether a codec supports profile/level and GOP cadence flags."""
+        return video_codec.strip().lower() in PROFILE_LEVEL_CODECS
+
+    def _expected_probe_codec(self, configured_codec: str) -> str | None:
+        """Map encoder names to ffprobe codec_name values for compliance checks."""
+        normalized = configured_codec.strip().lower()
+        if normalized in {"h264", "libx264"}:
+            return "h264"
+        if normalized in {"h265", "hevc", "libx265"}:
+            return "hevc"
+        return None
+
+    def _parse_numeric_probe_value(self, value: Any) -> float | None:
+        """Parse ffprobe numeric fields that may be strings or numbers."""
+        if value is None:
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _parse_probe_level(self, value: Any) -> float | None:
+        """Parse ffprobe level values (e.g., 41 -> 4.1)."""
+        if value is None:
+            return None
+        if isinstance(value, int):
+            return value / 10.0
+        parsed = self._parse_numeric_probe_value(value)
+        if parsed is None:
+            return None
+        return parsed / 10.0 if parsed > 10 else parsed
+
+    def _validate_video_platform_compliance(
+        self,
+        platform: str,
+        output_file: Path,
+        spec: PlatformSpec,
+    ) -> None:
+        """Run post-render compliance checks for strict video podcast targets."""
+        if platform not in {"spotify_video", "apple_video"}:
+            return
+
+        probe_data = run_ffprobe(output_file)
+        streams = probe_data.get("streams", [])
+        format_info = probe_data.get("format", {})
+        video_streams = [s for s in streams if s.get("codec_type") == "video"]
+        audio_streams = [s for s in streams if s.get("codec_type") == "audio"]
+
+        issues: list[str] = []
+        warnings: list[str] = []
+
+        if len(video_streams) != 1 or len(audio_streams) != 1:
+            issues.append(
+                "topology check failed: expected exactly 1 video stream and 1 audio stream"
+            )
+
+        if video_streams:
+            video_stream = video_streams[0]
+            expected_codec = self._expected_probe_codec(spec.video_codec)
+            actual_codec = str(video_stream.get("codec_name", "")).strip().lower()
+            if expected_codec and actual_codec and actual_codec != expected_codec:
+                issues.append(f"codec mismatch: expected {expected_codec}, found {actual_codec}")
+
+            actual_pix_fmt = str(video_stream.get("pix_fmt", "")).strip().lower()
+            expected_pix_fmt = spec.pix_fmt.strip().lower()
+            if expected_pix_fmt and actual_pix_fmt and actual_pix_fmt != expected_pix_fmt:
+                issues.append(
+                    f"pix_fmt mismatch: expected {expected_pix_fmt}, found {actual_pix_fmt}"
+                )
+
+            if spec.video_profile:
+                expected_profile = spec.video_profile.strip().lower()
+                actual_profile = str(video_stream.get("profile", "")).strip().lower()
+                if actual_profile and actual_profile != expected_profile:
+                    issues.append(
+                        f"profile mismatch: expected {expected_profile}, found {actual_profile}"
+                    )
+                elif not actual_profile:
+                    warnings.append("profile metadata missing from ffprobe output")
+
+            if spec.video_level:
+                expected_level = self._parse_numeric_probe_value(spec.video_level)
+                actual_level = self._parse_probe_level(video_stream.get("level"))
+                if expected_level is not None and actual_level is not None:
+                    if abs(actual_level - expected_level) > 0.05:
+                        issues.append(
+                            f"level mismatch: expected {spec.video_level}, found {actual_level:.1f}"
+                        )
+                elif expected_level is not None:
+                    warnings.append("level metadata missing from ffprobe output")
+
+        if len(video_streams) == 1 and len(audio_streams) == 1:
+            video_stream = video_streams[0]
+            audio_stream = audio_streams[0]
+            fallback_duration = self._parse_numeric_probe_value(format_info.get("duration"))
+            video_duration = self._parse_numeric_probe_value(video_stream.get("duration"))
+            audio_duration = self._parse_numeric_probe_value(audio_stream.get("duration"))
+            if video_duration is None:
+                video_duration = fallback_duration
+            if audio_duration is None:
+                audio_duration = fallback_duration
+
+            if video_duration is not None and audio_duration is not None:
+                delta = abs(video_duration - audio_duration)
+                if delta > 0.25:
+                    issues.append(
+                        "duration parity check failed: "
+                        f"audio/video delta {delta:.3f}s exceeds 0.250s"
+                    )
+            else:
+                warnings.append("duration metadata unavailable for parity check")
+
+        if platform == "spotify_video":
+            format_name = str(format_info.get("format_name", "")).lower()
+            if format_name and "mp4" not in format_name and "mov" not in format_name:
+                issues.append(
+                    f"container mismatch: expected mp4-compatible format, found {format_name}"
+                )
+
+            # Spotify docs flag edit-list (EDL) risk; ffprobe-only detection is heuristic.
+            non_zero_starts = []
+            for stream in video_streams + audio_streams:
+                start_value = self._parse_numeric_probe_value(stream.get("start_time"))
+                if start_value is not None and abs(start_value) > 0.1:
+                    non_zero_starts.append(start_value)
+            if non_zero_starts:
+                warnings.append(
+                    "non-zero stream start_time detected; possible EDL/timeline offset risk"
+                )
+
+            if spec.gop is not None and spec.fps:
+                keyframe_interval = spec.gop / spec.fps
+                if keyframe_interval > 2.0:
+                    warnings.append(
+                        "configured keyframe cadence exceeds 2s; may degrade seek behavior"
+                    )
+
+        if warnings:
+            self.logger.warning(
+                "render_platform_compliance_warnings",
+                platform=platform,
+                warnings=warnings,
+                output=str(output_file),
+            )
+
+        if issues:
+            raise PlatformComplianceError(platform=platform, issues=issues, warnings=warnings)
 
     def _build_video_filters(
         self,

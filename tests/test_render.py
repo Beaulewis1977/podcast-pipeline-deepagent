@@ -8,7 +8,7 @@ import pytest
 
 from podcast_pipeline.config import PlatformSpec, load_config
 from podcast_pipeline.models.job import Job
-from podcast_pipeline.stages.render import RenderStage
+from podcast_pipeline.stages.render import PlatformComplianceError, RenderStage
 from podcast_pipeline.stages.review import ReviewDecisions
 from podcast_pipeline.utils.ffmpeg import FFmpegError
 
@@ -626,3 +626,247 @@ class TestRenderGuardrails:
         youtube_result = result.data["platform_results"]["youtube"]
         assert youtube_result["status"] == "failed"
         assert "output verification failed" in youtube_result["error"].lower()
+
+
+class TestRenderComplianceWiring:
+    """Tests for profile/level flags and ffprobe-backed compliance validation."""
+
+    def test_profile_flag_and_level_flag_and_gop_keyframe_flags_for_h264(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        """H.264 exports should include profile/level and keyframe cadence flags."""
+        config = load_config()
+        stage = RenderStage(config)
+        spec = config.platforms.spotify_video
+        output_dir = tmp_path / "output"
+        input_video = tmp_path / "input.mp4"
+        input_video.write_bytes(b"video")
+        captured: dict[str, list[str]] = {}
+
+        def _fake_ffmpeg(args: list[str]) -> None:
+            captured["args"] = args
+            output_file = Path(args[-1])
+            output_file.parent.mkdir(parents=True, exist_ok=True)
+            output_file.write_bytes(b"rendered")
+
+        monkeypatch.setattr("podcast_pipeline.stages.render.run_ffmpeg", _fake_ffmpeg)
+        monkeypatch.setattr(stage, "_validate_video_platform_compliance", lambda *_a, **_k: None)
+
+        stage._render_video(
+            output_dir=output_dir,
+            input_video=input_video,
+            platform="spotify_video",
+            spec=spec,
+            decisions=ReviewDecisions(review_complete=True),
+            video_info={"width": 1920, "height": 1080, "duration": 30.0},
+            edit_plan=None,
+            normalize_audio=False,
+        )
+
+        args = captured["args"]
+        assert "-profile:v" in args
+        assert args[args.index("-profile:v") + 1] == "high"
+        assert "-level:v" in args
+        assert args[args.index("-level:v") + 1] == "4.1"
+        assert "-g" in args
+        assert args[args.index("-g") + 1] == "30"
+        assert "-keyint_min" in args
+        assert args[args.index("-keyint_min") + 1] == "30"
+
+    def test_keyframe_flags_skip_when_codec_not_profile_level_compatible(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        """Non-H.264/H.265 codecs should skip profile/level and keyframe flags."""
+        config = load_config()
+        stage = RenderStage(config)
+        spec = PlatformSpec(
+            container="mp4",
+            video_codec="vp9",
+            video_bitrate="4M",
+            audio_codec="aac",
+            audio_bitrate="128k",
+            pix_fmt="yuv420p",
+            gop=30,
+            keyint_min=30,
+        )
+        output_dir = tmp_path / "output"
+        input_video = tmp_path / "input.mp4"
+        input_video.write_bytes(b"video")
+        captured: dict[str, list[str]] = {}
+
+        def _fake_ffmpeg(args: list[str]) -> None:
+            captured["args"] = args
+            output_file = Path(args[-1])
+            output_file.parent.mkdir(parents=True, exist_ok=True)
+            output_file.write_bytes(b"rendered")
+
+        monkeypatch.setattr("podcast_pipeline.stages.render.run_ffmpeg", _fake_ffmpeg)
+        monkeypatch.setattr(stage, "_validate_video_platform_compliance", lambda *_a, **_k: None)
+
+        stage._render_video(
+            output_dir=output_dir,
+            input_video=input_video,
+            platform="youtube",
+            spec=spec,
+            decisions=ReviewDecisions(review_complete=True),
+            video_info={"width": 1920, "height": 1080, "duration": 30.0},
+            edit_plan=None,
+            normalize_audio=False,
+        )
+
+        args = captured["args"]
+        assert "-profile:v" not in args
+        assert "-level:v" not in args
+        assert "-g" not in args
+        assert "-keyint_min" not in args
+
+    def test_spotify_video_compliance_topology_and_duration_parity_pass(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        """Valid Spotify probe output should pass topology and duration checks."""
+        config = load_config()
+        stage = RenderStage(config)
+
+        monkeypatch.setattr(
+            "podcast_pipeline.stages.render.run_ffprobe",
+            lambda _path: {
+                "format": {"format_name": "mov,mp4,m4a,3gp,3g2,mj2", "duration": "60.0"},
+                "streams": [
+                    {
+                        "codec_type": "video",
+                        "codec_name": "h264",
+                        "profile": "High",
+                        "level": 41,
+                        "pix_fmt": "yuv420p",
+                        "duration": "60.0",
+                        "start_time": "0.0",
+                    },
+                    {
+                        "codec_type": "audio",
+                        "codec_name": "aac",
+                        "duration": "60.02",
+                        "start_time": "0.0",
+                    },
+                ],
+            },
+        )
+
+        stage._validate_video_platform_compliance(
+            platform="spotify_video",
+            output_file=tmp_path / "final.mp4",
+            spec=config.platforms.spotify_video,
+        )
+
+    def test_spotify_video_compliance_fails_topology(self, tmp_path: Path, monkeypatch) -> None:
+        """Spotify validation should fail when expected stream topology is missing."""
+        config = load_config()
+        stage = RenderStage(config)
+
+        monkeypatch.setattr(
+            "podcast_pipeline.stages.render.run_ffprobe",
+            lambda _path: {
+                "format": {"format_name": "mov,mp4,m4a,3gp,3g2,mj2", "duration": "60.0"},
+                "streams": [
+                    {
+                        "codec_type": "video",
+                        "codec_name": "h264",
+                        "profile": "High",
+                        "level": 41,
+                        "pix_fmt": "yuv420p",
+                        "duration": "60.0",
+                    }
+                ],
+            },
+        )
+
+        with pytest.raises(PlatformComplianceError, match="topology"):
+            stage._validate_video_platform_compliance(
+                platform="spotify_video",
+                output_file=tmp_path / "final.mp4",
+                spec=config.platforms.spotify_video,
+            )
+
+    def test_spotify_video_duration_parity_compliance_fails(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        """Spotify validation should fail when audio/video durations diverge."""
+        config = load_config()
+        stage = RenderStage(config)
+
+        monkeypatch.setattr(
+            "podcast_pipeline.stages.render.run_ffprobe",
+            lambda _path: {
+                "format": {"format_name": "mov,mp4,m4a,3gp,3g2,mj2", "duration": "60.0"},
+                "streams": [
+                    {
+                        "codec_type": "video",
+                        "codec_name": "h264",
+                        "profile": "High",
+                        "level": 41,
+                        "pix_fmt": "yuv420p",
+                        "duration": "60.0",
+                    },
+                    {
+                        "codec_type": "audio",
+                        "codec_name": "aac",
+                        "duration": "58.9",
+                    },
+                ],
+            },
+        )
+
+        with pytest.raises(PlatformComplianceError, match="duration parity"):
+            stage._validate_video_platform_compliance(
+                platform="spotify_video",
+                output_file=tmp_path / "final.mp4",
+                spec=config.platforms.spotify_video,
+            )
+
+    def test_platform_status_includes_validation_details_for_compliance_error(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        """Compliance failures should propagate with structured validation details."""
+        config = load_config()
+        stage = RenderStage(config)
+        job = _create_review_ready_job(tmp_path, ["spotify_video"])
+
+        monkeypatch.setattr(
+            "podcast_pipeline.stages.render.get_video_info",
+            lambda _input: {"width": 1920, "height": 1080, "duration": 30.0, "fps": 30.0},
+        )
+        monkeypatch.setattr(stage, "_generate_marketing_doc", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr(stage, "_export_clips", lambda *_args, **_kwargs: [])
+
+        def _raise_compliance_error(
+            _job_dir: Path,
+            _input_video: Path,
+            _platform: str,
+            *_args,
+            **_kwargs,
+        ) -> list[str]:
+            raise PlatformComplianceError(
+                platform="spotify_video",
+                issues=["duration parity check failed"],
+                warnings=["possible EDL risk"],
+            )
+
+        monkeypatch.setattr(stage, "_render_platform", _raise_compliance_error)
+
+        result = stage.run(job, tmp_path)
+
+        assert result.success is False
+        platform_result = result.data["platform_results"]["spotify_video"]
+        assert platform_result["status"] == "failed"
+        assert "compliance validation failed" in platform_result["error"]
+        assert platform_result["validation"]["issues"] == ["duration parity check failed"]
+        assert platform_result["validation"]["warnings"] == ["possible EDL risk"]
