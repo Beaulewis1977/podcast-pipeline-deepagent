@@ -722,6 +722,18 @@ class RenderStage(Stage):
         output_dir = job_dir / "output" / platform
         output_dir.mkdir(parents=True, exist_ok=True)
 
+        # HLS packaging target
+        if platform == "apple_hls" or spec.container == "hls":
+            return self._render_hls(
+                output_dir,
+                input_video,
+                platform,
+                spec,
+                video_info,
+                edit_plan,
+                normalize_audio,
+            )
+
         # Audio-only platforms
         if spec.audio_only:
             return self._render_audio_only(output_dir, input_video, platform, spec, normalize_audio)
@@ -779,6 +791,164 @@ class RenderStage(Stage):
 
         self.logger.info(f"{platform}_rendered", output=str(output_file))
         return [str(output_file.relative_to(output_dir.parent.parent))]
+
+    def _render_hls(
+        self,
+        output_dir: Path,
+        input_video: Path,
+        platform: str,
+        spec: PlatformSpec,
+        video_info: dict[str, Any],
+        edit_plan: EditPlan | None,
+        normalize_audio: bool,
+    ) -> list[str]:
+        """Render Apple-focused HLS VOD artifacts and verify playlist integrity."""
+        if spec.hls is None:
+            raise ValueError("HLS render requires platform.hls configuration")
+
+        src_width = video_info.get("width", 1920)
+        src_height = video_info.get("height", 1080)
+        src_duration = video_info.get("duration", 0)
+
+        target_width = spec.width or src_width
+        target_height = spec.height or src_height
+        vf_filters = self._build_video_filters(
+            src_width, src_height, target_width, target_height, spec
+        )
+        af_filters = self._build_audio_enhancement_filters()
+        edit_filter = self._build_edit_plan_filter(
+            edit_plan,
+            src_duration,
+            vf_filters,
+            af_filters,
+        )
+
+        duration_args: list[str] = []
+        if spec.max_duration and src_duration > spec.max_duration:
+            duration_args = ["-t", str(spec.max_duration)]
+
+        args = ["-i", str(input_video), *duration_args]
+
+        if edit_filter:
+            filter_complex, video_map, audio_map = edit_filter
+            args.extend(["-filter_complex", filter_complex, "-map", video_map, "-map", audio_map])
+        else:
+            args.extend(["-map", "0:v:0", "-map", "0:a:0"])
+            if vf_filters:
+                args.extend(["-vf", ",".join(vf_filters)])
+            if af_filters:
+                args.extend(["-af", ",".join(af_filters)])
+
+        args.extend(
+            [
+                "-c:v",
+                spec.video_codec,
+                "-preset",
+                spec.preset,
+                "-b:v",
+                spec.video_bitrate,
+                "-pix_fmt",
+                spec.pix_fmt,
+            ]
+        )
+        codec_supports_profile_level = self._supports_profile_level_flags(spec.video_codec)
+        if codec_supports_profile_level and spec.video_profile:
+            args.extend(["-profile:v", spec.video_profile])
+        if codec_supports_profile_level and spec.video_level:
+            args.extend(["-level:v", spec.video_level])
+        if codec_supports_profile_level and spec.gop is not None:
+            args.extend(["-g", str(spec.gop)])
+        if codec_supports_profile_level and spec.keyint_min is not None:
+            args.extend(["-keyint_min", str(spec.keyint_min)])
+        if spec.fps:
+            args.extend(["-r", str(spec.fps)])
+
+        args.extend(
+            [
+                "-c:a",
+                spec.audio_codec,
+                "-b:a",
+                spec.audio_bitrate,
+                "-ac",
+                str(spec.audio_channels),
+                "-f",
+                "hls",
+                "-hls_time",
+                str(spec.hls.segment_duration),
+                "-hls_playlist_type",
+                spec.hls.playlist_type,
+                "-master_pl_name",
+                spec.hls.master_playlist_name,
+                "-var_stream_map",
+                spec.hls.var_stream_map,
+                "-hls_segment_filename",
+                str(output_dir / spec.hls.segment_filename_pattern),
+                str(output_dir / spec.hls.variant_playlist_pattern),
+            ]
+        )
+
+        run_ffmpeg(args)
+        if normalize_audio:
+            self.logger.info(
+                "hls_loudness_normalization_skipped",
+                platform=platform,
+                reason="HLS variant ladder generated in a single ffmpeg invocation",
+            )
+
+        outputs = self._validate_hls_artifacts(output_dir=output_dir, platform=platform, spec=spec)
+        self.logger.info(f"{platform}_rendered", outputs=outputs)
+        return outputs
+
+    def _validate_hls_artifacts(
+        self,
+        output_dir: Path,
+        platform: str,
+        spec: PlatformSpec,
+    ) -> list[str]:
+        """Validate HLS master/variant playlists and referenced segment files."""
+        if spec.hls is None:
+            raise ValueError("HLS validation requires platform.hls configuration")
+
+        master_playlist = output_dir / spec.hls.master_playlist_name
+        self._assert_output_exists(master_playlist, f"{platform} master playlist")
+
+        master_entries = [
+            line.strip()
+            for line in master_playlist.read_text().splitlines()
+            if line.strip() and not line.strip().startswith("#")
+        ]
+        variant_playlists = [entry for entry in master_entries if entry.endswith(".m3u8")]
+        if not variant_playlists:
+            raise RuntimeError(
+                f"{platform} master playlist missing variant playlist references: {master_playlist}"
+            )
+
+        artifact_paths: list[Path] = [master_playlist]
+        for variant_ref in variant_playlists:
+            variant_path = (master_playlist.parent / variant_ref).resolve()
+            self._assert_output_exists(variant_path, f"{platform} variant playlist")
+            artifact_paths.append(variant_path)
+
+            segment_entries = [
+                line.strip()
+                for line in variant_path.read_text().splitlines()
+                if line.strip() and not line.strip().startswith("#")
+            ]
+            if not segment_entries:
+                raise RuntimeError(
+                    f"{platform} variant playlist missing segment entries: {variant_path}"
+                )
+
+            for segment_ref in segment_entries:
+                segment_path = (variant_path.parent / segment_ref).resolve()
+                self._assert_output_exists(segment_path, f"{platform} HLS segment")
+                artifact_paths.append(segment_path)
+
+        deduped = sorted(
+            {path: path for path in artifact_paths}.values(), key=lambda item: str(item)
+        )
+        job_root = output_dir.parent.parent.resolve()
+        return [str(path.relative_to(job_root)) for path in deduped]
 
     def _render_video(
         self,

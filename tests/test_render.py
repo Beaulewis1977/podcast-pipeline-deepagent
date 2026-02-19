@@ -972,3 +972,103 @@ class TestRenderComplianceWiring:
         assert "compliance validation failed" in platform_result["error"]
         assert platform_result["validation"]["issues"] == ["duration parity check failed"]
         assert platform_result["validation"]["warnings"] == ["possible EDL risk"]
+
+
+class TestRenderHLSArtifacts:
+    """Tests for apple_hls rendering and playlist integrity validation."""
+
+    def test_render_hls_writes_master_playlist_and_variant_playlist(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        """HLS render should require and validate master + variant + segment artifacts."""
+        config = load_config()
+        stage = RenderStage(config)
+        spec = config.platforms.apple_hls
+        output_dir = tmp_path / "output" / "apple_hls"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        input_video = tmp_path / "input.mp4"
+        input_video.write_bytes(b"video")
+
+        def _fake_ffmpeg(args: list[str]) -> None:
+            assert "-f" in args
+            assert args[args.index("-f") + 1] == "hls"
+            assert "-master_pl_name" in args
+            assert "-var_stream_map" in args
+
+            (output_dir / "master.m3u8").write_text(
+                "\n".join(
+                    [
+                        "#EXTM3U",
+                        "#EXT-X-VERSION:3",
+                        "#EXT-X-STREAM-INF:BANDWIDTH=1200000",
+                        "variant_0.m3u8",
+                    ]
+                )
+            )
+            (output_dir / "variant_0.m3u8").write_text(
+                "\n".join(
+                    [
+                        "#EXTM3U",
+                        "#EXT-X-TARGETDURATION:6",
+                        "#EXTINF:6.0,",
+                        "segment_0_000.ts",
+                    ]
+                )
+            )
+            (output_dir / "segment_0_000.ts").write_bytes(b"segment-data")
+
+        monkeypatch.setattr("podcast_pipeline.stages.render.run_ffmpeg", _fake_ffmpeg)
+
+        outputs = stage._render_hls(
+            output_dir=output_dir,
+            input_video=input_video,
+            platform="apple_hls",
+            spec=spec,
+            video_info={"width": 1920, "height": 1080, "duration": 30.0},
+            edit_plan=None,
+            normalize_audio=False,
+        )
+
+        assert "output/apple_hls/master.m3u8" in outputs
+        assert "output/apple_hls/variant_0.m3u8" in outputs
+        assert "output/apple_hls/segment_0_000.ts" in outputs
+
+    def test_master_playlist_validation_fails_when_variant_playlist_missing(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        """Master playlist validation should fail when referenced variant is missing."""
+        config = load_config()
+        stage = RenderStage(config)
+        spec = config.platforms.apple_hls
+        output_dir = tmp_path / "output" / "apple_hls"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        input_video = tmp_path / "input.mp4"
+        input_video.write_bytes(b"video")
+
+        def _fake_ffmpeg(_args: list[str]) -> None:
+            (output_dir / "master.m3u8").write_text(
+                "\n".join(
+                    [
+                        "#EXTM3U",
+                        "#EXT-X-STREAM-INF:BANDWIDTH=1200000",
+                        "variant_0.m3u8",
+                    ]
+                )
+            )
+
+        monkeypatch.setattr("podcast_pipeline.stages.render.run_ffmpeg", _fake_ffmpeg)
+
+        with pytest.raises((FileNotFoundError, RuntimeError), match="variant playlist"):
+            stage._render_hls(
+                output_dir=output_dir,
+                input_video=input_video,
+                platform="apple_hls",
+                spec=spec,
+                video_info={"width": 1920, "height": 1080, "duration": 30.0},
+                edit_plan=None,
+                normalize_audio=False,
+            )
