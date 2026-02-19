@@ -28,6 +28,19 @@ SUPPORTED_MODELS_BY_PROVIDER = {
 }
 
 SERVICE_HOST_PATTERN = re.compile(r"^[A-Za-z0-9.-]+$")
+VIDEO_LEVEL_PATTERN = re.compile(r"^[1-6](?:\.[0-2])?$")
+H264_CODECS = {"h264", "libx264"}
+H265_CODECS = {"h265", "hevc", "libx265"}
+CODECS_WITH_PROFILE_LEVEL = H264_CODECS | H265_CODECS
+H264_PROFILES = {"baseline", "main", "high", "high10", "high422", "high444"}
+H265_PROFILES = {"main", "main10", "mainstillpicture"}
+PIX_FMT_BY_CODEC = {
+    "h264": {"yuv420p", "yuv422p", "yuv444p"},
+    "libx264": {"yuv420p", "yuv422p", "yuv444p"},
+    "h265": {"yuv420p", "yuv420p10le", "yuv422p10le", "yuv444p10le"},
+    "hevc": {"yuv420p", "yuv420p10le", "yuv422p10le", "yuv444p10le"},
+    "libx265": {"yuv420p", "yuv420p10le", "yuv422p10le", "yuv444p10le"},
+}
 
 
 class PathsConfig(BaseModel):
@@ -177,10 +190,66 @@ class PlatformSpec(BaseModel):
     video_level: str | None = None
     preset: str = "medium"
     fps: int | None = None
-    gop: int | None = None
-    keyint_min: int | None = None
+    gop: int | None = Field(default=None, ge=1)
+    keyint_min: int | None = Field(default=None, ge=1)
     crop_mode: str = "center"  # center, top, bottom, smart
     audio_only: bool = False  # True for audio-only platforms
+
+    @model_validator(mode="after")
+    def validate_compliance_fields(self) -> Self:
+        """Validate codec-aware profile/level/pixel-format and keyframe fields."""
+        codec = (self.video_codec or "").strip().lower()
+        pix_fmt = (self.pix_fmt or "").strip().lower()
+        profile = self.video_profile.strip().lower() if self.video_profile else None
+        level = self.video_level.strip() if self.video_level else None
+
+        self.video_codec = codec or self.video_codec
+        self.pix_fmt = pix_fmt or self.pix_fmt
+        self.video_profile = profile
+        self.video_level = level
+
+        if profile and codec not in CODECS_WITH_PROFILE_LEVEL:
+            raise ValueError(
+                f"video_profile is not supported for codec '{self.video_codec}'. "
+                "Use null for codecs without profile controls."
+            )
+        if level and codec not in CODECS_WITH_PROFILE_LEVEL:
+            raise ValueError(
+                f"video_level is not supported for codec '{self.video_codec}'. "
+                "Use null for codecs without level controls."
+            )
+
+        if codec in H264_CODECS and profile and profile not in H264_PROFILES:
+            allowed = ", ".join(sorted(H264_PROFILES))
+            raise ValueError(
+                f"Invalid video_profile '{self.video_profile}' for codec '{self.video_codec}'. "
+                f"Expected one of: {allowed}"
+            )
+        if codec in H265_CODECS and profile and profile not in H265_PROFILES:
+            allowed = ", ".join(sorted(H265_PROFILES))
+            raise ValueError(
+                f"Invalid video_profile '{self.video_profile}' for codec '{self.video_codec}'. "
+                f"Expected one of: {allowed}"
+            )
+
+        if level and not VIDEO_LEVEL_PATTERN.fullmatch(level):
+            raise ValueError(
+                f"Invalid video_level '{self.video_level}'. Expected numeric AVC/HEVC level such as 4, 4.0, 4.1."
+            )
+
+        if codec in PIX_FMT_BY_CODEC and pix_fmt and pix_fmt not in PIX_FMT_BY_CODEC[codec]:
+            allowed = ", ".join(sorted(PIX_FMT_BY_CODEC[codec]))
+            raise ValueError(
+                f"Invalid pix_fmt '{self.pix_fmt}' for codec '{self.video_codec}'. "
+                f"Expected one of: {allowed}"
+            )
+
+        if self.keyint_min is not None and self.gop is None:
+            raise ValueError("keyint_min requires gop to be set")
+        if self.gop is not None and self.keyint_min is not None and self.keyint_min > self.gop:
+            raise ValueError(f"keyint_min ({self.keyint_min}) cannot exceed gop ({self.gop})")
+
+        return self
 
 
 class PlatformSpecs(BaseModel):
@@ -343,6 +412,30 @@ class PlatformSpecs(BaseModel):
             preset="medium",
         )
     )
+
+    @model_validator(mode="after")
+    def validate_video_target_requirements(self) -> Self:
+        """Enforce fail-fast requirements for dedicated video podcast targets."""
+        for platform_name in ("spotify_video", "apple_video"):
+            spec = getattr(self, platform_name)
+            missing = []
+            for field_name in ("video_profile", "video_level", "pix_fmt", "gop", "keyint_min"):
+                value = getattr(spec, field_name)
+                if value is None or value == "":
+                    missing.append(field_name)
+            if missing:
+                missing_fields = ", ".join(missing)
+                raise ValueError(
+                    f"{platform_name}: missing required compliance field(s): {missing_fields}"
+                )
+            if spec.audio_only:
+                raise ValueError(f"{platform_name}: audio_only must be false for video targets")
+            if spec.video_codec not in CODECS_WITH_PROFILE_LEVEL:
+                raise ValueError(
+                    f"{platform_name}: codec '{spec.video_codec}' does not support profile/level controls"
+                )
+
+        return self
 
 
 class ServiceConfig(BaseModel):

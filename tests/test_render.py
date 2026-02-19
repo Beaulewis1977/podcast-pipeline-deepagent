@@ -4,6 +4,8 @@ import json
 from collections import namedtuple
 from pathlib import Path
 
+import pytest
+
 from podcast_pipeline.config import PlatformSpec, load_config
 from podcast_pipeline.models.job import Job
 from podcast_pipeline.stages.render import RenderStage
@@ -127,6 +129,87 @@ class TestPlatformSpecs:
         assert spec.pix_fmt == "yuv420p"
         assert spec.gop == 30
         assert spec.keyint_min == 30
+
+    def test_video_profile_validation_includes_platform_name(self, tmp_path: Path) -> None:
+        """Invalid H.264 profile values should fail with target context."""
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "\n".join(
+                [
+                    "platforms:",
+                    "  spotify_video:",
+                    "    video_profile: superhigh",
+                ]
+            )
+        )
+
+        with pytest.raises(ValueError, match=r"video_profile|spotify_video") as exc:
+            load_config(config_path)
+
+        message = str(exc.value)
+        assert "spotify_video" in message
+        assert "video_profile" in message
+
+    def test_video_level_validation_rejects_invalid_values(self, tmp_path: Path) -> None:
+        """Invalid video levels should fail before render starts."""
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "\n".join(
+                [
+                    "platforms:",
+                    "  apple_video:",
+                    "    video_level: level-4",
+                ]
+            )
+        )
+
+        with pytest.raises(ValueError, match=r"video_level|apple_video") as exc:
+            load_config(config_path)
+
+        message = str(exc.value)
+        assert "apple_video" in message
+        assert "video_level" in message
+
+    def test_pix_fmt_validation_rejects_codec_mismatch(self, tmp_path: Path) -> None:
+        """Unsupported pixel format + codec combinations should fail fast."""
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "\n".join(
+                [
+                    "platforms:",
+                    "  spotify_video:",
+                    "    pix_fmt: yuv444p10le",
+                ]
+            )
+        )
+
+        with pytest.raises(ValueError, match=r"pix_fmt|spotify_video") as exc:
+            load_config(config_path)
+
+        message = str(exc.value)
+        assert "spotify_video" in message
+        assert "pix_fmt" in message
+
+    def test_keyframe_validation_rejects_keyint_min_over_gop(self, tmp_path: Path) -> None:
+        """Invalid keyframe cadence should fail at config load."""
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "\n".join(
+                [
+                    "platforms:",
+                    "  spotify_video:",
+                    "    gop: 30",
+                    "    keyint_min: 45",
+                ]
+            )
+        )
+
+        with pytest.raises(ValueError, match=r"keyint_min|spotify_video") as exc:
+            load_config(config_path)
+
+        message = str(exc.value)
+        assert "spotify_video" in message
+        assert "keyint_min" in message
 
 
 class TestRenderStage:
