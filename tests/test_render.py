@@ -651,6 +651,57 @@ class TestRenderEnhancementAndThumbnailOutputs:
         assert any(path.endswith("manifest.json") for path in outputs)
 
 
+class TestRenderEnhancementFilterCapabilities:
+    """Tests for FFmpeg filter capability preflight checks."""
+
+    def test_ffmpeg_filter_capability_defaults_only_require_enabled_paths(self) -> None:
+        """Default required filters should reflect currently enabled enhancement toggles."""
+        stage = RenderStage(load_config())
+
+        required = stage._required_enhancement_filters()
+
+        assert "deesser" in required
+        assert "adeclick" in required
+        assert "normalize" not in required
+        assert "grayworld" not in required
+
+    def test_ffmpeg_filter_capability_fail_fast_lists_missing_filters(
+        self,
+        monkeypatch,
+    ) -> None:
+        """Missing required filters should produce actionable preflight errors."""
+        config = load_config()
+        config.enhancements.color_correction.enabled = True
+        stage = RenderStage(config)
+
+        monkeypatch.setattr(stage, "_probe_available_ffmpeg_filters", lambda: {"deesser"})
+
+        with pytest.raises(RuntimeError, match="missing required FFmpeg filter"):
+            stage._ensure_filter_capabilities()
+
+    def test_fail_fast_render_preflight_on_filter_capability_errors(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        """Render run should fail before per-platform execution when filters are unavailable."""
+        stage = RenderStage(load_config())
+        job = _create_review_ready_job(tmp_path, ["youtube"])
+
+        monkeypatch.setattr(
+            stage,
+            "_ensure_filter_capabilities",
+            lambda: (_ for _ in ()).throw(
+                RuntimeError("Render preflight failed: missing required FFmpeg filter(s): deesser")
+            ),
+        )
+
+        result = stage.run(job, tmp_path)
+
+        assert result.success is False
+        assert "missing required FFmpeg filter" in (result.error or "")
+
+
 class TestRenderStatusSemantics:
     """Tests for top-level render status and platform result details."""
 

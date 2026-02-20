@@ -1,7 +1,9 @@
 """Render stage: Export final content for all platforms."""
 
 import json
+import re
 import shutil
+import subprocess
 import tempfile
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
@@ -51,6 +53,7 @@ class RenderStage(Stage):
     """Render final exports for all platforms."""
 
     name = "render"
+    _ffmpeg_filter_cache: set[str] | None = None
 
     def __init__(self, config: Config):
         super().__init__(config)
@@ -94,6 +97,11 @@ class RenderStage(Stage):
         platform_results: dict[str, dict[str, Any]] = {}
         selected_platforms = list(dict.fromkeys(decisions.export_platforms))
         preflight_error = self._run_render_preflight(input_video, job_dir, selected_platforms)
+        if preflight_error is None:
+            try:
+                self._ensure_filter_capabilities()
+            except RuntimeError as e:
+                preflight_error = str(e)
         if preflight_error is not None:
             return StageResult(success=False, error=preflight_error)
 
@@ -331,6 +339,88 @@ class RenderStage(Stage):
                 f"available {free_bytes / (1024 * 1024):.1f} MiB at {output_root}."
             )
         return None
+
+    def _required_enhancement_filters(self) -> set[str]:
+        """Compute required FFmpeg filters from currently enabled enhancement paths."""
+        required: set[str] = set()
+        if self.config.enhancements.deesser.enabled:
+            required.add("deesser")
+            if self.config.enhancements.deesser.click_safety_enabled:
+                required.add("adeclick")
+
+        color = self.config.enhancements.color_correction
+        if color.enabled:
+            if color.normalize_enabled:
+                required.add("normalize")
+            if color.grayworld_enabled:
+                required.add("grayworld")
+            if color.eq_enabled:
+                required.add("eq")
+
+        return required
+
+    def _probe_available_ffmpeg_filters(self) -> set[str]:
+        """Probe and cache available filter names from local FFmpeg binary."""
+        if RenderStage._ffmpeg_filter_cache is not None:
+            return RenderStage._ffmpeg_filter_cache
+
+        cmd = ["ffmpeg", "-hide_banner", "-filters"]
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=20,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as e:
+            raise RuntimeError("Render preflight failed: `ffmpeg -filters` timed out.") from e
+        except FileNotFoundError as e:
+            raise RuntimeError(
+                "Render preflight failed: ffmpeg binary not found in PATH. Install FFmpeg first."
+            ) from e
+
+        if result.returncode != 0:
+            stderr = result.stderr.strip() or "unknown ffmpeg error"
+            raise RuntimeError(
+                "Render preflight failed: unable to inspect FFmpeg filters "
+                f"(exit {result.returncode}: {stderr})."
+            )
+
+        available: set[str] = set()
+        for line in result.stdout.splitlines():
+            match = re.match(r"^\s*[T.][S.][C.]\s+([A-Za-z0-9_]+)\s+", line)
+            if match:
+                available.add(match.group(1))
+
+        if not available:
+            raise RuntimeError(
+                "Render preflight failed: could not parse filter list from `ffmpeg -filters` output."
+            )
+
+        RenderStage._ffmpeg_filter_cache = available
+        return available
+
+    def _ensure_filter_capabilities(self) -> None:
+        """Fail fast when enabled enhancement filters are unavailable in local FFmpeg."""
+        required = self._required_enhancement_filters()
+        if not required:
+            return
+
+        available = self._probe_available_ffmpeg_filters()
+        missing = sorted(required - available)
+        if missing:
+            missing_list = ", ".join(missing)
+            raise RuntimeError(
+                "Render preflight failed: missing required FFmpeg filter(s): "
+                f"{missing_list}. Install an FFmpeg build with these filters or disable the "
+                "corresponding enhancement flags in config.yaml."
+            )
+
+        self.logger.info(
+            "render_filter_capability_check_passed",
+            required=sorted(required),
+        )
 
     def _assert_output_exists(self, output_path: Path, artifact_name: str) -> None:
         """Verify output artifacts exist and are non-empty after FFmpeg calls."""
