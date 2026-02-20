@@ -132,6 +132,48 @@ class TestPlatformSpecs:
         assert spec.gop == 30
         assert spec.keyint_min == 30
 
+    def test_thumbnail_config_defaults_cover_selected_video_targets(self) -> None:
+        """Thumbnail config should define typed constraints for youtube/spotify_video/apple_video."""
+        config = load_config()
+
+        youtube = config.thumbnails.youtube
+        spotify_video = config.thumbnails.spotify_video
+        apple_video = config.thumbnails.apple_video
+
+        assert (youtube.width, youtube.height, youtube.aspect_ratio) == (1280, 720, "16:9")
+        assert (spotify_video.width, spotify_video.height, spotify_video.aspect_ratio) == (
+            1280,
+            720,
+            "16:9",
+        )
+        assert (apple_video.width, apple_video.height, apple_video.aspect_ratio) == (
+            3000,
+            3000,
+            "1:1",
+        )
+        assert "jpg" in youtube.formats
+        assert youtube.max_size_bytes == 2 * 1024 * 1024
+
+    def test_thumbnail_config_rejects_mismatched_aspect_ratio(self, tmp_path: Path) -> None:
+        """Invalid thumbnail width/height to aspect mapping should fail fast."""
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "\n".join(
+                [
+                    "thumbnails:",
+                    "  youtube:",
+                    "    width: 1280",
+                    "    height: 720",
+                    "    aspect_ratio: '1:1'",
+                    "    formats: [jpg]",
+                    "    max_size_bytes: 2097152",
+                ]
+            )
+        )
+
+        with pytest.raises(ValueError, match=r"aspect_ratio|width|height"):
+            load_config(config_path)
+
     def test_platform_spec_defaults_preserve_legacy_audio_only_targets(self) -> None:
         """Dedicated video targets must not change legacy spotify/apple audio-only presets."""
         config = load_config()

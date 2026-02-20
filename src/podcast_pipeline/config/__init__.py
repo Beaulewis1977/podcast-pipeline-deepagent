@@ -10,6 +10,8 @@ from podcast_pipeline.config.settings import (
     PlatformSpec,
     PlatformSpecs,
     ServiceConfig,
+    ThumbnailSpecs,
+    ThumbnailTargetSpec,
     load_config,
 )
 
@@ -23,5 +25,7 @@ __all__ = [
     "PlatformSpec",
     "PlatformSpecs",
     "ServiceConfig",
+    "ThumbnailSpecs",
+    "ThumbnailTargetSpec",
     "load_config",
 ]
