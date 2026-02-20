@@ -73,8 +73,8 @@ class TestUIConfig:
 class TestReviewDecisionsUpdate:
     """Tests for review decisions updates."""
 
-    def test_update_thumbnail_selection(self, tmp_path: Path) -> None:
-        """Test updating thumbnail selection."""
+    def test_update_selected_thumbnail_selection_ranked_behavior(self, tmp_path: Path) -> None:
+        """Test ranked thumbnail toggle behavior with primary mirror compatibility."""
         from podcast_pipeline.stages.review import ReviewDecisions
         from podcast_pipeline.ui.app import update_thumbnail_selection
 
@@ -86,13 +86,37 @@ class TestReviewDecisionsUpdate:
         initial = ReviewDecisions(selected_thumbnail=0)
         (review_dir / "review_state.json").write_text(initial.model_dump_json())
 
-        # Update selection
+        # Append alternate selection (primary should remain first-selected)
         update_thumbnail_selection(tmp_path, 5)
 
-        # Verify
         review_path = review_dir / "review_state.json"
         updated = ReviewDecisions.model_validate_json(review_path.read_text())
-        assert updated.selected_thumbnail == 5
+        assert updated.selected_thumbnails == [0, 5]
+        assert updated.selected_thumbnail == 0
+
+        # Removing primary should promote next ranked alternate to primary mirror
+        update_thumbnail_selection(tmp_path, 0)
+        promoted = ReviewDecisions.model_validate_json(review_path.read_text())
+        assert promoted.selected_thumbnails == [5]
+        assert promoted.selected_thumbnail == 5
+
+    def test_update_selected_thumbnail_selection_caps_ranked_list_at_three(
+        self, tmp_path: Path
+    ) -> None:
+        """Adding a fourth thumbnail should preserve existing 1..3 ranked choices."""
+        from podcast_pipeline.stages.review import ReviewDecisions
+        from podcast_pipeline.ui.app import update_thumbnail_selection
+
+        review_dir = tmp_path / "review"
+        review_dir.mkdir()
+        initial = ReviewDecisions(selected_thumbnails=[0, 1, 2], selected_thumbnail=0)
+        (review_dir / "review_state.json").write_text(initial.model_dump_json())
+
+        update_thumbnail_selection(tmp_path, 3)
+
+        updated = ReviewDecisions.model_validate_json((review_dir / "review_state.json").read_text())
+        assert updated.selected_thumbnails == [0, 1, 2]
+        assert updated.selected_thumbnail == 0
 
     def test_update_export_platforms(self, tmp_path: Path) -> None:
         """Test updating export platforms with canonical normalization."""
