@@ -153,18 +153,28 @@ Provide your analysis as JSON with this exact structure:
     }},
     "tiktok": {{
       "titles": [],
-      "description": "TikTok caption",
+      "description": "TikTok caption (short, punchy, hook in first line)",
       "hashtags": ["#fyp", "#podcast"]
+    }},
+    "instagram": {{
+      "titles": [],
+      "description": "Instagram Reels/post caption with emojis and call to action",
+      "hashtags": ["#podcast", "#reels"]
     }},
     "linkedin": {{
       "titles": [],
-      "description": "Professional LinkedIn post",
+      "description": "Professional LinkedIn post with insight or takeaway",
       "hashtags": ["#professional"]
     }},
     "twitter": {{
       "titles": [],
       "description": "Tweet (<280 chars)",
       "hashtags": []
+    }},
+    "facebook": {{
+      "titles": [],
+      "description": "Facebook post with conversational tone and call to action",
+      "hashtags": ["#podcast"]
     }},
     "apple": {{
       "titles": ["Episode title"],
