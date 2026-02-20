@@ -248,8 +248,8 @@ Scope boundary note:
 
 **Goal:** Deliver trend-aware, LLM-generated cross-platform marketing copy coverage (including `spotify_video`, `apple_video`) and implement thumbnail visual-selection MVP (visual grid + ranked 1-3 selection + virality surfacing + per-target thumbnail compliance enforcement).
 **Depends on:** Phase 6
-**Status:** Planned (2026-02-20)
-**Plans:** 5 plans
+**Status:** Complete (verified 2026-02-20)
+**Plans:** 5/5 complete
 
 **Scope / Requirements:**
 - Add `spotify_video` and `apple_video` to analysis marketing schema so validated AI responses retain these keys
@@ -277,11 +277,11 @@ Scope boundary note:
 7. Per-platform custom thumbnail assignment UX remains explicitly deferred to follow-on scope
 
 Plans:
-- [ ] 06.1-01-PLAN.md — Full-platform marketing contract: model + provider prompt quality/trend wiring + regression locking
-- [ ] 06.1-02-PLAN.md — Marketing surfaces parity: full-platform render/UI coverage + trend-aware workflow regressions
-- [ ] 06.1-03-PLAN.md — Thumbnail data contracts: virality schema + ranked selection state + compatibility
-- [ ] 06.1-04-PLAN.md — Thumbnail MVP UX: analyze-time frame extraction + Streamlit visual ranked multi-select
-- [ ] 06.1-05-PLAN.md — Thumbnail export contract: per-target compliance enforcement + fail-fast diagnostics + docs
+- [x] 06.1-01-PLAN.md — Full-platform marketing contract: model + provider prompt quality/trend wiring + regression locking
+- [x] 06.1-02-PLAN.md — Marketing surfaces parity: full-platform render/UI coverage + trend-aware workflow regressions
+- [x] 06.1-03-PLAN.md — Thumbnail data contracts: virality schema + ranked selection state + compatibility
+- [x] 06.1-04-PLAN.md — Thumbnail MVP UX: analyze-time frame extraction + Streamlit visual ranked multi-select
+- [x] 06.1-05-PLAN.md — Thumbnail export contract: per-target compliance enforcement + fail-fast diagnostics + docs
 
 **Details:**
 Plans run in 4 waves:
