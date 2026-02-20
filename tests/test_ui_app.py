@@ -226,7 +226,11 @@ def test_ui_app_marketing_editor_exposes_full_matrix_and_trend_signals(tmp_path:
         {
             "marketing": {
                 "youtube": {"titles": ["YT title"], "description": "YT desc", "hashtags": ["#yt"]},
-                "spotify": {"titles": ["Spotify title"], "description": "Spotify desc", "hashtags": []},
+                "spotify": {
+                    "titles": ["Spotify title"],
+                    "description": "Spotify desc",
+                    "hashtags": [],
+                },
                 "spotify_video": {
                     "titles": ["Spotify video title"],
                     "description": "Spotify video desc",

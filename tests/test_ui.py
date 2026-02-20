@@ -114,7 +114,9 @@ class TestReviewDecisionsUpdate:
 
         update_thumbnail_selection(tmp_path, 3)
 
-        updated = ReviewDecisions.model_validate_json((review_dir / "review_state.json").read_text())
+        updated = ReviewDecisions.model_validate_json(
+            (review_dir / "review_state.json").read_text()
+        )
         assert updated.selected_thumbnails == [0, 1, 2]
         assert updated.selected_thumbnail == 0
 

@@ -158,6 +158,7 @@ def _marketing_editor_platform_specs() -> tuple[MarketingEditorPlatformSpec, ...
     """Return canonical marketing editor platform specs in deterministic order."""
     return _MARKETING_EDITOR_PLATFORM_SPECS
 
+
 # Page config must be first Streamlit command
 st.set_page_config(
     page_title="Podcast Pipeline",
@@ -1487,10 +1488,14 @@ def render_thumbnail_selector(job_dir: Path) -> None:
                     button_label = f"Remove #{rank}"
                     button_disabled = False
                 else:
-                    button_label = f"Add as #{len(selected_thumbnails) + 1}" if can_add_more else "Max 3"
+                    button_label = (
+                        f"Add as #{len(selected_thumbnails) + 1}" if can_add_more else "Max 3"
+                    )
                     button_disabled = not can_add_more
 
-                if st.button(button_label, key=f"thumb_select_{thumb_idx}", disabled=button_disabled):
+                if st.button(
+                    button_label, key=f"thumb_select_{thumb_idx}", disabled=button_disabled
+                ):
                     update_thumbnail_selection(job_dir, thumb_idx)
                     st.rerun()
 

@@ -343,7 +343,9 @@ class ThumbnailTargetSpec(BaseModel):
                 continue
             if text not in THUMBNAIL_FORMATS:
                 allowed = ", ".join(sorted(THUMBNAIL_FORMATS))
-                raise ValueError(f"Unsupported thumbnail format '{text}'. Expected one of: {allowed}")
+                raise ValueError(
+                    f"Unsupported thumbnail format '{text}'. Expected one of: {allowed}"
+                )
             if text not in normalized:
                 normalized.append(text)
 

@@ -770,9 +770,7 @@ class RenderStage(Stage):
 
         ranked: list[dict[str, Any]] = []
         total = len(candidates)
-        selected_rank_map = {
-            index: rank for rank, index in enumerate(selected_thumbnails, start=1)
-        }
+        selected_rank_map = {index: rank for rank, index in enumerate(selected_thumbnails, start=1)}
         for index, candidate in enumerate(candidates):
             score = float(total - index)
             analysis_index = candidate.get("analysis_index")
@@ -831,6 +829,7 @@ class RenderStage(Stage):
             }
 
         selected_thumbnails = self._resolve_ranked_thumbnail_selection(decisions)
+        selected_rank_map = {index: rank for rank, index in enumerate(selected_thumbnails, start=1)}
         ranked_candidates = self._rank_thumbnail_candidates(
             candidates=candidates,
             video_duration=video_duration,
@@ -878,6 +877,12 @@ class RenderStage(Stage):
 
             relative_path = str(thumbnail_path.relative_to(job_dir))
             outputs.append(relative_path)
+            raw_analysis_index = candidate.get("analysis_index")
+            analysis_index = raw_analysis_index if isinstance(raw_analysis_index, int) else None
+            selection_rank = (
+                selected_rank_map.get(analysis_index) if analysis_index is not None else None
+            )
+            is_selected = selection_rank is not None
             manifest_candidates.append(
                 {
                     "rank": rank,
@@ -886,17 +891,9 @@ class RenderStage(Stage):
                     "timestamp_seconds": round(timestamp_seconds, 3),
                     "score": candidate.get("score"),
                     "source": candidate.get("source", source),
-                    "analysis_index": candidate.get("analysis_index"),
-                    "is_selected": (
-                        isinstance(candidate.get("analysis_index"), int)
-                        and candidate.get("analysis_index") in selected_thumbnails
-                    ),
-                    "selection_rank": (
-                        selected_thumbnails.index(candidate.get("analysis_index")) + 1
-                        if isinstance(candidate.get("analysis_index"), int)
-                        and candidate.get("analysis_index") in selected_thumbnails
-                        else None
-                    ),
+                    "analysis_index": analysis_index,
+                    "is_selected": is_selected,
+                    "selection_rank": selection_rank,
                     "visual_description": candidate.get("visual_description", ""),
                     "suggested_text_overlay": candidate.get("suggested_text_overlay", ""),
                     "emotion": candidate.get("emotion", ""),
@@ -970,7 +967,7 @@ class RenderStage(Stage):
         raw_thumbnail_paths = thumbnail_result.get("thumbnail_paths")
         thumbnail_paths = raw_thumbnail_paths if isinstance(raw_thumbnail_paths, list) else []
         if not thumbnail_paths:
-            platform_results = {
+            missing_results: dict[str, dict[str, Any]] = {
                 platform: {
                     "status": "failed",
                     "issues": ["no generated thumbnail assets available for compliance validation"],
@@ -981,7 +978,7 @@ class RenderStage(Stage):
             return {
                 "status": "failed",
                 "outputs": [],
-                "platform_results": platform_results,
+                "platform_results": missing_results,
                 "error": "no generated thumbnail assets available for selected target compliance",
             }
 
@@ -1122,7 +1119,9 @@ class RenderStage(Stage):
         # Taller source: crop top/bottom.
         crop_height = round(source_width / target_ratio)
         y_offset = max((source_height - crop_height) // 2, 0)
-        return f"crop={source_width}:{crop_height}:0:{y_offset},scale={target_width}:{target_height}"
+        return (
+            f"crop={source_width}:{crop_height}:0:{y_offset},scale={target_width}:{target_height}"
+        )
 
     def _thumbnail_dimensions(self, path: Path) -> tuple[int, int]:
         """Read image dimensions from ffprobe metadata."""

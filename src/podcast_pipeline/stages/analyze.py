@@ -304,7 +304,9 @@ class AnalyzeStage(Stage):
 
     def _load_prompt_trend_context(self, job_dir: Path) -> dict[str, Any] | None:
         """Load optional trend context from prior research artifacts for prompt injection."""
-        research_payload = self._load_optional_analysis_payload(job_dir / "analysis" / "research.json")
+        research_payload = self._load_optional_analysis_payload(
+            job_dir / "analysis" / "research.json"
+        )
         viral_payload = self._load_optional_analysis_payload(
             job_dir / "analysis" / "viral_signals.json"
         )
@@ -342,7 +344,9 @@ class AnalyzeStage(Stage):
         try:
             raw = json.loads(path.read_text())
         except (OSError, json.JSONDecodeError) as exc:
-            self.logger.warning("analysis_trend_context_load_failed", path=str(path), error=str(exc))
+            self.logger.warning(
+                "analysis_trend_context_load_failed", path=str(path), error=str(exc)
+            )
             return None
         if not isinstance(raw, dict):
             self.logger.warning(

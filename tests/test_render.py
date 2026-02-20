@@ -672,7 +672,11 @@ class TestMarketingDocGeneration:
                             "hashtags": ["#podcast"],
                         }
                     },
-                    "metadata": {"summary": "Sparse payload", "topics": ["topic"], "mood": "focused"},
+                    "metadata": {
+                        "summary": "Sparse payload",
+                        "topics": ["topic"],
+                        "mood": "focused",
+                    },
                 }
             )
         )
@@ -933,7 +937,9 @@ class TestThumbnailCompliance:
         assert result["platform_results"]["youtube"]["status"] == "success"
         assert result["platform_results"]["spotify_video"]["status"] == "success"
         assert any(path.startswith("output/thumbnails/youtube/") for path in result["outputs"])
-        assert any(path.startswith("output/thumbnails/spotify_video/") for path in result["outputs"])
+        assert any(
+            path.startswith("output/thumbnails/spotify_video/") for path in result["outputs"]
+        )
 
     def test_thumbnail_compliance_fails_with_target_specific_diagnostics(
         self,
@@ -968,9 +974,14 @@ class TestThumbnailCompliance:
         assert result["status"] == "failed"
         assert "apple_video" in result["error"]
         assert result["platform_results"]["apple_video"]["status"] == "failed"
-        assert "thumbnail dimensions mismatch" in result["platform_results"]["apple_video"]["issues"][0]
+        assert (
+            "thumbnail dimensions mismatch"
+            in result["platform_results"]["apple_video"]["issues"][0]
+        )
 
-    def test_thumbnail_compliance_fail_fast_when_required_assets_missing(self, tmp_path: Path) -> None:
+    def test_thumbnail_compliance_fail_fast_when_required_assets_missing(
+        self, tmp_path: Path
+    ) -> None:
         """Selected target requiring thumbnails should fail when no generated assets exist."""
         stage = RenderStage(load_config())
 
