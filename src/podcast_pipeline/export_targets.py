@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
+from typing import Literal, overload
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,6 +41,24 @@ EXPORT_TARGETS: tuple[ExportTarget, ...] = (
 SUPPORTED_EXPORT_PLATFORMS: tuple[str, ...] = tuple(target.key for target in EXPORT_TARGETS)
 SUPPORTED_EXPORT_PLATFORM_SET: frozenset[str] = frozenset(SUPPORTED_EXPORT_PLATFORMS)
 DEFAULT_EXPORT_PLATFORMS: tuple[str, str] = ("youtube", "spotify")
+
+
+@overload
+def normalize_export_platforms(
+    platforms: Iterable[str] | None,
+    *,
+    fallback_to_default: bool = True,
+    include_invalid: Literal[False] = False,
+) -> list[str]: ...
+
+
+@overload
+def normalize_export_platforms(
+    platforms: Iterable[str] | None,
+    *,
+    fallback_to_default: bool = True,
+    include_invalid: Literal[True],
+) -> tuple[list[str], list[str]]: ...
 
 
 def normalize_export_platforms(
