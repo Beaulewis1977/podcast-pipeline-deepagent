@@ -1,28 +1,28 @@
 # Project State: Podcast Pipeline
 
 **Last updated:** 2026-02-20
-**Current phase:** Phase 5.1 in progress (2/3 plans complete)
-**Overall progress:** 97% (32/33 plans complete)
+**Current phase:** Phase 5.1 execution complete (verification pending)
+**Overall progress:** 100% (33/33 plans complete)
 
 ## Project Reference
 
 See: `.planning/PROJECT.md`
 
 **Core value:** Turn raw podcast recording into multi-platform content without editing software or manual copywriting.
-**Current focus:** Complete final Wave 2 plan (CLI parity + invalid-key contracts).
+**Current focus:** Verify Phase 5.1 goal and close phase metadata.
 
 ## Current Position
 
 ```text
 Phase:    5.1 of 5.1 in progress (Phase 4 human verification checklist still pending)
-Plan:     2/3 complete in Phase 5.1; 32 completed overall
-Status:   Wave 2 in progress; final plan pending
-Last activity: 2026-02-20 - Completed 05.1-02 Streamlit export UI wiring + persistence safeguards
+Plan:     3/3 complete in Phase 5.1; 33 completed overall
+Status:   Execution complete; verification pending
+Last activity: 2026-02-20 - Completed 05.1-03 CLI approval parity + invalid-key contracts
 
-Progress: [████████████████████████░] 97% (32/33 plans complete)
+Progress: [█████████████████████████] 100% (33/33 plans complete)
 ```
 
-**Next Phase:** Complete Phase 5.1 with 05.1-03 (CLI approval parity)
+**Next Phase:** Run phase verification for 05.1 and update roadmap/state requirements
 
 ## Phase Status
 
@@ -33,13 +33,13 @@ Progress: [███████████████████████
 | 3 | Polishing + Desktop Distribution | Complete | 6/6 | 100% |
 | 4 | Post-release hardening | Human verification needed | 10/10 | 100% |
 | 5 | Video Podcast Platforms | Complete (verified) | 3/3 | 100% |
-| 5.1 | Streamlit Video Platform UI | In progress | 2/3 | 67% |
+| 5.1 | Streamlit Video Platform UI | Execution complete (verification pending) | 3/3 | 100% |
 
 ## Performance Metrics
 
 | Metric | Value |
 |--------|-------|
-| Plans completed | 32 |
+| Plans completed | 33 |
 | Requirements done | 35/83 (21 partial) |
 | Phases complete | 4/6 |
 | Estimated completion | In progress |
@@ -136,6 +136,7 @@ Progress: [███████████████████████
 - Phase 5 verified: 9/9 must-haves passed with no structural gaps
 - Phase 5.1 execution started: completed 05.1-01 canonical export-target registry + review normalization contract
 - Phase 5.1 execution continued: completed 05.1-02 Streamlit export UI wiring + normalized persistence/guidance coverage
+- Phase 5.1 execution completed: finished 05.1-03 CLI approval parity + invalid-key diagnostics coverage
 
 ### Technical Notes
 
@@ -186,16 +187,17 @@ Progress: [███████████████████████
 - 2026-02-19: Verified Phase 5 goal (05-video-podcast-platforms-VERIFICATION.md, status: passed)
 - 2026-02-20: Completed 05.1-01-PLAN.md (canonical export target registry, review-state normalization, and fallback regression coverage)
 - 2026-02-20: Completed 05.1-02-PLAN.md (registry-driven Streamlit export options, normalized review-state persistence, and apple_hls boundary guidance tests)
+- 2026-02-20: Completed 05.1-03-PLAN.md (CLI platform-key normalization, explicit invalid-key error contracts, and parsing regressions)
 
 ## Session Continuity
 
 ### Last session
 
-2026-02-20 01:00 UTC — Completed `05.1-02-PLAN.md` and wrote `05.1-02-SUMMARY.md`.
+2026-02-20 01:02 UTC — Completed `05.1-03-PLAN.md` and wrote `05.1-03-SUMMARY.md`.
 
 ### Stopped at
 
-Completed `05.1-02-PLAN.md`; next action is execute `05.1-03-PLAN.md` for CLI parity.
+Completed `05.1-03-PLAN.md`; next action is run `05.1` phase verification and finalize roadmap/state updates.
 
 ### Resume file
 
