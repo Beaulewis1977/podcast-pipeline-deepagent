@@ -172,3 +172,89 @@ class TestAnalysis:
         )
         assert result.metadata.summary == "Test summary"
         assert "AI" in result.metadata.topics
+
+    def test_marketing_copy_platform_matrix_contract(self) -> None:
+        """MarketingCopy should expose the full supported platform matrix."""
+        expected_platforms = (
+            "youtube",
+            "spotify",
+            "spotify_video",
+            "apple",
+            "apple_video",
+            "tiktok",
+            "instagram",
+            "linkedin",
+            "twitter",
+            "facebook",
+        )
+        assert tuple(MarketingCopy.model_fields) == expected_platforms
+
+    def test_marketing_copy_dump_load_round_trip_preserves_all_platform_keys(self) -> None:
+        """Marketing payload should retain all platform keys through validation cycles."""
+        payload = {
+            "marketing": {
+                "youtube": {
+                    "titles": ["YouTube title"],
+                    "description": "YouTube description",
+                    "hashtags": ["#youtube"],
+                },
+                "spotify": {
+                    "titles": ["Spotify title"],
+                    "description": "Spotify description",
+                    "hashtags": ["#spotify"],
+                },
+                "spotify_video": {
+                    "titles": ["Spotify Video title"],
+                    "description": "Spotify Video description",
+                    "hashtags": ["#spotifyvideo"],
+                },
+                "apple": {
+                    "titles": ["Apple title"],
+                    "description": "Apple description",
+                    "hashtags": ["#apple"],
+                },
+                "apple_video": {
+                    "titles": ["Apple Video title"],
+                    "description": "Apple Video description",
+                    "hashtags": ["#applevideo"],
+                },
+                "tiktok": {
+                    "titles": ["TikTok title"],
+                    "description": "TikTok description",
+                    "hashtags": ["#tiktok"],
+                },
+                "instagram": {
+                    "titles": ["Instagram title"],
+                    "description": "Instagram description",
+                    "hashtags": ["#instagram"],
+                },
+                "linkedin": {
+                    "titles": ["LinkedIn title"],
+                    "description": "LinkedIn description",
+                    "hashtags": ["#linkedin"],
+                },
+                "twitter": {
+                    "titles": ["Twitter title"],
+                    "description": "Twitter description",
+                    "hashtags": ["#twitter"],
+                },
+                "facebook": {
+                    "titles": ["Facebook title"],
+                    "description": "Facebook description",
+                    "hashtags": ["#facebook"],
+                },
+            }
+        }
+
+        validated = AnalysisResult.model_validate(payload)
+        dumped = validated.model_dump()
+        round_tripped = AnalysisResult.model_validate(dumped).model_dump()
+        expected_keys = list(payload["marketing"])
+
+        assert list(dumped["marketing"]) == expected_keys
+        assert list(round_tripped["marketing"]) == expected_keys
+        assert (
+            round_tripped["marketing"]["spotify_video"]["description"]
+            == "Spotify Video description"
+        )
+        assert round_tripped["marketing"]["apple_video"]["description"] == "Apple Video description"

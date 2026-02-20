@@ -152,7 +152,9 @@ class MarketingCopy(BaseModel):
 
     youtube: PlatformMarketing = Field(default_factory=PlatformMarketing)
     spotify: PlatformMarketing = Field(default_factory=PlatformMarketing)
+    spotify_video: PlatformMarketing = Field(default_factory=PlatformMarketing)
     apple: PlatformMarketing = Field(default_factory=PlatformMarketing)
+    apple_video: PlatformMarketing = Field(default_factory=PlatformMarketing)
     tiktok: PlatformMarketing = Field(default_factory=PlatformMarketing)
     instagram: PlatformMarketing = Field(default_factory=PlatformMarketing)
     linkedin: PlatformMarketing = Field(default_factory=PlatformMarketing)
