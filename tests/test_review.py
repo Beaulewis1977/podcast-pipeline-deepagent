@@ -47,13 +47,15 @@ def test_normalize_export_platforms_invalid_only_falls_back_to_defaults() -> Non
     assert invalid == ["invalid", "also-invalid"]
 
 
-def test_review_decisions_legacy_unknown_export_keys_fallback_to_defaults() -> None:
-    """Legacy review_state payloads with unknown keys should normalize safely."""
+def test_review_decisions_legacy_unknown_export_keys_preserved_for_render() -> None:
+    """Unknown platform keys in stored review_state are preserved so the render stage
+    can surface them as explicit unsupported-platform failures rather than silently
+    substituting defaults."""
     decisions = ReviewDecisions.model_validate(
         {"export_platforms": ["unknown", "mystery"], "review_complete": False}
     )
 
-    assert decisions.export_platforms == list(DEFAULT_EXPORT_PLATFORMS)
+    assert decisions.export_platforms == ["unknown", "mystery"]
 
 
 def test_review_decisions_preserves_video_export_keys() -> None:

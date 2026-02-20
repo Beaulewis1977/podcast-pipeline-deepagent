@@ -51,7 +51,12 @@ class ReviewDecisions(BaseModel):
     @field_validator("export_platforms", mode="before")
     @classmethod
     def validate_export_platforms(cls, value: Any) -> list[str]:
-        """Normalize review export platform keys to canonical values."""
+        """Normalize review export platform keys to canonical values.
+
+        Valid platform keys are normalized (trimmed, lowercased, deduplicated).
+        Unknown/invalid keys are preserved as-is so the render stage can report
+        them as unsupported rather than silently dropping them.
+        """
         if value is None:
             return list(DEFAULT_EXPORT_PLATFORMS)
         if isinstance(value, str):
@@ -60,7 +65,11 @@ class ReviewDecisions(BaseModel):
             raw_platforms = list(value)
         else:
             raw_platforms = []
-        return normalize_export_platforms(raw_platforms)
+        valid, invalid = normalize_export_platforms(
+            raw_platforms, include_invalid=True, fallback_to_default=False
+        )
+        all_platforms = valid + invalid
+        return all_platforms if all_platforms else list(DEFAULT_EXPORT_PLATFORMS)
 
 
 class ReviewStage(Stage):
