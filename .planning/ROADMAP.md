@@ -206,6 +206,44 @@ Plans run in 2 execution waves:
 
 ---
 
+### Phase 6: Audio/Video Enhancement & Podcast Video Platform
+
+**Goal:** Improve baseline audio/video output quality with additive, enhancement-only filters (de-esser, optional dereverb, optional color correction) while preserving existing render-core editing behavior.
+**Depends on:** Phase 5
+**Status:** Complete (verified 2026-02-20)
+**Plans:** 3/3 complete
+
+**Scope / Requirements:**
+- Add typed config sections for `deesser`, `dereverb`, and `color_correction` with safe defaults
+- Add FFmpeg capability preflight checks for enabled filters (`deesser`, `grayworld`, `normalize`, `adeclick`, etc.) with actionable fail-fast errors
+- Implement FFmpeg-native de-esser path in render audio enhancement chain
+- Add optional lightweight dereverb path (`noisereduce`) behind config gating and dependency-aware fallback behavior
+- Implement optional video color correction using canonical FFmpeg filters (`normalize`, `grayworld`, optional `eq`)
+- Preserve existing render output behavior when enhancements are disabled
+- Add regression coverage for enabled/disabled paths and scope-boundary guardrails
+
+**Success Criteria:**
+1. Enhancement config loads with typed validation and default-disabled behavior that preserves existing outputs
+2. Render fails fast with clear diagnostics when required enabled filters are unavailable in local FFmpeg
+3. Audio de-esser and optional dereverb paths are configurable, deterministic, and non-breaking when disabled
+4. Video color correction uses only canonical FFmpeg filters and remains opt-in
+5. No crossfade/word-boundary/filler-control render-core rewrites land in Phase 6
+
+Plans:
+- [x] 06-01-PLAN.md — Enhancement config contract + FFmpeg capability preflight + scope guardrails
+- [x] 06-02-PLAN.md — Audio enhancement chain (FFmpeg-native de-esser + optional noisereduce dereverb)
+- [x] 06-03-PLAN.md — Optional video color correction chain + canonical-filter regression coverage
+
+**Details:**
+Plans run in 2 execution waves:
+- Wave 1: `06-01` establishes typed config and fail-fast preflight guardrails.
+- Wave 2: `06-02` and `06-03` execute in parallel on top of Wave 1.
+
+Scope boundary note:
+- Smooth cut transitions, word-boundary snapping, and filler editorial control are intentionally deferred to a future Phase 7 to keep Phase 6 low-risk and additive.
+
+---
+
 ## Notes
 
 - Streamlit remains the short-term UI for validation and rapid iteration.
