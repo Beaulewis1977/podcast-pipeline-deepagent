@@ -3,7 +3,7 @@
 **Created:** 2026-01-29
 **Last Updated:** 2026-02-20
 **Milestone:** v1.0 (Streamlit-first)
-**Phases:** 5 + follow-up 5.1
+**Phases:** 6 + follow-ups 5.1 and 6.1
 
 ## Overview
 
@@ -241,6 +241,40 @@ Plans run in 2 execution waves:
 
 Scope boundary note:
 - Smooth cut transitions, word-boundary snapping, and filler editorial control are intentionally deferred to a future Phase 7 to keep Phase 6 low-risk and additive.
+
+---
+
+### Phase 6.1: Video Marketing Copy Parity + Thumbnail Visual Selection Research
+
+**Goal:** Close video-platform marketing-copy parity gaps (`spotify_video`, `apple_video`) and produce implementation-ready research for a visual thumbnail-selection UX with multi-select and viral-candidate surfacing.
+**Depends on:** Phase 6
+**Status:** Planned (2026-02-20)
+**Plans:** 2 plans
+
+**Scope / Requirements:**
+- Add `spotify_video` and `apple_video` to analysis marketing schema so validated AI responses retain these keys
+- Extend provider prompt schema so AI returns video-specific marketing payloads for Spotify/Apple video variants
+- Extend marketing artifact generation to include video-platform sections in render output
+- Extend Streamlit marketing editor platform list to expose editable video-platform copy
+- Add regression tests covering model key retention and marketing-doc rendering for new video keys
+- Research and document a complete approach for thumbnail frame extraction + visual-grid selection UX
+- Define 1-3 thumbnail selection data-contract changes and render artifact naming strategy
+- Define viral-thumbnail criteria/scoring recommendations and a file-level implementation impact map
+
+**Success Criteria:**
+1. `spotify_video`/`apple_video` marketing copy survives prompt -> model validation -> artifact generation -> UI edit flow
+2. Regression tests lock marketing parity behavior for both new video platform keys
+3. `research/thumbnail-ui-visual-selection.md` exists with concrete FFmpeg, Streamlit, schema, virality, and phasing recommendations
+4. Phase 6.1 output is ready for direct execution planning of thumbnail visual UX implementation
+
+Plans:
+- [ ] 06.1-01-PLAN.md — Video-platform marketing copy parity across models/providers/render/UI + regressions
+- [ ] 06.1-02-PLAN.md — Thumbnail visual selection research (frame extraction, multi-select UX, viral scoring, impact map)
+
+**Details:**
+Plans run in 2 waves:
+- Wave 1 executes the concrete marketing-copy parity fix with tests.
+- Wave 2 produces implementation-ready thumbnail visual selection research on top of the updated platform/copy baseline.
 
 ---
 

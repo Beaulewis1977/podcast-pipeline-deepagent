@@ -1,28 +1,28 @@
 # Project State: Podcast Pipeline
 
 **Last updated:** 2026-02-20
-**Current phase:** Phase 6 complete (verified)
-**Overall progress:** 100.0% (36/36 plans complete)
+**Current phase:** Phase 6.1 planned (pending execution)
+**Overall progress:** 94.7% (36/38 plans complete)
 
 ## Project Reference
 
 See: `.planning/PROJECT.md`
 
 **Core value:** Turn raw podcast recording into multi-platform content without editing software or manual copywriting.
-**Current focus:** Phase 6 is complete and verified; v1.0 milestone is ready for audit/closeout.
+**Current focus:** Phase 6.1 planning and execution prep for video marketing parity + thumbnail visual selection research.
 
 ## Current Position
 
 ```text
-Phase:    6 complete (all planned phases complete)
-Plan:     3/3 complete in Phase 6; 36 completed overall
-Status:   Phase 6 execution + verification complete
-Last activity: 2026-02-20 - Verified Phase 6 (9/9 must-haves passed)
+Phase:    6.1 planned (pending execution)
+Plan:     0/2 complete in Phase 6.1; 36 completed overall
+Status:   Phase inserted; ready for wave-based execution
+Last activity: 2026-02-20 - Added Phase 6.1 plans (marketing parity + thumbnail visual selection research)
 
-Progress: [█████████████████████████] 100.0% (36/36 plans complete)
+Progress: [████████████████████████░] 94.7% (36/38 plans complete)
 ```
 
-**Next Phase:** None (roadmap phases complete; proceed to milestone audit)
+**Next Phase:** Phase 6.1 - Video Marketing Copy Parity + Thumbnail Visual Selection Research
 
 ## Phase Status
 
@@ -35,14 +35,15 @@ Progress: [███████████████████████
 | 5 | Video Podcast Platforms | Complete (verified) | 3/3 | 100% |
 | 5.1 | Streamlit Video Platform UI | Complete (verified) | 3/3 | 100% |
 | 6 | Audio/Video Enhancement & Podcast Video Platform | Complete (verified) | 3/3 | 100% |
+| 6.1 | Video Marketing Copy Parity + Thumbnail Visual Selection Research | Planned | 0/2 | 0% |
 
 ## Performance Metrics
 
 | Metric | Value |
 |--------|-------|
-| Plans completed | 36/36 |
+| Plans completed | 36/38 |
 | Requirements done | 35/83 (21 partial) |
-| Phases complete | 6/6 |
+| Phases complete | 6/7 |
 | Estimated completion | In progress |
 
 ## Accumulated Context
@@ -151,6 +152,7 @@ Progress: [███████████████████████
 - Phase 6 execution continued: completed 06-02 de-esser/adeclick integration + optional noisereduce dereverb path
 - Phase 6 execution completed: finished 06-03 canonical color correction chain + safety boundary regressions
 - Phase 6 verified: 9/9 must-haves passed with no structural gaps
+- Phase 6.1 added: Video marketing copy parity + thumbnail visual selection research (2 plans, 2 waves)
 
 ### Technical Notes
 
@@ -209,16 +211,17 @@ Progress: [███████████████████████
 - 2026-02-20: Completed 06-02-PLAN.md (FFmpeg-native de-esser/adeclick chain and optional noisereduce dereverb fallback path)
 - 2026-02-20: Completed 06-03-PLAN.md (canonical normalize/grayworld color correction path with bounded config defaults and safety regressions)
 - 2026-02-20: Verified Phase 6 goal (06-audio-video-enhancement-podcast-video-platform-VERIFICATION.md, status: passed)
+- 2026-02-20: Added Phase 6.1 plans (`06.1-01` marketing copy parity, `06.1-02` thumbnail visual selection research)
 
 ## Session Continuity
 
 ### Last session
 
-2026-02-20 03:39 UTC — Verified `06-audio-video-enhancement-podcast-video-platform` goal (passed, 9/9 must-haves).
+2026-02-20 20:28 UTC — Inserted `06.1-video-marketing-copy-thumbnail-visual-selection` phase and created initial plan set.
 
 ### Stopped at
 
-Completed `06-audio-video-enhancement-podcast-video-platform-VERIFICATION.md`; next action is milestone audit/closeout.
+Completed phase insertion for `06.1-video-marketing-copy-thumbnail-visual-selection`; next action is `/prompts:gsd-execute-phase phase=6.1`.
 
 ### Resume file
 
