@@ -9,7 +9,7 @@ import tempfile
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
-from podcast_pipeline.config import Config, PlatformSpec
+from podcast_pipeline.config import Config, PlatformSpec, ThumbnailTargetSpec
 from podcast_pipeline.models.edit_plan import EditPlan
 from podcast_pipeline.models.job import Job
 from podcast_pipeline.stages.base import Stage, StageResult
@@ -33,6 +33,7 @@ VIDEO_QUALITY_BITRATE_FACTOR = {
 MAX_THUMBNAIL_EXPORTS = 4
 MIN_THUMBNAIL_OFFSET_SECONDS = 0.5
 PROFILE_LEVEL_CODECS = {"h264", "libx264", "h265", "hevc", "libx265"}
+THUMBNAIL_COMPLIANCE_PLATFORMS = ("youtube", "spotify_video", "apple_video")
 
 
 class PlatformComplianceError(RuntimeError):
@@ -241,6 +242,27 @@ class RenderStage(Stage):
                 "thumbnail_export_complete",
                 count=thumbnail_result.get("generated", 0),
                 source=thumbnail_result.get("source"),
+            )
+
+        thumbnail_compliance = self._enforce_thumbnail_target_compliance(
+            job_dir=job_dir,
+            selected_platforms=selected_platforms,
+            thumbnail_result=thumbnail_result,
+        )
+        outputs.extend(thumbnail_compliance.get("outputs", []))
+        thumbnail_result["compliance"] = thumbnail_compliance.get("platform_results", {})
+        if thumbnail_compliance.get("status") == "failed":
+            error_message = str(thumbnail_compliance.get("error", "thumbnail compliance failed"))
+            errors.append(f"thumbnails: {error_message}")
+            self.logger.error(
+                "thumbnail_compliance_failed",
+                error=error_message,
+                platform_results=thumbnail_compliance.get("platform_results", {}),
+            )
+        elif thumbnail_compliance.get("status") == "complete":
+            self.logger.info(
+                "thumbnail_compliance_complete",
+                validated_platforms=thumbnail_compliance.get("validated_platforms", []),
             )
 
         failed_platforms = [
@@ -740,7 +762,7 @@ class RenderStage(Stage):
         self,
         candidates: list[dict[str, Any]],
         video_duration: float,
-        selected_thumbnail: int | None,
+        selected_thumbnails: list[int],
     ) -> list[dict[str, Any]]:
         """Rank candidates deterministically using review preference and quality hints."""
         if not candidates:
@@ -748,13 +770,16 @@ class RenderStage(Stage):
 
         ranked: list[dict[str, Any]] = []
         total = len(candidates)
+        selected_rank_map = {
+            index: rank for rank, index in enumerate(selected_thumbnails, start=1)
+        }
         for index, candidate in enumerate(candidates):
             score = float(total - index)
-            if (
-                selected_thumbnail is not None
-                and candidate.get("analysis_index") == selected_thumbnail
-            ):
-                score += 5.0
+            analysis_index = candidate.get("analysis_index")
+            if isinstance(analysis_index, int) and analysis_index in selected_rank_map:
+                # Explicit review ranking outranks heuristic candidate score.
+                selection_rank = selected_rank_map[analysis_index]
+                score += max(0.0, 6.0 - float(selection_rank))
             if candidate.get("suggested_text_overlay"):
                 score += 0.8
             if candidate.get("visual_description"):
@@ -805,10 +830,11 @@ class RenderStage(Stage):
                 "reason": "no_thumbnail_candidates",
             }
 
+        selected_thumbnails = self._resolve_ranked_thumbnail_selection(decisions)
         ranked_candidates = self._rank_thumbnail_candidates(
             candidates=candidates,
             video_duration=video_duration,
-            selected_thumbnail=decisions.selected_thumbnail,
+            selected_thumbnails=selected_thumbnails,
         )
 
         thumbnail_dir = job_dir / "output" / "thumbnails"
@@ -862,8 +888,14 @@ class RenderStage(Stage):
                     "source": candidate.get("source", source),
                     "analysis_index": candidate.get("analysis_index"),
                     "is_selected": (
-                        decisions.selected_thumbnail is not None
-                        and candidate.get("analysis_index") == decisions.selected_thumbnail
+                        isinstance(candidate.get("analysis_index"), int)
+                        and candidate.get("analysis_index") in selected_thumbnails
+                    ),
+                    "selection_rank": (
+                        selected_thumbnails.index(candidate.get("analysis_index")) + 1
+                        if isinstance(candidate.get("analysis_index"), int)
+                        and candidate.get("analysis_index") in selected_thumbnails
+                        else None
                     ),
                     "visual_description": candidate.get("visual_description", ""),
                     "suggested_text_overlay": candidate.get("suggested_text_overlay", ""),
@@ -875,6 +907,7 @@ class RenderStage(Stage):
             "generated_at": self._format_timestamp_seconds(),
             "source": source,
             "selected_thumbnail_index": decisions.selected_thumbnail,
+            "selected_thumbnail_indices": selected_thumbnails,
             "generated": len(manifest_candidates),
             "errors": extraction_errors,
             "thumbnails": manifest_candidates,
@@ -888,16 +921,263 @@ class RenderStage(Stage):
                 "status": "complete",
                 "source": source,
                 "generated": len(manifest_candidates),
+                "thumbnail_paths": [item["path"] for item in manifest_candidates],
             }
 
         return outputs, {
             "status": "failed",
             "source": source,
             "generated": 0,
+            "thumbnail_paths": [],
             "error": extraction_errors[0]
             if extraction_errors
             else "thumbnail extraction failed for all candidates",
         }
+
+    def _resolve_ranked_thumbnail_selection(self, decisions: ReviewDecisions) -> list[int]:
+        """Normalize ranked thumbnail selection from review decisions."""
+        ranked: list[int] = []
+        if decisions.selected_thumbnail is not None:
+            ranked.append(decisions.selected_thumbnail)
+        for index in decisions.selected_thumbnails:
+            if index not in ranked:
+                ranked.append(index)
+            if len(ranked) >= 3:
+                break
+        return ranked
+
+    def _thumbnail_spec_for_platform(self, platform: str) -> ThumbnailTargetSpec | None:
+        """Return configured thumbnail constraints for a target platform when required."""
+        if platform not in THUMBNAIL_COMPLIANCE_PLATFORMS:
+            return None
+        return getattr(self.config.thumbnails, platform, None)
+
+    def _enforce_thumbnail_target_compliance(
+        self,
+        job_dir: Path,
+        selected_platforms: list[str],
+        thumbnail_result: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Generate target thumbnail artifacts and validate constraints per selected target."""
+        required_targets = [
+            platform
+            for platform in selected_platforms
+            if self._thumbnail_spec_for_platform(platform) is not None
+        ]
+        if not required_targets:
+            return {"status": "skipped", "outputs": [], "platform_results": {}}
+
+        raw_thumbnail_paths = thumbnail_result.get("thumbnail_paths")
+        thumbnail_paths = raw_thumbnail_paths if isinstance(raw_thumbnail_paths, list) else []
+        if not thumbnail_paths:
+            platform_results = {
+                platform: {
+                    "status": "failed",
+                    "issues": ["no generated thumbnail assets available for compliance validation"],
+                    "outputs": [],
+                }
+                for platform in required_targets
+            }
+            return {
+                "status": "failed",
+                "outputs": [],
+                "platform_results": platform_results,
+                "error": "no generated thumbnail assets available for selected target compliance",
+            }
+
+        outputs: list[str] = []
+        platform_results: dict[str, dict[str, Any]] = {}
+        validated_platforms: list[str] = []
+        failed_platforms: list[str] = []
+
+        for platform in required_targets:
+            spec = self._thumbnail_spec_for_platform(platform)
+            if spec is None:
+                continue
+
+            issues: list[str] = []
+            platform_outputs: list[str] = []
+            for rank, relative_source_path in enumerate(thumbnail_paths, start=1):
+                source_path = job_dir / str(relative_source_path)
+                if not source_path.exists():
+                    issues.append(f"source thumbnail missing: {relative_source_path}")
+                    continue
+
+                target_path = self._derive_target_thumbnail_path(
+                    job_dir=job_dir,
+                    platform=platform,
+                    rank=rank,
+                    extension=spec.formats[0],
+                )
+
+                try:
+                    self._transform_thumbnail_to_spec(source_path, target_path, spec)
+                    validation_issues = self._validate_thumbnail_asset(target_path, spec, platform)
+                    if validation_issues:
+                        issues.extend(validation_issues)
+                        continue
+                except (FFmpegError, FileNotFoundError, RuntimeError, OSError, ValueError) as exc:
+                    issues.append(str(exc))
+                    continue
+
+                relative_target_path = str(target_path.relative_to(job_dir))
+                platform_outputs.append(relative_target_path)
+                outputs.append(relative_target_path)
+
+            if issues:
+                failed_platforms.append(platform)
+                platform_results[platform] = {
+                    "status": "failed",
+                    "issues": issues,
+                    "outputs": platform_outputs,
+                    "constraints": spec.model_dump(),
+                }
+            else:
+                validated_platforms.append(platform)
+                platform_results[platform] = {
+                    "status": "success",
+                    "issues": [],
+                    "outputs": platform_outputs,
+                    "constraints": spec.model_dump(),
+                }
+
+        if failed_platforms:
+            issue_summary = "; ".join(
+                f"{platform}: {', '.join(platform_results[platform]['issues'][:2])}"
+                for platform in failed_platforms
+            )
+            return {
+                "status": "failed",
+                "outputs": outputs,
+                "platform_results": platform_results,
+                "validated_platforms": validated_platforms,
+                "error": f"thumbnail compliance failed - {issue_summary}",
+            }
+
+        return {
+            "status": "complete",
+            "outputs": outputs,
+            "platform_results": platform_results,
+            "validated_platforms": validated_platforms,
+        }
+
+    def _derive_target_thumbnail_path(
+        self,
+        job_dir: Path,
+        platform: str,
+        rank: int,
+        extension: str,
+    ) -> Path:
+        """Build deterministic output path for target-specific thumbnail artifacts."""
+        target_dir = job_dir / "output" / "thumbnails" / platform
+        target_dir.mkdir(parents=True, exist_ok=True)
+        return target_dir / f"thumbnail_{rank:02d}.{extension}"
+
+    def _transform_thumbnail_to_spec(
+        self,
+        source_path: Path,
+        target_path: Path,
+        spec: ThumbnailTargetSpec,
+    ) -> None:
+        """Transform a canonical thumbnail image into platform-specific constraints."""
+        source_width, source_height = self._thumbnail_dimensions(source_path)
+        transform_filter = self._build_thumbnail_transform_filter(
+            source_width=source_width,
+            source_height=source_height,
+            target_width=spec.width,
+            target_height=spec.height,
+        )
+        ffmpeg_args = [
+            "-i",
+            str(source_path),
+            "-vf",
+            transform_filter,
+            "-frames:v",
+            "1",
+            str(target_path),
+        ]
+        run_ffmpeg(ffmpeg_args)
+        self._assert_output_exists(target_path, f"{target_path.parent.name} thumbnail")
+
+    def _build_thumbnail_transform_filter(
+        self,
+        source_width: int,
+        source_height: int,
+        target_width: int,
+        target_height: int,
+    ) -> str:
+        """Build deterministic crop/scale filter that fills target dimensions."""
+        source_ratio = source_width / source_height
+        target_ratio = target_width / target_height
+
+        if abs(source_ratio - target_ratio) < 0.001:
+            return f"scale={target_width}:{target_height}"
+
+        if source_ratio > target_ratio:
+            # Wider source: crop left/right.
+            crop_width = int(round(source_height * target_ratio))
+            x_offset = max((source_width - crop_width) // 2, 0)
+            return f"crop={crop_width}:{source_height}:{x_offset}:0,scale={target_width}:{target_height}"
+
+        # Taller source: crop top/bottom.
+        crop_height = int(round(source_width / target_ratio))
+        y_offset = max((source_height - crop_height) // 2, 0)
+        return f"crop={source_width}:{crop_height}:0:{y_offset},scale={target_width}:{target_height}"
+
+    def _thumbnail_dimensions(self, path: Path) -> tuple[int, int]:
+        """Read image dimensions from ffprobe metadata."""
+        probe_data = run_ffprobe(path, extra_args=["-select_streams", "v:0"])
+        streams = probe_data.get("streams", [])
+        if not streams:
+            raise ValueError(f"Unable to read thumbnail stream metadata: {path}")
+
+        stream = streams[0]
+        width = int(stream.get("width") or 0)
+        height = int(stream.get("height") or 0)
+        if width <= 0 or height <= 0:
+            raise ValueError(f"Invalid thumbnail dimensions for {path}: {width}x{height}")
+        return width, height
+
+    def _validate_thumbnail_asset(
+        self,
+        path: Path,
+        spec: ThumbnailTargetSpec,
+        platform: str,
+    ) -> list[str]:
+        """Validate one generated thumbnail against target constraints."""
+        issues: list[str] = []
+
+        extension = path.suffix.lstrip(".").lower()
+        if extension == "jpeg":
+            extension = "jpg"
+        allowed_extensions = ["jpg" if fmt == "jpeg" else fmt for fmt in spec.formats]
+        if extension not in allowed_extensions:
+            issues.append(
+                f"{platform}: unsupported thumbnail format '{path.suffix}' "
+                f"(allowed: {', '.join(spec.formats)})"
+            )
+
+        try:
+            size_bytes = path.stat().st_size
+        except OSError as exc:
+            return [f"{platform}: unable to read thumbnail size for {path} ({exc})"]
+        if size_bytes > spec.max_size_bytes:
+            issues.append(
+                f"{platform}: thumbnail size {size_bytes} exceeds max_size_bytes={spec.max_size_bytes}"
+            )
+
+        try:
+            width, height = self._thumbnail_dimensions(path)
+        except (ValueError, FFmpegError, FileNotFoundError) as exc:
+            issues.append(f"{platform}: {exc}")
+            return issues
+        if width != spec.width or height != spec.height:
+            issues.append(
+                f"{platform}: thumbnail dimensions {width}x{height} do not match required "
+                f"{spec.width}x{spec.height}"
+            )
+
+        return issues
 
     def _parse_timestamp_seconds(self, value: Any) -> float | None:
         """Parse timestamp-like values into seconds."""

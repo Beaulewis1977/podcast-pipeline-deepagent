@@ -902,6 +902,75 @@ class TestRenderEnhancementFilterCapabilities:
         assert "missing required FFmpeg filter" in (result.error or "")
 
 
+class TestThumbnailCompliance:
+    """Tests for per-target thumbnail compliance generation and validation."""
+
+    def test_thumbnail_compliance_generates_target_outputs_for_selected_platforms(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        """Selected platforms should receive derived thumbnail assets after compliance pass."""
+        stage = RenderStage(load_config())
+        source_thumbnail = tmp_path / "output" / "thumbnails" / "thumbnail_01.jpg"
+        source_thumbnail.parent.mkdir(parents=True, exist_ok=True)
+        source_thumbnail.write_bytes(b"thumbnail")
+
+        def _fake_transform(_source: Path, target: Path, _spec) -> None:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(b"derived")
+
+        monkeypatch.setattr(stage, "_transform_thumbnail_to_spec", _fake_transform)
+        monkeypatch.setattr(stage, "_validate_thumbnail_asset", lambda *_args, **_kwargs: [])
+
+        result = stage._enforce_thumbnail_target_compliance(
+            job_dir=tmp_path,
+            selected_platforms=["youtube", "spotify_video"],
+            thumbnail_result={"thumbnail_paths": ["output/thumbnails/thumbnail_01.jpg"]},
+        )
+
+        assert result["status"] == "complete"
+        assert result["platform_results"]["youtube"]["status"] == "success"
+        assert result["platform_results"]["spotify_video"]["status"] == "success"
+        assert any(path.startswith("output/thumbnails/youtube/") for path in result["outputs"])
+        assert any(path.startswith("output/thumbnails/spotify_video/") for path in result["outputs"])
+
+    def test_thumbnail_compliance_fails_with_target_specific_diagnostics(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        """Compliance failures should return explicit platform-specific issue payloads."""
+        stage = RenderStage(load_config())
+        source_thumbnail = tmp_path / "output" / "thumbnails" / "thumbnail_01.jpg"
+        source_thumbnail.parent.mkdir(parents=True, exist_ok=True)
+        source_thumbnail.write_bytes(b"thumbnail")
+
+        def _fake_transform(_source: Path, target: Path, _spec) -> None:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(b"derived")
+
+        monkeypatch.setattr(stage, "_transform_thumbnail_to_spec", _fake_transform)
+        monkeypatch.setattr(
+            stage,
+            "_validate_thumbnail_asset",
+            lambda _path, _spec, platform: (
+                [f"{platform}: thumbnail dimensions mismatch"] if platform == "apple_video" else []
+            ),
+        )
+
+        result = stage._enforce_thumbnail_target_compliance(
+            job_dir=tmp_path,
+            selected_platforms=["apple_video"],
+            thumbnail_result={"thumbnail_paths": ["output/thumbnails/thumbnail_01.jpg"]},
+        )
+
+        assert result["status"] == "failed"
+        assert "apple_video" in result["error"]
+        assert result["platform_results"]["apple_video"]["status"] == "failed"
+        assert "thumbnail dimensions mismatch" in result["platform_results"]["apple_video"]["issues"][0]
+
+
 class TestPhase6ScopeBoundary:
     """Tests that lock enhancement-only behavior for Phase 6."""
 
