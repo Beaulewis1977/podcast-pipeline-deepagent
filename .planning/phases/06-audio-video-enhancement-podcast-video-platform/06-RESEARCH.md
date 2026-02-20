@@ -12,7 +12,7 @@ The prior plan has two stale assumptions: `autowhite` and `autolevels` are not c
 
 For platform output, keep current Spotify/Apple profile/compliance behavior and avoid building upload workflows. Spotify specs emphasize H.264/AAC/stereo constraints and single A/V track layout. Apple now prefers HLS video via supported hosting providers/API-key workflows, while RSS video (MOV/MP4/M4V) remains available.
 
-**Primary recommendation:** Implement Phase 6 as a **single render pipeline upgrade** on top of existing FFmpeg filtergraph architecture, with **FFmpeg built-ins first** and optional Python DSP dependencies gated behind explicit config flags.
+**Primary recommendation:** Implement Phase 6 as an **enhancement-only render pipeline upgrade** (de-esser, optional dereverb, optional color correction) with **FFmpeg built-ins first** and optional Python DSP dependencies gated behind explicit config flags. Keep crossfade/word-boundary/filler-control editing changes for Phase 7.
 
 ## Standard Stack
 

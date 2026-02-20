@@ -445,65 +445,39 @@ Sibilance ("s", "sh", "ch" sounds) can be harsh in podcast audio, especially wit
 
 An optional de-esser in the audio enhancement chain that reduces sibilance without dulling the overall sound.
 
-### 6.3 Implementation Options
+### 6.3 Implementation
 
-#### Option A: FFmpeg Split-Band De-esser (No New Dependencies)
+> **Updated 2026-02-19**: Phase 6 research confirmed FFmpeg has a native `deesser` filter. The original custom split-band sidechain approach is unnecessary.
 
-Uses FFmpeg's `asplit`, `highpass`, `acompressor`, and `amix` to create a sidechain compressor targeting 5-10kHz:
+**Tech**: FFmpeg built-in `deesser` filter (no new dependencies):
 
 ```bash
-[0:a]asplit=2[main][side];
-[side]highpass=f=5000,lowpass=f=10000,equalizer=f=7000:width_type=h:width=100:g=12[ess];
-[ess]acompressor=threshold=-30dB:ratio=10:attack=0.01:release=0.05[duck];
-[main][duck]amix=inputs=2:duration=first
+deesser=i=0.2:m=0.5:f=0.5
 ```
 
-**Pros**: No new dependencies. Part of the existing FFmpeg filter chain.
-**Cons**: Less transparent than dedicated de-essers. Requires careful tuning.
+Parameters:
+- `i` (intensity): 0.0–1.0, controls how aggressively sibilance is reduced
+- `m` (amount): 0.0–1.0, controls the reduction amount
+- `f` (frequency): 0.0–1.0, maps to the sibilance frequency band
 
-#### Option B: Spotify's Pedalboard Library (Better Quality)
+This slots into the existing audio enhancement filter chain in `_build_audio_enhancement_filters()`, ordered as: `dialog cleanup → de-esser → loudness/limiter → click safety`.
 
-```python
-from pedalboard import Pedalboard, Compressor, HighpassFilter, LowpassFilter
-import soundfile as sf
-
-audio, sr = sf.read(input_path)
-# Sidechain approach using pedalboard
-board = Pedalboard([
-    HighpassFilter(cutoff_frequency_hz=5000),
-    Compressor(threshold_db=-30, ratio=10, attack_ms=0.5, release_ms=50),
-])
-sibilant_signal = board(audio, sr)
-# Duck original by sibilant energy
-deessed = audio - (sibilant_signal * 0.7)
-sf.write(output_path, deessed, sr)
-```
-
-**Pros**: Much better quality. Spotify uses this internally.
-**Cons**: New dependency (`pedalboard`). Requires separate audio processing pass before FFmpeg render.
-
-### 6.4 Recommendation
-
-**Use Option A (FFmpeg) as default**, with Option B (Pedalboard) as an optional enhancement when installed (same pattern as `pyloudnorm`).
-
-### 6.5 Configuration
+### 6.4 Configuration
 
 ```yaml
 audio:
   deesser:
     enabled: true               # true/false
-    frequency_hz: 7000          # Center frequency for sibilance detection
-    threshold_db: -30           # Compressor threshold
-    ratio: 10                   # Compression ratio
-    method: auto                # "ffmpeg" | "pedalboard" | "auto"
+    intensity: 0.2              # 0.0–1.0 aggressiveness
+    amount: 0.5                 # 0.0–1.0 reduction amount
+    frequency: 0.5              # 0.0–1.0 sibilance frequency band
 ```
 
-### 6.6 Files to Change
+### 6.5 Files to Change
 
 | File | Change |
 |------|--------|
-| `stages/render.py` | Add `_build_deesser_filter()` to generate FFmpeg de-ess chain |
-| `stages/render.py` | Insert de-esser before existing enhancement filters |
+| `stages/render.py` | Add `deesser` filter to `_build_audio_enhancement_filters()` chain |
 | `config/settings.py` | Add `DeesserConfig` model |
 | `config.yaml` | Add `audio.deesser` section |
 
@@ -525,23 +499,11 @@ afftdn=nf=-25,highpass=f=200,lowpass=f=5000
 
 This is what we already do with `afftdn`. It catches some reverb energy as noise, but it's not effective for reverb tails. **Not recommended as the primary solution.**
 
-#### Option B: Meta's Demucs (Best Quality, Heavy)
+#### ~~Option B: Meta's Demucs~~ ❌ REMOVED
 
-Demucs is a neural source separation model that can extract dry vocals from reverberant audio:
+> **Updated 2026-02-19**: `facebookresearch/demucs` repository is **archived and unmaintained** as of Jan 2025. Dropped from recommendations.
 
-```python
-from demucs import pretrained
-from demucs.apply import apply_model
-
-model = pretrained.get_model('htdemucs')
-sources = apply_model(model, audio_tensor)
-dry_vocals = sources[0, model.sources.index('vocals')]
-```
-
-**Pros**: State-of-the-art quality. Removes reverb, not just noise.
-**Cons**: Heavy dependency (PyTorch + model weights ~80MB). GPU-accelerated ideally. 10-30x slower than real-time on CPU.
-
-#### Option C: noisereduce Library (Lighter Alternative)
+#### Option B: noisereduce Library (Lightweight)
 
 ```python
 import noisereduce as nr
@@ -553,10 +515,9 @@ reduced = nr.reduce_noise(y=audio, sr=sample_rate, prop_decrease=0.8)
 
 ### 7.3 Recommendation
 
-**Tier 1**: Use `noisereduce` as an optional lightweight dereverb (add as optional dependency).
-**Tier 2**: Support Demucs for users who need high-quality dereverb (optional dependency, auto-detect GPU).
+Use `noisereduce` as the **sole optional** dereverb method. Applied as **pre-processing** before the FFmpeg render step (process audio in Python, write clean audio, feed to FFmpeg).
 
-Both are applied as **pre-processing** before the FFmpeg render step (process audio file in Python, write out clean audio, then feed to FFmpeg).
+Ship as `enabled: false` by default — users with noisy rooms can opt in via config.
 
 ### 7.4 Configuration
 
@@ -564,7 +525,6 @@ Both are applied as **pre-processing** before the FFmpeg render step (process au
 audio:
   dereverb:
     enabled: false              # Off by default (adds processing time)
-    method: auto                # "noisereduce" | "demucs" | "auto"
     strength: 0.7               # 0.0 = no reduction, 1.0 = max reduction
 ```
 
@@ -591,13 +551,15 @@ A lightweight, automated color correction pass that normalizes webcam video with
 
 ### 8.3 Implementation
 
+> **Updated 2026-02-19**: Phase 6 research found that `autowhite` and `autolevels` are **not valid canonical FFmpeg filters**. The correct replacements are `grayworld` (white balance) and `normalize` (histogram/contrast normalization).
+
 **Tech**: FFmpeg video filters only (no new dependencies):
 
 ```bash
-# Auto levels (histogram normalization)
-autolevels,
-# Auto white balance (experimental but effective)
-autowhite,
+# Gray-world white balance correction
+grayworld,
+# Histogram-based contrast/levels normalization
+normalize,
 # Gentle contrast and saturation boost
 eq=brightness=0.02:contrast=1.1:saturation=1.05:gamma=1.05
 ```
@@ -610,8 +572,8 @@ This is applied in `_build_video_filters()` alongside the existing aspect ratio/
 video:
   color_correction:
     enabled: false              # Off by default
-    auto_levels: true           # Histogram-based auto levels
-    auto_white_balance: true    # Gray-world white balance
+    normalize: true             # Histogram-based contrast normalization
+    grayworld: true             # Gray-world white balance correction
     brightness: 0.02            # Brightness adjustment (-1.0 to 1.0)
     contrast: 1.1               # Contrast multiplier
     saturation: 1.05            # Saturation multiplier
@@ -622,7 +584,7 @@ video:
 
 | File | Change |
 |------|--------|
-| `stages/render.py` | Add `_build_color_correction_filters()` method |
+| `stages/render.py` | Add `_build_color_correction_filters()` method using `grayworld` + `normalize` + `eq` |
 | `stages/render.py` | Insert color correction in `_build_video_filters()` chain |
 | `config/settings.py` | Add `ColorCorrectionConfig` model |
 | `config.yaml` | Add `video.color_correction` section |
@@ -633,11 +595,11 @@ video:
 
 | Dependency | Purpose | Type | Size Impact |
 |------------|---------|------|-------------|
-| `pedalboard` | De-essing (optional, better quality) | Optional | ~15MB |
-| `noisereduce` | Reverb reduction (lightweight) | Optional | ~2MB |
-| `demucs` | Reverb reduction (neural, best quality) | Optional | ~80MB + PyTorch |
+| `noisereduce` | Optional reverb reduction (spectral gating) | Optional | ~2MB |
 
-All new dependencies are **optional** — the pipeline will use FFmpeg-only fallbacks when they're not installed (same pattern as `pyloudnorm`).
+> **Updated 2026-02-19**: `pedalboard` removed (de-essing now uses FFmpeg built-in `deesser`). `demucs` removed (upstream archived/unmaintained).
+
+All new dependencies are **optional** — the pipeline uses FFmpeg-only filters by default.
 
 ---
 
@@ -655,18 +617,16 @@ audio:
     content_cut_ms: 150
     curve: tri
 
-  # New — De-esser
+  # New — De-esser (FFmpeg built-in)
   deesser:
     enabled: true
-    frequency_hz: 7000
-    threshold_db: -30
-    ratio: 10
-    method: auto
+    intensity: 0.2
+    amount: 0.5
+    frequency: 0.5
 
-  # New — Reverb reduction
+  # New — Reverb reduction (noisereduce only; Demucs dropped)
   dereverb:
     enabled: false
-    method: auto
     strength: 0.7
 
   # New — Filler word categories
@@ -690,11 +650,11 @@ video:
     content_cut_dissolve_ms: 300
     filler_cut_dissolve_ms: 0
 
-  # New — Color correction
+  # New — Color correction (grayworld + normalize, not autowhite/autolevels)
   color_correction:
     enabled: false
-    auto_levels: true
-    auto_white_balance: true
+    normalize: true
+    grayworld: true
     brightness: 0.02
     contrast: 1.1
     saturation: 1.05
@@ -784,17 +744,18 @@ platforms:
 ### Phase 6 — Audio/Video Enhancement Filters ⚡ Low Risk
 
 **Goal**: Improve raw audio/video quality with optional processing filters.
-**Risk**: Low — additive filters on existing chain. All optional and off-by-default for the heavy ones. Doesn't change core render logic.
+**Risk**: Low — additive filters on existing chain. All FFmpeg-native by default. Doesn't change core render logic.
 **Confidence**: ~85% (code works; tuning defaults may need iteration)
 
-1. Add FFmpeg de-esser filter chain in `render.py` (`_build_deesser_filter()`)
-2. Add optional `pedalboard` de-esser with fallback pattern (same as `pyloudnorm`)
-3. Add `noisereduce` reverb reduction with optional `demucs` tier
-4. Add color correction filters to video filter chain (`_build_color_correction_filters()`)
-5. Add config models: `DeesserConfig`, `DereverbConfig`, `ColorCorrectionConfig`
-6. Add config sections to `config.yaml`
-7. Add `noisereduce` as optional dependency in `pyproject.toml`
+1. Add FFmpeg built-in `deesser` filter to audio enhancement chain in `render.py`
+2. Add `noisereduce` optional reverb reduction (pre-processing pass, `enabled: false` by default)
+3. Add color correction filters (`grayworld` + `normalize` + `eq`) to video filter chain
+4. Add config models: `DeesserConfig`, `DereverbConfig`, `ColorCorrectionConfig`
+5. Add config sections to `config.yaml`
+6. Add `noisereduce` as optional dependency in `pyproject.toml`
+7. Add startup FFmpeg capability check (verify required filters available, fail-fast with upgrade message)
 8. Tests for each enhancement filter chain generation
+9. *(Future)* Apple HLS CI validation — add validator-backed smoke checks for `.m3u8`/`.ts` conformance when tooling is available in CI
 
 ### Phase 7 — Smooth Editing & Filler Word Control ⚠️ Higher Risk
 
@@ -834,7 +795,7 @@ platforms:
 | `models/edit_plan.py` | 7 | Enhanced FillerCutRange with category, context, default_action |
 | `utils/editing.py` | 7 | **New file** — word-boundary snapping utilities |
 | `ui/app.py` | 7 | Enhanced filler review UI with context and bulk actions |
-| `pyproject.toml` | 6 | Optional dependencies (pedalboard, noisereduce) |
+| `pyproject.toml` | 6 | Optional dependency (`noisereduce` only) |
 | `README.md` | 5 | Updated platform export table |
 
 ---
