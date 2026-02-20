@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 from podcast_pipeline.config import PlatformSpec, load_config
+from podcast_pipeline.models.edit_plan import EditPlan, FillerCutRange
 from podcast_pipeline.models.job import Job
 from podcast_pipeline.stages.render import PlatformComplianceError, RenderStage
 from podcast_pipeline.stages.review import ReviewDecisions
@@ -1010,6 +1011,59 @@ class TestRenderColorCorrection:
         vf_filter = args[args.index("-vf") + 1]
         assert "normalize" in vf_filter
         assert "grayworld" in vf_filter
+
+    def test_color_disabled_noop_returns_no_color_filters(self) -> None:
+        """Disabled color correction should produce no additional color filters."""
+        config = load_config()
+        config.enhancements.color_correction.enabled = False
+        stage = RenderStage(config)
+
+        assert stage._build_color_correction_filters() == []
+
+    def test_color_canonical_filters_exclude_legacy_filter_names(self) -> None:
+        """Color correction should use only canonical normalize/grayworld/eq filters."""
+        config = load_config()
+        config.enhancements.color_correction.enabled = True
+        config.enhancements.color_correction.eq_enabled = True
+        stage = RenderStage(config)
+
+        filters = stage._build_color_correction_filters()
+        rendered = ",".join(filters)
+
+        assert "autowhite" not in rendered
+        assert "autolevels" not in rendered
+        assert "normalize" in rendered
+        assert "grayworld" in rendered
+
+    def test_color_no_edit_graph_impact_when_enabled(self) -> None:
+        """Color filters should not alter trim/concat edit graph structure."""
+        edit_plan = EditPlan(
+            filler_cuts=[FillerCutRange(start_seconds=1.0, end_seconds=2.0, word="um")]
+        )
+        baseline = RenderStage(load_config())
+        color_config = load_config()
+        color_config.enhancements.color_correction.enabled = True
+        color_enabled = RenderStage(color_config)
+
+        vf_baseline = baseline._build_video_filters(
+            1920, 1080, 1920, 1080, baseline.config.platforms.youtube
+        )
+        vf_color = color_enabled._build_video_filters(
+            1920,
+            1080,
+            1920,
+            1080,
+            color_enabled.config.platforms.youtube,
+        )
+        base_filter = baseline._build_edit_plan_filter(edit_plan, 10.0, vf_baseline, [])
+        color_filter = color_enabled._build_edit_plan_filter(edit_plan, 10.0, vf_color, [])
+
+        assert base_filter is not None
+        assert color_filter is not None
+        assert base_filter[0].count("trim=start=") == color_filter[0].count("trim=start=")
+        assert base_filter[0].count("atrim=start=") == color_filter[0].count("atrim=start=")
+        assert "concat=n=2:v=1:a=1" in base_filter[0]
+        assert "concat=n=2:v=1:a=1" in color_filter[0]
 
 
 class TestRenderStatusSemantics:
