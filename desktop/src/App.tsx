@@ -37,6 +37,14 @@ import {
 
 const FINAL_STAGE: StageName = "render";
 
+function isJobNotFoundError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  return error.message.includes("(404)") || error.message.includes("Job not found");
+}
+
 function App() {
   const [status, setStatus] = useState<BackendStatus>("disconnected");
   const [sidecar, setSidecar] = useState<SidecarStatus | null>(null);
@@ -64,11 +72,23 @@ function App() {
     Record<string, StageName>
   >({});
   const bootAttempted = useRef(false);
+  const selectedJobIdRef = useRef<string | null>(null);
 
   const resumableByJob = useMemo(() => {
     const entries = recoveryStatus?.resumable_jobs ?? [];
     return new Map(entries.map((job) => [job.job_id, job]));
   }, [recoveryStatus]);
+
+  const clearSelectedJob = useCallback(() => {
+    selectedJobIdRef.current = null;
+    setSelectedJobId(null);
+    setSelectedJobDetail(null);
+  }, []);
+
+  const selectJob = useCallback((jobId: string) => {
+    selectedJobIdRef.current = jobId;
+    setSelectedJobId(jobId);
+  }, []);
 
   const markInfo = useCallback((message: string) => {
     setActivity(message);
@@ -143,9 +163,7 @@ function App() {
   );
 
   const fetchSelectedJobDetail = useCallback(async (jobId: string) => {
-    const detail = await getJob(jobId);
-    setSelectedJobDetail(detail);
-    return detail;
+    return getJob(jobId);
   }, []);
 
   const refreshJobsAndDetails = useCallback(async () => {
@@ -159,20 +177,32 @@ function App() {
       setJobs(data);
       syncJobControls(data);
 
-      if (selectedJobId !== null) {
-        const stillExists = data.some((job) => job.job_id === selectedJobId);
+      const currentSelectedJobId = selectedJobIdRef.current;
+      if (currentSelectedJobId !== null) {
+        const stillExists = data.some((job) => job.job_id === currentSelectedJobId);
         if (!stillExists) {
-          setSelectedJobId(null);
-          setSelectedJobDetail(null);
+          clearSelectedJob();
         } else {
-          await fetchSelectedJobDetail(selectedJobId);
+          try {
+            const detail = await fetchSelectedJobDetail(currentSelectedJobId);
+            if (selectedJobIdRef.current === currentSelectedJobId) {
+              setSelectedJobDetail(detail);
+            }
+          } catch (error) {
+            // A selected job can disappear between list and detail fetch.
+            if (isJobNotFoundError(error)) {
+              clearSelectedJob();
+            } else {
+              throw error;
+            }
+          }
         }
       }
       setError(null);
     } finally {
       setIsRefreshing(false);
     }
-  }, [fetchSelectedJobDetail, selectedJobId, status, syncJobControls]);
+  }, [clearSelectedJob, fetchSelectedJobDetail, status, syncJobControls]);
 
   const runAction = useCallback(
     async (actionKey: string, fn: () => Promise<string>) => {
@@ -204,12 +234,15 @@ function App() {
   const openJobDetails = useCallback(
     async (jobId: string) => {
       await runAction(`detail:${jobId}`, async () => {
-        await fetchSelectedJobDetail(jobId);
-        setSelectedJobId(jobId);
+        selectJob(jobId);
+        const detail = await fetchSelectedJobDetail(jobId);
+        if (selectedJobIdRef.current === jobId) {
+          setSelectedJobDetail(detail);
+        }
         return `Loaded details for ${jobId}`;
       });
     },
-    [fetchSelectedJobDetail, runAction],
+    [fetchSelectedJobDetail, runAction, selectJob],
   );
 
   const handleCreateJob = useCallback(async () => {
@@ -223,10 +256,10 @@ function App() {
       const created = await createJob(videoPath, createJobName.trim() || undefined);
       setCreateVideoPath("");
       setCreateJobName("");
-      setSelectedJobId(created.job_id);
+      selectJob(created.job_id);
       return `Created job ${created.job_id}`;
     });
-  }, [createJobName, createVideoPath, markError, runAction]);
+  }, [createJobName, createVideoPath, markError, runAction, selectJob]);
 
   const handleRunFull = useCallback(
     async (jobId: string) => {
@@ -277,15 +310,14 @@ function App() {
       }
 
       await runAction(`delete:${jobId}`, async () => {
-        const result = await deleteJob(jobId);
-        if (selectedJobId === jobId) {
-          setSelectedJobId(null);
-          setSelectedJobDetail(null);
+        if (selectedJobIdRef.current === jobId) {
+          clearSelectedJob();
         }
+        const result = await deleteJob(jobId);
         return result.message || `Deleted job ${result.job_id}`;
       });
     },
-    [runAction, selectedJobId],
+    [clearSelectedJob, runAction],
   );
 
   const handleRetry = useCallback(async () => {

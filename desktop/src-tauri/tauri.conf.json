@@ -41,10 +41,7 @@
   },
   "plugins": {
     "shell": {
-      "open": true,
-      "scope": {
-        "sidecar": true
-      }
+      "open": true
     }
   }
 }
