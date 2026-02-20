@@ -1,28 +1,28 @@
 # Project State: Podcast Pipeline
 
 **Last updated:** 2026-02-20
-**Current phase:** Phase 5.1 complete (goal verified)
-**Overall progress:** 100% (33/33 plans complete)
+**Current phase:** Phase 6 complete (verified)
+**Overall progress:** 100.0% (36/36 plans complete)
 
 ## Project Reference
 
 See: `.planning/PROJECT.md`
 
 **Core value:** Turn raw podcast recording into multi-platform content without editing software or manual copywriting.
-**Current focus:** Prepare milestone audit and close remaining human-verification checklist items.
+**Current focus:** Phase 6 is complete and verified; v1.0 milestone is ready for audit/closeout.
 
 ## Current Position
 
 ```text
-Phase:    5.1 of 5.1 complete (Phase 4 human verification checklist still pending)
-Plan:     3/3 complete in Phase 5.1; 33 completed overall
-Status:   Phase 5.1 verified (passed)
-Last activity: 2026-02-20 - Verified 05.1 goal (9/9 must-haves)
+Phase:    6 complete (all planned phases complete)
+Plan:     3/3 complete in Phase 6; 36 completed overall
+Status:   Phase 6 execution + verification complete
+Last activity: 2026-02-20 - Verified Phase 6 (9/9 must-haves passed)
 
-Progress: [█████████████████████████] 100% (33/33 plans complete)
+Progress: [█████████████████████████] 100.0% (36/36 plans complete)
 ```
 
-**Next Phase:** Milestone audit / resolve remaining human-verification checklist items
+**Next Phase:** None (roadmap phases complete; proceed to milestone audit)
 
 ## Phase Status
 
@@ -34,14 +34,15 @@ Progress: [███████████████████████
 | 4 | Post-release hardening | Human verification needed | 10/10 | 100% |
 | 5 | Video Podcast Platforms | Complete (verified) | 3/3 | 100% |
 | 5.1 | Streamlit Video Platform UI | Complete (verified) | 3/3 | 100% |
+| 6 | Audio/Video Enhancement & Podcast Video Platform | Complete (verified) | 3/3 | 100% |
 
 ## Performance Metrics
 
 | Metric | Value |
 |--------|-------|
-| Plans completed | 33 |
+| Plans completed | 36/36 |
 | Requirements done | 35/83 (21 partial) |
-| Phases complete | 5/6 |
+| Phases complete | 6/6 |
 | Estimated completion | In progress |
 
 ## Accumulated Context
@@ -115,6 +116,10 @@ Progress: [███████████████████████
 | Operator docs now codify service auth headers, resume-through-completion, degraded-mode, and quality-control contracts | Keeps desktop/Streamlit/API behavior truthful for manual operations and incident response | 2026-02-13 |
 | Review/CLI/UI export target keys are normalized from one canonical registry with default fallback safeguards | Prevents cross-surface platform key drift and malformed review-state payloads from silently changing render behavior | 2026-02-20 |
 | Explicit CLI platform-key errors fail fast before review mutation while omitted input keeps stable defaults | Preserves operator safety for explicit input and backward compatibility for legacy default approve flows | 2026-02-20 |
+| Enhancement defaults keep deesser enabled with conservative tuning while dereverb/color stay opt-in | Improves baseline quality without forcing heavyweight dependencies or surprising output changes | 2026-02-20 |
+| Render preflight derives required FFmpeg filters from enabled enhancement toggles | Fails fast with actionable diagnostics before expensive render runs | 2026-02-20 |
+| Dereverb preprocessing uses optional noisereduce with policy-driven warn-skip/fail fallback | Keeps baseline installs stable while supporting opt-in enhancement depth | 2026-02-20 |
+| Color correction is limited to canonical normalize/grayworld/optional-eq filters | Avoids undocumented FFmpeg filter drift and keeps enhancement scope additive | 2026-02-20 |
 
 ### Roadmap Evolution
 
@@ -139,6 +144,13 @@ Progress: [███████████████████████
 - Phase 5.1 execution continued: completed 05.1-02 Streamlit export UI wiring + normalized persistence/guidance coverage
 - Phase 5.1 execution completed: finished 05.1-03 CLI approval parity + invalid-key diagnostics coverage
 - Phase 5.1 verified: 9/9 must-haves passed with no structural gaps
+- Phase 6 added: Audio/Video Enhancement & Podcast Video Platform
+- Phase 6 researched: created `06-RESEARCH.md` with current stack/pitfalls and source-backed corrections (canonical FFmpeg color/de-esser filters, Demucs de-scoped)
+- Phase 6 planned: created 3 execution plans (`06-01` config+preflight, `06-02` audio enhancements, `06-03` color correction) with enhancement-only boundary; crossfade/edit-core work deferred to future Phase 7
+- Phase 6 execution started: completed 06-01 config contract + FFmpeg capability preflight + scope guardrails
+- Phase 6 execution continued: completed 06-02 de-esser/adeclick integration + optional noisereduce dereverb path
+- Phase 6 execution completed: finished 06-03 canonical color correction chain + safety boundary regressions
+- Phase 6 verified: 9/9 must-haves passed with no structural gaps
 
 ### Technical Notes
 
@@ -191,16 +203,22 @@ Progress: [███████████████████████
 - 2026-02-20: Completed 05.1-02-PLAN.md (registry-driven Streamlit export options, normalized review-state persistence, and apple_hls boundary guidance tests)
 - 2026-02-20: Completed 05.1-03-PLAN.md (CLI platform-key normalization, explicit invalid-key error contracts, and parsing regressions)
 - 2026-02-20: Verified Phase 5.1 goal (05.1-streamlit-video-platform-ui-VERIFICATION.md, status: passed)
+- 2026-02-20: Researched Phase 6 implementation approach and captured findings in `06-RESEARCH.md`
+- 2026-02-20: Planned Phase 6 into three executable plans (`06-01`..`06-03`) with strict enhancement-only scope
+- 2026-02-20: Completed 06-01-PLAN.md (typed enhancement config, FFmpeg capability preflight, and scope-boundary guardrails)
+- 2026-02-20: Completed 06-02-PLAN.md (FFmpeg-native de-esser/adeclick chain and optional noisereduce dereverb fallback path)
+- 2026-02-20: Completed 06-03-PLAN.md (canonical normalize/grayworld color correction path with bounded config defaults and safety regressions)
+- 2026-02-20: Verified Phase 6 goal (06-audio-video-enhancement-podcast-video-platform-VERIFICATION.md, status: passed)
 
 ## Session Continuity
 
 ### Last session
 
-2026-02-20 01:03 UTC — Verified `05.1-streamlit-video-platform-ui` goal (passed, 9/9 must-haves).
+2026-02-20 03:39 UTC — Verified `06-audio-video-enhancement-podcast-video-platform` goal (passed, 9/9 must-haves).
 
 ### Stopped at
 
-Completed `05.1-streamlit-video-platform-ui-VERIFICATION.md`; next action is milestone audit or pending human-verification checklist closure.
+Completed `06-audio-video-enhancement-podcast-video-platform-VERIFICATION.md`; next action is milestone audit/closeout.
 
 ### Resume file
 

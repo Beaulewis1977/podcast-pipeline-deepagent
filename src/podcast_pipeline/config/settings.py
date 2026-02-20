@@ -169,6 +169,81 @@ class AudioConfig(BaseModel):
     sample_rate: int = 44100
 
 
+class DeesserConfig(BaseModel):
+    """Typed de-esser and click-safety settings."""
+
+    enabled: bool = True
+    intensity: float = Field(default=0.2, ge=0.0, le=1.0)
+    max_deessing: float = Field(default=0.5, ge=0.0, le=1.0)
+    frequency: float = Field(default=0.5, ge=0.0, le=1.0)
+    output_mode: str = "o"
+    click_safety_enabled: bool = True
+    adeclick_window: float = Field(default=55.0, ge=10.0, le=100.0)
+    adeclick_overlap: float = Field(default=75.0, ge=50.0, le=95.0)
+    adeclick_arorder: float = Field(default=2.0, ge=0.0, le=25.0)
+    adeclick_threshold: float = Field(default=2.0, ge=1.0, le=100.0)
+    adeclick_burst: float = Field(default=2.0, ge=0.0, le=10.0)
+    adeclick_method: str = "a"
+
+    @field_validator("output_mode")
+    @classmethod
+    def validate_output_mode(cls, value: str) -> str:
+        """Restrict deesser output mode to FFmpeg-supported values."""
+        normalized = value.strip().lower()
+        if normalized not in {"i", "o", "e"}:
+            raise ValueError("output_mode must be one of: i, o, e")
+        return normalized
+
+    @field_validator("adeclick_method")
+    @classmethod
+    def validate_adeclick_method(cls, value: str) -> str:
+        """Restrict adeclick overlap method to FFmpeg-supported values."""
+        normalized = value.strip().lower()
+        if normalized not in {"a", "add", "s", "save"}:
+            raise ValueError("adeclick_method must be one of: a, add, s, save")
+        return normalized
+
+
+class DereverbConfig(BaseModel):
+    """Optional lightweight dereverb preprocessing settings."""
+
+    enabled: bool = False
+    prop_decrease: float = Field(default=0.85, ge=0.0, le=1.0)
+    stationary: bool = False
+    fallback_mode: str = "warn_skip"
+
+    @field_validator("fallback_mode")
+    @classmethod
+    def validate_fallback_mode(cls, value: str) -> str:
+        """Control behavior when optional dependencies are unavailable."""
+        normalized = value.strip().lower()
+        if normalized not in {"warn_skip", "fail"}:
+            raise ValueError("fallback_mode must be one of: warn_skip, fail")
+        return normalized
+
+
+class ColorCorrectionConfig(BaseModel):
+    """Optional video color correction settings using canonical FFmpeg filters."""
+
+    enabled: bool = False
+    normalize_enabled: bool = True
+    normalize_strength: float = Field(default=1.0, ge=0.0, le=1.0)
+    grayworld_enabled: bool = True
+    eq_enabled: bool = False
+    eq_saturation: float = Field(default=1.0, ge=0.5, le=3.0)
+    eq_contrast: float = Field(default=1.0, ge=0.5, le=2.0)
+    eq_brightness: float = Field(default=0.0, ge=-0.2, le=0.2)
+    eq_gamma: float = Field(default=1.0, ge=0.1, le=10.0)
+
+
+class EnhancementsConfig(BaseModel):
+    """Phase 6 enhancement feature flags and tuning."""
+
+    deesser: DeesserConfig = Field(default_factory=DeesserConfig)
+    dereverb: DereverbConfig = Field(default_factory=DereverbConfig)
+    color_correction: ColorCorrectionConfig = Field(default_factory=ColorCorrectionConfig)
+
+
 class HLSConfig(BaseModel):
     """Typed HLS muxer configuration for provider hand-off artifacts."""
 
@@ -609,6 +684,7 @@ class Config(BaseModel):
     transcription: TranscriptionConfig = Field(default_factory=TranscriptionConfig)
     fillers: FillerConfig = Field(default_factory=FillerConfig)
     audio: AudioConfig = Field(default_factory=AudioConfig)
+    enhancements: EnhancementsConfig = Field(default_factory=EnhancementsConfig)
     platforms: PlatformSpecs = Field(default_factory=PlatformSpecs)
     api_keys: APIKeysConfig = Field(default_factory=APIKeysConfig)
     service: ServiceConfig = Field(default_factory=ServiceConfig)

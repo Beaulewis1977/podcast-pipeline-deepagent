@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 from podcast_pipeline.config import PlatformSpec, load_config
+from podcast_pipeline.models.edit_plan import EditPlan, FillerCutRange
 from podcast_pipeline.models.job import Job
 from podcast_pipeline.stages.render import PlatformComplianceError, RenderStage
 from podcast_pipeline.stages.review import ReviewDecisions
@@ -311,6 +312,100 @@ class TestPlatformSpecs:
         assert "keyint_min" in message
 
 
+class TestEnhancementConfig:
+    """Tests for typed Phase 6 enhancement config behavior."""
+
+    def test_config_deesser_defaults_enable_conservative_baseline(self) -> None:
+        """De-esser should be on by default with conservative tuning."""
+        config = load_config()
+
+        assert config.enhancements.deesser.enabled is True
+        assert config.enhancements.deesser.intensity == pytest.approx(0.2)
+        assert config.enhancements.deesser.max_deessing == pytest.approx(0.5)
+        assert config.enhancements.deesser.frequency == pytest.approx(0.5)
+        assert config.enhancements.deesser.output_mode == "o"
+        assert config.enhancements.deesser.click_safety_enabled is True
+
+    def test_config_dereverb_defaults_disabled_with_safe_fallback(self) -> None:
+        """Dereverb should remain opt-in with safe missing-dependency behavior."""
+        config = load_config()
+
+        assert config.enhancements.dereverb.enabled is False
+        assert config.enhancements.dereverb.fallback_mode == "warn_skip"
+        assert config.enhancements.dereverb.prop_decrease == pytest.approx(0.85)
+        assert config.enhancements.dereverb.stationary is False
+
+    def test_config_color_correction_defaults_disabled(self) -> None:
+        """Color correction should be explicit opt-in."""
+        config = load_config()
+
+        assert config.enhancements.color_correction.enabled is False
+        assert config.enhancements.color_correction.normalize_strength == pytest.approx(1.0)
+        assert config.enhancements.color_correction.normalize_enabled is True
+        assert config.enhancements.color_correction.grayworld_enabled is True
+        assert config.enhancements.color_correction.eq_enabled is False
+
+    def test_color_config_defaults_keep_correction_disabled(self) -> None:
+        """Color config defaults should preserve existing output behavior."""
+        config = load_config()
+
+        assert config.enhancements.color_correction.enabled is False
+        assert config.enhancements.color_correction.normalize_enabled is True
+        assert config.enhancements.color_correction.normalize_strength == pytest.approx(1.0)
+
+    def test_config_deesser_bounds_validation(self, tmp_path: Path) -> None:
+        """Out-of-range deesser tuning values should fail at config load."""
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "\n".join(
+                [
+                    "enhancements:",
+                    "  deesser:",
+                    "    intensity: 1.4",
+                ]
+            )
+        )
+
+        with pytest.raises(ValueError, match=r"deesser|intensity"):
+            load_config(config_path)
+
+    def test_config_color_correction_eq_bounds_validation(self, tmp_path: Path) -> None:
+        """EQ tuning should reject values outside conservative bounds."""
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "\n".join(
+                [
+                    "enhancements:",
+                    "  color_correction:",
+                    "    eq_enabled: true",
+                    "    eq_saturation: 4.5",
+                ]
+            )
+        )
+
+        with pytest.raises(ValueError, match=r"color_correction|eq_saturation"):
+            load_config(config_path)
+
+    def test_color_config_bounds_reject_normalize_strength_out_of_range(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Normalize strength should stay within canonical 0..1 bounds."""
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "\n".join(
+                [
+                    "enhancements:",
+                    "  color_correction:",
+                    "    normalize_strength: 1.5",
+                ]
+            )
+        )
+
+        with pytest.raises(ValueError, match=r"color_correction|normalize_strength"):
+            load_config(config_path)
+
+
 class TestRenderStage:
     """Tests for RenderStage class."""
 
@@ -488,6 +583,41 @@ class TestRenderEnhancementAndThumbnailOutputs:
         assert all("afftdn" not in item for item in filters)
         assert any("acompressor" in item for item in filters)
 
+    def test_deesser_filter_uses_typed_config_defaults(self) -> None:
+        """De-esser should be present when enabled in enhancement config."""
+        stage = RenderStage(load_config())
+
+        filters = stage._build_audio_enhancement_filters()
+
+        assert any(item.startswith("deesser=") for item in filters)
+
+    def test_adeclick_filter_respects_click_safety_toggle(self) -> None:
+        """Final click-safety filter should only be present when enabled."""
+        config = load_config()
+        config.enhancements.deesser.click_safety_enabled = False
+        stage = RenderStage(config)
+
+        filters = stage._build_audio_enhancement_filters()
+
+        assert all("adeclick" not in item for item in filters)
+
+    def test_audio_chain_ordering_dialog_cleanup_then_deesser_then_limiter_then_adeclick(
+        self,
+    ) -> None:
+        """Audio chain should keep deterministic ordering for cleanup, de-esser, and safety."""
+        stage = RenderStage(load_config())
+
+        filters = stage._build_audio_enhancement_filters()
+        highpass_idx = next(i for i, item in enumerate(filters) if item.startswith("highpass="))
+        deesser_idx = next(i for i, item in enumerate(filters) if item.startswith("deesser="))
+        compressor_idx = next(
+            i for i, item in enumerate(filters) if item.startswith("acompressor=")
+        )
+        limiter_idx = next(i for i, item in enumerate(filters) if item.startswith("alimiter="))
+        adeclick_idx = next(i for i, item in enumerate(filters) if item.startswith("adeclick="))
+
+        assert highpass_idx < deesser_idx < compressor_idx < limiter_idx < adeclick_idx
+
     def test_thumbnail_export_generates_images_and_manifest(
         self,
         tmp_path: Path,
@@ -583,6 +713,357 @@ class TestRenderEnhancementAndThumbnailOutputs:
         assert result["source"] == "duration_fallback"
         assert result["generated"] == 4
         assert any(path.endswith("manifest.json") for path in outputs)
+
+
+class TestRenderEnhancementFilterCapabilities:
+    """Tests for FFmpeg filter capability preflight checks."""
+
+    def test_ffmpeg_filter_capability_defaults_only_require_enabled_paths(self) -> None:
+        """Default required filters should reflect currently enabled enhancement toggles."""
+        stage = RenderStage(load_config())
+
+        required = stage._required_enhancement_filters()
+
+        assert "deesser" in required
+        assert "adeclick" in required
+        assert "normalize" not in required
+        assert "grayworld" not in required
+
+    def test_ffmpeg_filter_capability_fail_fast_lists_missing_filters(
+        self,
+        monkeypatch,
+    ) -> None:
+        """Missing required filters should produce actionable preflight errors."""
+        config = load_config()
+        config.enhancements.color_correction.enabled = True
+        stage = RenderStage(config)
+
+        monkeypatch.setattr(stage, "_probe_available_ffmpeg_filters", lambda: {"deesser"})
+
+        with pytest.raises(RuntimeError, match="missing required FFmpeg filter"):
+            stage._ensure_filter_capabilities()
+
+    def test_fail_fast_render_preflight_on_filter_capability_errors(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        """Render run should fail before per-platform execution when filters are unavailable."""
+        stage = RenderStage(load_config())
+        job = _create_review_ready_job(tmp_path, ["youtube"])
+
+        monkeypatch.setattr(
+            stage,
+            "_ensure_filter_capabilities",
+            lambda: (_ for _ in ()).throw(
+                RuntimeError("Render preflight failed: missing required FFmpeg filter(s): deesser")
+            ),
+        )
+
+        result = stage.run(job, tmp_path)
+
+        assert result.success is False
+        assert "missing required FFmpeg filter" in (result.error or "")
+
+
+class TestPhase6ScopeBoundary:
+    """Tests that lock enhancement-only behavior for Phase 6."""
+
+    def test_phase6_scope_boundary_blocks_edit_core_filter_names(self) -> None:
+        """Enhancement chain must not include edit-core transition filters."""
+        stage = RenderStage(load_config())
+
+        filters = stage._build_audio_enhancement_filters()
+
+        assert all("acrossfade" not in item for item in filters)
+        assert all("xfade" not in item for item in filters)
+
+    def test_enhancement_disabled_noop_for_phase6_optional_filters(self) -> None:
+        """Disabled Phase 6 enhancement toggles should add no optional filters."""
+        config = load_config()
+        config.enhancements.deesser.enabled = False
+        config.enhancements.deesser.click_safety_enabled = False
+        config.enhancements.color_correction.enabled = False
+        stage = RenderStage(config)
+
+        filters = stage._build_audio_enhancement_filters()
+        required = stage._required_enhancement_filters()
+
+        assert all("deesser" not in item for item in filters)
+        assert all("adeclick" not in item for item in filters)
+        assert "normalize" not in required
+        assert "grayworld" not in required
+        assert "eq" not in required
+
+
+class TestRenderDereverbPath:
+    """Tests for optional noisereduce-backed dereverb preprocessing."""
+
+    def test_dereverb_disabled_returns_original_input(self, tmp_path: Path) -> None:
+        """Disabled dereverb should not alter render input path."""
+        config = load_config()
+        config.enhancements.dereverb.enabled = False
+        stage = RenderStage(config)
+        input_video = tmp_path / "input.mp4"
+        input_video.write_bytes(b"video")
+        output_dir = tmp_path / "output"
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        prepared = stage._prepare_optional_dereverb_input(
+            input_video=input_video,
+            output_dir=output_dir,
+            platform="youtube",
+        )
+
+        assert prepared == input_video
+
+    def test_dereverb_noisereduce_missing_warn_skip_fallback(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """Missing noisereduce should safely skip dereverb when fallback is warn_skip."""
+        config = load_config()
+        config.enhancements.dereverb.enabled = True
+        config.enhancements.dereverb.fallback_mode = "warn_skip"
+        stage = RenderStage(config)
+        input_video = tmp_path / "input.mp4"
+        input_video.write_bytes(b"video")
+        output_dir = tmp_path / "output"
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        monkeypatch.setattr(
+            "podcast_pipeline.stages.render.importlib.import_module",
+            lambda _name: (_ for _ in ()).throw(ModuleNotFoundError("noisereduce")),
+        )
+
+        prepared = stage._prepare_optional_dereverb_input(
+            input_video=input_video,
+            output_dir=output_dir,
+            platform="youtube",
+        )
+
+        assert prepared == input_video
+
+    def test_dereverb_noisereduce_missing_fail_fallback_raises(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        """Missing noisereduce should raise when fallback policy is fail."""
+        config = load_config()
+        config.enhancements.dereverb.enabled = True
+        config.enhancements.dereverb.fallback_mode = "fail"
+        stage = RenderStage(config)
+        input_video = tmp_path / "input.mp4"
+        input_video.write_bytes(b"video")
+        output_dir = tmp_path / "output"
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        monkeypatch.setattr(
+            "podcast_pipeline.stages.render.importlib.import_module",
+            lambda _name: (_ for _ in ()).throw(ModuleNotFoundError("noisereduce")),
+        )
+
+        with pytest.raises(RuntimeError, match="noisereduce"):
+            stage._prepare_optional_dereverb_input(
+                input_video=input_video,
+                output_dir=output_dir,
+                platform="youtube",
+            )
+
+
+class TestAudioEnhancementGuardrails:
+    """Regression tests for audio enhancement behavior across platform paths."""
+
+    def test_audio_enhancement_ordering_keeps_deesser_before_limiter(self) -> None:
+        """De-esser should remain upstream of compressor/limiter in enhancement ordering."""
+        stage = RenderStage(load_config())
+
+        filters = stage._build_audio_enhancement_filters()
+        deesser_idx = next(i for i, item in enumerate(filters) if item.startswith("deesser="))
+        compressor_idx = next(
+            i for i, item in enumerate(filters) if item.startswith("acompressor=")
+        )
+        limiter_idx = next(i for i, item in enumerate(filters) if item.startswith("alimiter="))
+
+        assert deesser_idx < compressor_idx < limiter_idx
+
+    def test_audio_enhancement_no_op_when_optional_paths_disabled(self) -> None:
+        """Optional enhancement toggles should not inject phase-6-only filters when disabled."""
+        config = load_config()
+        config.audio.noise_reduction = "off"
+        config.enhancements.deesser.enabled = False
+        config.enhancements.deesser.click_safety_enabled = False
+        stage = RenderStage(config)
+
+        filters = stage._build_audio_enhancement_filters()
+
+        assert all("afftdn" not in item for item in filters)
+        assert all("deesser" not in item for item in filters)
+        assert all("adeclick" not in item for item in filters)
+        assert any(item.startswith("acompressor=") for item in filters)
+        assert any(item.startswith("alimiter=") for item in filters)
+
+    def test_audio_enhancement_platform_safe_uses_prepared_input_path(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        """Render platform dispatch should consume dereverb-prepared input when provided."""
+        config = load_config()
+        stage = RenderStage(config)
+        prepared_input = tmp_path / "prepared.mkv"
+        prepared_input.write_bytes(b"prepared")
+        input_video = tmp_path / "input.mp4"
+        input_video.write_bytes(b"raw")
+        captured: dict[str, Path] = {}
+
+        monkeypatch.setattr(
+            stage,
+            "_prepare_optional_dereverb_input",
+            lambda **_kwargs: prepared_input,
+        )
+
+        def _fake_render_video(
+            _output_dir: Path,
+            render_input_video: Path,
+            *_args,
+            **_kwargs,
+        ) -> list[str]:
+            captured["input"] = render_input_video
+            return ["output/youtube/final.mp4"]
+
+        monkeypatch.setattr(stage, "_render_video", _fake_render_video)
+
+        outputs = stage._render_platform(
+            job_dir=tmp_path,
+            input_video=input_video,
+            platform="youtube",
+            spec=config.platforms.youtube,
+            decisions=ReviewDecisions(review_complete=True),
+            video_info={"width": 1920, "height": 1080, "duration": 30.0},
+            edit_plan=None,
+            normalize_audio=False,
+        )
+
+        assert outputs == ["output/youtube/final.mp4"]
+        assert captured["input"] == prepared_input
+
+
+class TestRenderColorCorrection:
+    """Tests for optional canonical FFmpeg color correction filters."""
+
+    def test_color_correction_normalize_and_grayworld_filters_when_enabled(self) -> None:
+        """Enabled color correction should emit canonical normalize + grayworld filters."""
+        config = load_config()
+        config.enhancements.color_correction.enabled = True
+        stage = RenderStage(config)
+
+        filters = stage._build_color_correction_filters()
+
+        assert any(item.startswith("normalize") for item in filters)
+        assert any(item.startswith("grayworld") for item in filters)
+
+    def test_color_correction_eq_filter_is_optional(self) -> None:
+        """EQ filter should only be emitted when eq toggle is enabled."""
+        config = load_config()
+        config.enhancements.color_correction.enabled = True
+        config.enhancements.color_correction.eq_enabled = True
+        stage = RenderStage(config)
+
+        filters = stage._build_color_correction_filters()
+
+        assert any(item.startswith("eq=") for item in filters)
+
+    def test_color_correction_filters_wired_into_render_video(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """Render video command should include color filters when color correction is enabled."""
+        config = load_config()
+        config.enhancements.color_correction.enabled = True
+        stage = RenderStage(config)
+        input_video = tmp_path / "input.mp4"
+        input_video.write_bytes(b"video")
+        output_dir = tmp_path / "output"
+        captured: dict[str, list[str]] = {}
+
+        def _fake_ffmpeg(args: list[str]) -> None:
+            captured["args"] = args
+            output_file = Path(args[-1])
+            output_file.parent.mkdir(parents=True, exist_ok=True)
+            output_file.write_bytes(b"rendered")
+
+        monkeypatch.setattr("podcast_pipeline.stages.render.run_ffmpeg", _fake_ffmpeg)
+        monkeypatch.setattr(stage, "_validate_video_platform_compliance", lambda *_a, **_k: None)
+
+        stage._render_video(
+            output_dir=output_dir,
+            input_video=input_video,
+            platform="youtube",
+            spec=config.platforms.youtube,
+            decisions=ReviewDecisions(review_complete=True),
+            video_info={"width": 1920, "height": 1080, "duration": 30.0},
+            edit_plan=None,
+            normalize_audio=False,
+        )
+
+        args = captured["args"]
+        assert "-vf" in args
+        vf_filter = args[args.index("-vf") + 1]
+        assert "normalize" in vf_filter
+        assert "grayworld" in vf_filter
+
+    def test_color_disabled_noop_returns_no_color_filters(self) -> None:
+        """Disabled color correction should produce no additional color filters."""
+        config = load_config()
+        config.enhancements.color_correction.enabled = False
+        stage = RenderStage(config)
+
+        assert stage._build_color_correction_filters() == []
+
+    def test_color_canonical_filters_exclude_legacy_filter_names(self) -> None:
+        """Color correction should use only canonical normalize/grayworld/eq filters."""
+        config = load_config()
+        config.enhancements.color_correction.enabled = True
+        config.enhancements.color_correction.eq_enabled = True
+        stage = RenderStage(config)
+
+        filters = stage._build_color_correction_filters()
+        rendered = ",".join(filters)
+
+        assert "autowhite" not in rendered
+        assert "autolevels" not in rendered
+        assert "normalize" in rendered
+        assert "grayworld" in rendered
+
+    def test_color_no_edit_graph_impact_when_enabled(self) -> None:
+        """Color filters should not alter trim/concat edit graph structure."""
+        edit_plan = EditPlan(
+            filler_cuts=[FillerCutRange(start_seconds=1.0, end_seconds=2.0, word="um")]
+        )
+        baseline = RenderStage(load_config())
+        color_config = load_config()
+        color_config.enhancements.color_correction.enabled = True
+        color_enabled = RenderStage(color_config)
+
+        vf_baseline = baseline._build_video_filters(
+            1920, 1080, 1920, 1080, baseline.config.platforms.youtube
+        )
+        vf_color = color_enabled._build_video_filters(
+            1920,
+            1080,
+            1920,
+            1080,
+            color_enabled.config.platforms.youtube,
+        )
+        base_filter = baseline._build_edit_plan_filter(edit_plan, 10.0, vf_baseline, [])
+        color_filter = color_enabled._build_edit_plan_filter(edit_plan, 10.0, vf_color, [])
+
+        assert base_filter is not None
+        assert color_filter is not None
+        assert base_filter[0].count("trim=start=") == color_filter[0].count("trim=start=")
+        assert base_filter[0].count("atrim=start=") == color_filter[0].count("atrim=start=")
+        assert "concat=n=2:v=1:a=1" in base_filter[0]
+        assert "concat=n=2:v=1:a=1" in color_filter[0]
 
 
 class TestRenderStatusSemantics:

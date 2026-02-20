@@ -54,6 +54,37 @@ audio:
   noise_reduction: auto
   sample_rate: 44100
 
+# Phase 6 Enhancement Controls (additive, opt-in except conservative de-esser baseline)
+enhancements:
+  deesser:
+    enabled: true
+    intensity: 0.2
+    max_deessing: 0.5
+    frequency: 0.5
+    output_mode: o
+    click_safety_enabled: true
+    adeclick_window: 55
+    adeclick_overlap: 75
+    adeclick_arorder: 2
+    adeclick_threshold: 2
+    adeclick_burst: 2
+    adeclick_method: a
+  dereverb:
+    enabled: false
+    prop_decrease: 0.85
+    stationary: false
+    fallback_mode: warn_skip
+  color_correction:
+    enabled: false
+    normalize_enabled: true
+    normalize_strength: 1.0
+    grayworld_enabled: true
+    eq_enabled: false
+    eq_saturation: 1.0
+    eq_contrast: 1.0
+    eq_brightness: 0.0
+    eq_gamma: 1.0
+
 # Platform Export Specifications
 platforms:
   # YouTube - Long-form horizontal video

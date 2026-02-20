@@ -1,7 +1,10 @@
 """Render stage: Export final content for all platforms."""
 
+import importlib
 import json
+import re
 import shutil
+import subprocess
 import tempfile
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
@@ -51,6 +54,7 @@ class RenderStage(Stage):
     """Render final exports for all platforms."""
 
     name = "render"
+    _ffmpeg_filter_cache: set[str] | None = None
 
     def __init__(self, config: Config):
         super().__init__(config)
@@ -94,6 +98,11 @@ class RenderStage(Stage):
         platform_results: dict[str, dict[str, Any]] = {}
         selected_platforms = list(dict.fromkeys(decisions.export_platforms))
         preflight_error = self._run_render_preflight(input_video, job_dir, selected_platforms)
+        if preflight_error is None:
+            try:
+                self._ensure_filter_capabilities()
+            except RuntimeError as e:
+                preflight_error = str(e)
         if preflight_error is not None:
             return StageResult(success=False, error=preflight_error)
 
@@ -332,6 +341,88 @@ class RenderStage(Stage):
             )
         return None
 
+    def _required_enhancement_filters(self) -> set[str]:
+        """Compute required FFmpeg filters from currently enabled enhancement paths."""
+        required: set[str] = set()
+        if self.config.enhancements.deesser.enabled:
+            required.add("deesser")
+            if self.config.enhancements.deesser.click_safety_enabled:
+                required.add("adeclick")
+
+        color = self.config.enhancements.color_correction
+        if color.enabled:
+            if color.normalize_enabled:
+                required.add("normalize")
+            if color.grayworld_enabled:
+                required.add("grayworld")
+            if color.eq_enabled:
+                required.add("eq")
+
+        return required
+
+    def _probe_available_ffmpeg_filters(self) -> set[str]:
+        """Probe and cache available filter names from local FFmpeg binary."""
+        if RenderStage._ffmpeg_filter_cache is not None:
+            return RenderStage._ffmpeg_filter_cache
+
+        cmd = ["ffmpeg", "-hide_banner", "-filters"]
+        try:
+            result = subprocess.run(  # noqa: S603 — cmd is a hardcoded list, no user input
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=20,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as e:
+            raise RuntimeError("Render preflight failed: `ffmpeg -filters` timed out.") from e
+        except FileNotFoundError as e:
+            raise RuntimeError(
+                "Render preflight failed: ffmpeg binary not found in PATH. Install FFmpeg first."
+            ) from e
+
+        if result.returncode != 0:
+            stderr = result.stderr.strip() or "unknown ffmpeg error"
+            raise RuntimeError(
+                "Render preflight failed: unable to inspect FFmpeg filters "
+                f"(exit {result.returncode}: {stderr})."
+            )
+
+        available: set[str] = set()
+        for line in result.stdout.splitlines():
+            match = re.match(r"^\s*[T.][S.][C.]\s+([A-Za-z0-9_]+)\s+", line)
+            if match:
+                available.add(match.group(1))
+
+        if not available:
+            raise RuntimeError(
+                "Render preflight failed: could not parse filter list from `ffmpeg -filters` output."
+            )
+
+        RenderStage._ffmpeg_filter_cache = available
+        return available
+
+    def _ensure_filter_capabilities(self) -> None:
+        """Fail fast when enabled enhancement filters are unavailable in local FFmpeg."""
+        required = self._required_enhancement_filters()
+        if not required:
+            return
+
+        available = self._probe_available_ffmpeg_filters()
+        missing = sorted(required - available)
+        if missing:
+            missing_list = ", ".join(missing)
+            raise RuntimeError(
+                "Render preflight failed: missing required FFmpeg filter(s): "
+                f"{missing_list}. Install an FFmpeg build with these filters or disable the "
+                "corresponding enhancement flags in config.yaml."
+            )
+
+        self.logger.info(
+            "render_filter_capability_check_passed",
+            required=sorted(required),
+        )
+
     def _assert_output_exists(self, output_path: Path, artifact_name: str) -> None:
         """Verify output artifacts exist and are non-empty after FFmpeg calls."""
         if not output_path.exists():
@@ -391,10 +482,117 @@ class RenderStage(Stage):
             raise RuntimeError(f"{artifact_name} reference escapes output directory: {ref}")
         return resolved
 
+    def _create_dereverb_audio_track(self, input_video: Path, output_dir: Path) -> Path:
+        """Extract and process a temporary audio track with optional noisereduce dereverb."""
+        dereverb = self.config.enhancements.dereverb
+
+        try:
+            noisereduce_module = importlib.import_module("noisereduce")
+        except ModuleNotFoundError as e:
+            raise RuntimeError(
+                "Dereverb is enabled but optional dependency 'noisereduce' is not installed."
+            ) from e
+
+        reduce_noise = getattr(noisereduce_module, "reduce_noise", None)
+        if not callable(reduce_noise):
+            raise TypeError("Dereverb is enabled but noisereduce.reduce_noise is unavailable.")
+
+        source_wav = output_dir / "_dereverb_source.wav"
+        processed_wav = output_dir / "_dereverb_processed.wav"
+
+        run_ffmpeg(
+            [
+                "-i",
+                str(input_video),
+                "-vn",
+                "-c:a",
+                "pcm_s16le",
+                "-ar",
+                str(self.config.audio.sample_rate),
+                "-ac",
+                "2",
+                str(source_wav),
+            ]
+        )
+        self._assert_output_exists(source_wav, "dereverb source audio")
+
+        try:
+            import soundfile as sf
+
+            samples, sample_rate = sf.read(source_wav, always_2d=True)
+            if getattr(samples, "size", 0) == 0:
+                raise RuntimeError("Dereverb source audio is empty.")
+
+            denoised = reduce_noise(
+                y=samples.T,
+                sr=int(sample_rate),
+                prop_decrease=dereverb.prop_decrease,
+                stationary=dereverb.stationary,
+            )
+            processed_samples = denoised.T if hasattr(denoised, "T") else samples
+            sf.write(processed_wav, processed_samples, int(sample_rate))
+        except (RuntimeError, ValueError, OSError, TypeError) as e:
+            raise RuntimeError(f"Dereverb processing failed: {e}") from e
+
+        self._assert_output_exists(processed_wav, "dereverb processed audio")
+        return processed_wav
+
+    def _prepare_optional_dereverb_input(
+        self,
+        *,
+        input_video: Path,
+        output_dir: Path,
+        platform: str,
+        audio_bitrate: str = "256k",
+    ) -> Path:
+        """Optionally preprocess audio with noisereduce and remux with original video."""
+        dereverb = self.config.enhancements.dereverb
+        if not dereverb.enabled:
+            return input_video
+
+        try:
+            processed_audio = self._create_dereverb_audio_track(
+                input_video=input_video,
+                output_dir=output_dir,
+            )
+            remuxed_input = output_dir / "_dereverb_input.mkv"
+            run_ffmpeg(
+                [
+                    "-i",
+                    str(input_video),
+                    "-i",
+                    str(processed_audio),
+                    "-map",
+                    "0:v:0",
+                    "-map",
+                    "1:a:0",
+                    "-c:v",
+                    "copy",
+                    "-c:a",
+                    "aac",
+                    "-b:a",
+                    audio_bitrate,
+                    str(remuxed_input),
+                ]
+            )
+            self._assert_output_exists(remuxed_input, f"{platform} dereverb remux input")
+        except (FFmpegError, FileNotFoundError, RuntimeError, TypeError) as e:
+            if dereverb.fallback_mode == "fail":
+                raise
+            self.logger.warning(
+                "dereverb_preprocess_skipped",
+                platform=platform,
+                reason=str(e),
+            )
+            return input_video
+
+        return remuxed_input
+
     def _build_audio_enhancement_filters(self) -> list[str]:
         """Build speech-focused enhancement chain for export audio tracks."""
         filters: list[str] = []
 
+        # Stage 1: dialog cleanup
         noise_mode = str(self.config.audio.noise_reduction).strip().lower()
         if noise_mode not in {"", "off", "false", "0"}:
             noise_floor = -25.0
@@ -412,10 +610,61 @@ class RenderStage(Stage):
                 "lowpass=f=12000",
                 "equalizer=f=240:t=q:w=1.2:g=1.8",
                 "equalizer=f=3200:t=q:w=1.0:g=2.2",
+            ]
+        )
+
+        # Stage 2: FFmpeg-native de-essing
+        deesser = self.config.enhancements.deesser
+        if deesser.enabled:
+            filters.append(
+                "deesser="
+                f"i={deesser.intensity:.3f}:"
+                f"m={deesser.max_deessing:.3f}:"
+                f"f={deesser.frequency:.3f}:"
+                f"s={deesser.output_mode}"
+            )
+
+        # Stage 3: final dynamics shaping
+        filters.extend(
+            [
                 "acompressor=threshold=-18dB:ratio=2.5:attack=5:release=120",
                 "alimiter=limit=0.95",
             ]
         )
+
+        # Stage 4: final click-safety cleanup
+        if deesser.enabled and deesser.click_safety_enabled:
+            filters.append(
+                "adeclick="
+                f"window={deesser.adeclick_window:.3f}:"
+                f"overlap={deesser.adeclick_overlap:.3f}:"
+                f"arorder={deesser.adeclick_arorder:.3f}:"
+                f"threshold={deesser.adeclick_threshold:.3f}:"
+                f"burst={deesser.adeclick_burst:.3f}:"
+                f"method={deesser.adeclick_method}"
+            )
+
+        return filters
+
+    def _build_color_correction_filters(self) -> list[str]:
+        """Build optional canonical FFmpeg color correction chain."""
+        color = self.config.enhancements.color_correction
+        if not color.enabled:
+            return []
+
+        filters: list[str] = []
+        if color.normalize_enabled:
+            filters.append(f"normalize=strength={color.normalize_strength:.3f}")
+        if color.grayworld_enabled:
+            filters.append("grayworld")
+        if color.eq_enabled:
+            filters.append(
+                "eq="
+                f"saturation={color.eq_saturation:.3f}:"
+                f"contrast={color.eq_contrast:.3f}:"
+                f"brightness={color.eq_brightness:.3f}:"
+                f"gamma={color.eq_gamma:.3f}"
+            )
         return filters
 
     def _load_thumbnail_candidates(
@@ -770,12 +1019,18 @@ class RenderStage(Stage):
         """Render export for a specific platform."""
         output_dir = job_dir / "output" / platform
         output_dir.mkdir(parents=True, exist_ok=True)
+        prepared_input = self._prepare_optional_dereverb_input(
+            input_video=input_video,
+            output_dir=output_dir,
+            platform=platform,
+            audio_bitrate=spec.audio_bitrate,
+        )
 
         # HLS packaging target
         if platform == "apple_hls" or spec.container == "hls":
             return self._render_hls(
                 output_dir,
-                input_video,
+                prepared_input,
                 platform,
                 spec,
                 video_info,
@@ -785,12 +1040,14 @@ class RenderStage(Stage):
 
         # Audio-only platforms
         if spec.audio_only:
-            return self._render_audio_only(output_dir, input_video, platform, spec, normalize_audio)
+            return self._render_audio_only(
+                output_dir, prepared_input, platform, spec, normalize_audio
+            )
 
         # Video platforms
         return self._render_video(
             output_dir,
-            input_video,
+            prepared_input,
             platform,
             spec,
             decisions,
@@ -1366,6 +1623,7 @@ class RenderStage(Stage):
             filters.append(f"scale=-2:{target_height}")
             filters.append(f"pad={target_width}:{target_height}:(ow-iw)/2:(oh-ih)/2:black")
 
+        filters.extend(self._build_color_correction_filters())
         return filters
 
     def _build_edit_plan_filter(
