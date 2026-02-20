@@ -367,7 +367,7 @@ class RenderStage(Stage):
 
         cmd = ["ffmpeg", "-hide_banner", "-filters"]
         try:
-            result = subprocess.run(
+            result = subprocess.run(  # noqa: S603 — cmd is a hardcoded list, no user input
                 cmd,
                 capture_output=True,
                 text=True,
