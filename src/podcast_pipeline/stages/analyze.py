@@ -75,6 +75,7 @@ class AnalyzeStage(Stage):
 
         # Load transcript
         transcript_data = json.loads(transcript_path.read_text())
+        trend_context = self._load_prompt_trend_context(job_dir)
 
         # Try each provider
         last_error: str | None = None
@@ -95,7 +96,10 @@ class AnalyzeStage(Stage):
             )
 
             try:
-                result = provider.analyze(proxy_path, transcript_data)
+                provider_transcript = dict(transcript_data)
+                if trend_context is not None:
+                    provider_transcript["trend_context"] = trend_context
+                result = provider.analyze(proxy_path, provider_transcript)
                 used_provider = provider.name
                 used_model = getattr(provider, "model", "unknown")
                 degraded_mode = self._build_degraded_mode_metadata(
@@ -176,6 +180,189 @@ class AnalyzeStage(Stage):
             success=False,
             error=f"All providers failed. Last error: {last_error}",
         )
+
+    def _load_prompt_trend_context(self, job_dir: Path) -> dict[str, Any] | None:
+        """Load optional trend context from prior research artifacts for prompt injection."""
+        research_payload = self._load_optional_analysis_payload(job_dir / "analysis" / "research.json")
+        viral_payload = self._load_optional_analysis_payload(
+            job_dir / "analysis" / "viral_signals.json"
+        )
+
+        if research_payload is None and viral_payload is None:
+            return None
+
+        keywords = self._extract_trend_keywords(research_payload)
+        trending_hooks = self._extract_trending_hooks(research_payload, viral_payload)
+        competitive_angle = self._extract_competitive_angle(research_payload)
+        momentum_signals = self._extract_momentum_signals(research_payload, viral_payload)
+
+        if not any([keywords, trending_hooks, competitive_angle, momentum_signals]):
+            return None
+
+        trend_context = {
+            "keywords": keywords,
+            "trending_hooks": trending_hooks,
+            "competitive_angle": competitive_angle,
+            "momentum_signals": momentum_signals,
+        }
+
+        self.logger.info(
+            "analysis_prompt_trend_context_loaded",
+            keywords=len(keywords),
+            hooks=len(trending_hooks),
+            momentum_signals=len(momentum_signals),
+        )
+        return trend_context
+
+    def _load_optional_analysis_payload(self, path: Path) -> dict[str, Any] | None:
+        """Read an optional artifact payload and normalize to dictionary values."""
+        if not path.exists():
+            return None
+        try:
+            raw = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError) as exc:
+            self.logger.warning("analysis_trend_context_load_failed", path=str(path), error=str(exc))
+            return None
+        if not isinstance(raw, dict):
+            self.logger.warning(
+                "analysis_trend_context_invalid_payload",
+                path=str(path),
+                payload_type=type(raw).__name__,
+            )
+            return None
+        return raw
+
+    def _extract_trend_keywords(self, research_payload: dict[str, Any] | None) -> list[str]:
+        """Extract trend keywords and related topics from research artifacts."""
+        if not research_payload:
+            return []
+
+        collected: list[str] = []
+        suggested_keywords = research_payload.get("suggested_keywords")
+        if isinstance(suggested_keywords, list):
+            for value in suggested_keywords:
+                if isinstance(value, str):
+                    text = value.strip()
+                    if text:
+                        collected.append(text)
+
+        insights = research_payload.get("insights")
+        if isinstance(insights, dict):
+            query_derivation = insights.get("query_derivation")
+            if isinstance(query_derivation, dict):
+                query = query_derivation.get("query")
+                if isinstance(query, str) and query.strip():
+                    collected.append(query.strip())
+                related_topics = query_derivation.get("related_topics")
+                if isinstance(related_topics, list):
+                    for topic in related_topics:
+                        if isinstance(topic, str):
+                            text = topic.strip()
+                            if text:
+                                collected.append(text)
+
+        return self._dedupe_strings(collected)
+
+    def _extract_trending_hooks(
+        self,
+        research_payload: dict[str, Any] | None,
+        viral_payload: dict[str, Any] | None,
+    ) -> list[str]:
+        """Extract trend hooks from prior viral signals and research recommendations."""
+        collected: list[str] = []
+        if viral_payload:
+            clip_scores = viral_payload.get("clip_scores")
+            if isinstance(clip_scores, list):
+                for row in clip_scores[:5]:
+                    if not isinstance(row, dict):
+                        continue
+                    clip = row.get("clip")
+                    if isinstance(clip, dict):
+                        suggested_hook = clip.get("suggested_hook")
+                        if isinstance(suggested_hook, str) and suggested_hook.strip():
+                            collected.append(suggested_hook.strip())
+                    reasons = row.get("reasons")
+                    if isinstance(reasons, list):
+                        for reason in reasons[:2]:
+                            if isinstance(reason, str):
+                                text = reason.strip()
+                                if text:
+                                    collected.append(text)
+
+        if research_payload:
+            insights = research_payload.get("insights")
+            if isinstance(insights, dict):
+                recommendation = insights.get("recommendation")
+                if isinstance(recommendation, str) and recommendation.strip():
+                    collected.append(recommendation.strip())
+
+        return self._dedupe_strings(collected)
+
+    def _extract_competitive_angle(self, research_payload: dict[str, Any] | None) -> str:
+        """Extract a concise competitive angle summary from research insights."""
+        if not research_payload:
+            return ""
+
+        insights = research_payload.get("insights")
+        if not isinstance(insights, dict):
+            return ""
+
+        recommendation = insights.get("recommendation")
+        if isinstance(recommendation, str) and recommendation.strip():
+            return recommendation.strip()
+
+        competition_tier = insights.get("competition_tier")
+        if isinstance(competition_tier, str) and competition_tier.strip():
+            return f"Competition tier: {competition_tier.strip()}"
+
+        competition_score = insights.get("competition_score")
+        if isinstance(competition_score, (int, float)):
+            return f"Competition score: {competition_score:.1f}/100"
+
+        return ""
+
+    def _extract_momentum_signals(
+        self,
+        research_payload: dict[str, Any] | None,
+        viral_payload: dict[str, Any] | None,
+    ) -> list[str]:
+        """Extract compact momentum signals from research and viral-score artifacts."""
+        collected: list[str] = []
+        if research_payload:
+            insights = research_payload.get("insights")
+            if isinstance(insights, dict):
+                engagement = insights.get("engagement_benchmarks")
+                if isinstance(engagement, dict):
+                    avg_velocity = engagement.get("avg_velocity_per_hour")
+                    if isinstance(avg_velocity, (int, float)):
+                        collected.append(f"avg_velocity_per_hour={avg_velocity:.2f}")
+
+        if viral_payload:
+            clip_scores = viral_payload.get("clip_scores")
+            if isinstance(clip_scores, list):
+                for row in clip_scores[:3]:
+                    if not isinstance(row, dict):
+                        continue
+                    combined_score = row.get("combined_score")
+                    if isinstance(combined_score, (int, float)):
+                        rank = row.get("rank")
+                        rank_label = rank if isinstance(rank, int) else "n/a"
+                        collected.append(
+                            f"clip_rank_{rank_label}_combined_score={combined_score:.2f}"
+                        )
+
+        return self._dedupe_strings(collected)
+
+    def _dedupe_strings(self, values: list[str]) -> list[str]:
+        """Return unique string values while preserving input order."""
+        seen: set[str] = set()
+        normalized: list[str] = []
+        for value in values:
+            if value in seen:
+                continue
+            seen.add(value)
+            normalized.append(value)
+        return normalized
 
     def _build_degraded_mode_metadata(
         self,
