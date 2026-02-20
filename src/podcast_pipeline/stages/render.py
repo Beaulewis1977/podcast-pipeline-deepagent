@@ -653,7 +653,7 @@ class RenderStage(Stage):
 
         filters: list[str] = []
         if color.normalize_enabled:
-            filters.append("normalize")
+            filters.append(f"normalize=strength={color.normalize_strength:.3f}")
         if color.grayworld_enabled:
             filters.append("grayworld")
         if color.eq_enabled:

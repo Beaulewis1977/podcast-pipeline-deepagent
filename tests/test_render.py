@@ -339,9 +339,18 @@ class TestEnhancementConfig:
         config = load_config()
 
         assert config.enhancements.color_correction.enabled is False
+        assert config.enhancements.color_correction.normalize_strength == pytest.approx(1.0)
         assert config.enhancements.color_correction.normalize_enabled is True
         assert config.enhancements.color_correction.grayworld_enabled is True
         assert config.enhancements.color_correction.eq_enabled is False
+
+    def test_color_config_defaults_keep_correction_disabled(self) -> None:
+        """Color config defaults should preserve existing output behavior."""
+        config = load_config()
+
+        assert config.enhancements.color_correction.enabled is False
+        assert config.enhancements.color_correction.normalize_enabled is True
+        assert config.enhancements.color_correction.normalize_strength == pytest.approx(1.0)
 
     def test_config_deesser_bounds_validation(self, tmp_path: Path) -> None:
         """Out-of-range deesser tuning values should fail at config load."""
@@ -374,6 +383,25 @@ class TestEnhancementConfig:
         )
 
         with pytest.raises(ValueError, match=r"color_correction|eq_saturation"):
+            load_config(config_path)
+
+    def test_color_config_bounds_reject_normalize_strength_out_of_range(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Normalize strength should stay within canonical 0..1 bounds."""
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "\n".join(
+                [
+                    "enhancements:",
+                    "  color_correction:",
+                    "    normalize_strength: 1.5",
+                ]
+            )
+        )
+
+        with pytest.raises(ValueError, match=r"color_correction|normalize_strength"):
             load_config(config_path)
 
 

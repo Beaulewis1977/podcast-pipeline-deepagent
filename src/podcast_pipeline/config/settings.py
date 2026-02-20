@@ -227,6 +227,7 @@ class ColorCorrectionConfig(BaseModel):
 
     enabled: bool = False
     normalize_enabled: bool = True
+    normalize_strength: float = Field(default=1.0, ge=0.0, le=1.0)
     grayworld_enabled: bool = True
     eq_enabled: bool = False
     eq_saturation: float = Field(default=1.0, ge=0.5, le=3.0)
