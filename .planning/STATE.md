@@ -1,28 +1,28 @@
 # Project State: Podcast Pipeline
 
-**Last updated:** 2026-02-19
-**Current phase:** Phase 5 complete (goal verified)
-**Overall progress:** 100% (30/30 plans complete)
+**Last updated:** 2026-02-20
+**Current phase:** Phase 5.1 in progress (1/3 plans complete)
+**Overall progress:** 94% (31/33 plans complete)
 
 ## Project Reference
 
 See: `.planning/PROJECT.md`
 
 **Core value:** Turn raw podcast recording into multi-platform content without editing software or manual copywriting.
-**Current focus:** Prepare milestone audit and close remaining manual verification checkpoints.
+**Current focus:** Execute Wave 2 of Phase 5.1 (Streamlit export UI + CLI parity).
 
 ## Current Position
 
 ```text
-Phase:    4 of 5 complete (+ Phase 4 human verification checklist pending)
-Plan:     30 completed overall; 3/3 complete in Phase 5
-Status:   Phase 5 verified (passed)
-Last activity: 2026-02-19 - Verified Phase 5 goal (9/9 must-haves)
+Phase:    5.1 of 5.1 in progress (Phase 4 human verification checklist still pending)
+Plan:     1/3 complete in Phase 5.1; 31 completed overall
+Status:   Wave 1 complete; Wave 2 pending
+Last activity: 2026-02-20 - Completed 05.1-01 canonical export-target registry + review normalization
 
-Progress: [█████████████████████████] 100% (30/30 plans complete)
+Progress: [███████████████████████░░] 94% (31/33 plans complete)
 ```
 
-**Next Phase:** Milestone audit / resolve any human-verification checklists
+**Next Phase:** Continue Phase 5.1 Wave 2 (05.1-02 and 05.1-03)
 
 ## Phase Status
 
@@ -33,14 +33,15 @@ Progress: [███████████████████████
 | 3 | Polishing + Desktop Distribution | Complete | 6/6 | 100% |
 | 4 | Post-release hardening | Human verification needed | 10/10 | 100% |
 | 5 | Video Podcast Platforms | Complete (verified) | 3/3 | 100% |
+| 5.1 | Streamlit Video Platform UI | In progress | 1/3 | 33% |
 
 ## Performance Metrics
 
 | Metric | Value |
 |--------|-------|
-| Plans completed | 30 |
+| Plans completed | 31 |
 | Requirements done | 35/83 (21 partial) |
-| Phases complete | 4/5 |
+| Phases complete | 4/6 |
 | Estimated completion | In progress |
 
 ## Accumulated Context
@@ -112,6 +113,7 @@ Progress: [███████████████████████
 | Recovery UX surfaces /system/runtime diagnostics with on-demand /jobs/reconcile actions across desktop and Streamlit | Makes stale/orphaned runtime state visible and operator-actionable without filesystem inspection | 2026-02-13 |
 | Coverage gates now require 45% overall plus providers/service/stages module thresholds | Strengthens runtime regression protection while keeping thresholds realistic for fixture-heavy media paths | 2026-02-13 |
 | Operator docs now codify service auth headers, resume-through-completion, degraded-mode, and quality-control contracts | Keeps desktop/Streamlit/API behavior truthful for manual operations and incident response | 2026-02-13 |
+| Review/CLI/UI export target keys are normalized from one canonical registry with default fallback safeguards | Prevents cross-surface platform key drift and malformed review-state payloads from silently changing render behavior | 2026-02-20 |
 
 ### Roadmap Evolution
 
@@ -132,6 +134,7 @@ Progress: [███████████████████████
 - Phase 5 execution continued: completed 05-02 render compliance wiring and truthful failure contracts
 - Phase 5 execution completed: finished 05-03 apple_hls packaging and platform workflow-boundary documentation
 - Phase 5 verified: 9/9 must-haves passed with no structural gaps
+- Phase 5.1 execution started: completed 05.1-01 canonical export-target registry + review normalization contract
 
 ### Technical Notes
 
@@ -180,16 +183,17 @@ Progress: [███████████████████████
 - 2026-02-19: Completed 05-02-PLAN.md (render profile/level wiring, ffprobe compliance gates, structured compliance status reporting)
 - 2026-02-19: Completed 05-03-PLAN.md (typed apple_hls config, deterministic playlist/segment checks, and truthful Apple/Spotify workflow docs)
 - 2026-02-19: Verified Phase 5 goal (05-video-podcast-platforms-VERIFICATION.md, status: passed)
+- 2026-02-20: Completed 05.1-01-PLAN.md (canonical export target registry, review-state normalization, and fallback regression coverage)
 
 ## Session Continuity
 
 ### Last session
 
-2026-02-19 20:25 UTC — Verified `05-video-podcast-platforms` goal (passed, 9/9 must-haves).
+2026-02-20 00:56 UTC — Completed `05.1-01-PLAN.md` and wrote `05.1-01-SUMMARY.md`.
 
 ### Stopped at
 
-Completed `05-video-podcast-platforms-VERIFICATION.md`; next action is milestone audit or pending human-verification checklist closure.
+Completed `05.1-01-PLAN.md`; next action is execute Phase 5.1 Wave 2 plans (`05.1-02`, `05.1-03`).
 
 ### Resume file
 
@@ -197,4 +201,4 @@ None
 
 ---
 
-*State updated: 2026-02-19*
+*State updated: 2026-02-20*
