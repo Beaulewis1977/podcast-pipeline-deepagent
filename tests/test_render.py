@@ -554,6 +554,41 @@ class TestRenderEnhancementAndThumbnailOutputs:
         assert all("afftdn" not in item for item in filters)
         assert any("acompressor" in item for item in filters)
 
+    def test_deesser_filter_uses_typed_config_defaults(self) -> None:
+        """De-esser should be present when enabled in enhancement config."""
+        stage = RenderStage(load_config())
+
+        filters = stage._build_audio_enhancement_filters()
+
+        assert any(item.startswith("deesser=") for item in filters)
+
+    def test_adeclick_filter_respects_click_safety_toggle(self) -> None:
+        """Final click-safety filter should only be present when enabled."""
+        config = load_config()
+        config.enhancements.deesser.click_safety_enabled = False
+        stage = RenderStage(config)
+
+        filters = stage._build_audio_enhancement_filters()
+
+        assert all("adeclick" not in item for item in filters)
+
+    def test_audio_chain_ordering_dialog_cleanup_then_deesser_then_limiter_then_adeclick(
+        self,
+    ) -> None:
+        """Audio chain should keep deterministic ordering for cleanup, de-esser, and safety."""
+        stage = RenderStage(load_config())
+
+        filters = stage._build_audio_enhancement_filters()
+        highpass_idx = next(i for i, item in enumerate(filters) if item.startswith("highpass="))
+        deesser_idx = next(i for i, item in enumerate(filters) if item.startswith("deesser="))
+        compressor_idx = next(
+            i for i, item in enumerate(filters) if item.startswith("acompressor=")
+        )
+        limiter_idx = next(i for i, item in enumerate(filters) if item.startswith("alimiter="))
+        adeclick_idx = next(i for i, item in enumerate(filters) if item.startswith("adeclick="))
+
+        assert highpass_idx < deesser_idx < compressor_idx < limiter_idx < adeclick_idx
+
     def test_thumbnail_export_generates_images_and_manifest(
         self,
         tmp_path: Path,

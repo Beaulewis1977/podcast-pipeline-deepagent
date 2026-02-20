@@ -485,6 +485,7 @@ class RenderStage(Stage):
         """Build speech-focused enhancement chain for export audio tracks."""
         filters: list[str] = []
 
+        # Stage 1: dialog cleanup
         noise_mode = str(self.config.audio.noise_reduction).strip().lower()
         if noise_mode not in {"", "off", "false", "0"}:
             noise_floor = -25.0
@@ -502,10 +503,40 @@ class RenderStage(Stage):
                 "lowpass=f=12000",
                 "equalizer=f=240:t=q:w=1.2:g=1.8",
                 "equalizer=f=3200:t=q:w=1.0:g=2.2",
+            ]
+        )
+
+        # Stage 2: FFmpeg-native de-essing
+        deesser = self.config.enhancements.deesser
+        if deesser.enabled:
+            filters.append(
+                "deesser="
+                f"i={deesser.intensity:.3f}:"
+                f"m={deesser.max_deessing:.3f}:"
+                f"f={deesser.frequency:.3f}:"
+                f"s={deesser.output_mode}"
+            )
+
+        # Stage 3: final dynamics shaping
+        filters.extend(
+            [
                 "acompressor=threshold=-18dB:ratio=2.5:attack=5:release=120",
                 "alimiter=limit=0.95",
             ]
         )
+
+        # Stage 4: final click-safety cleanup
+        if deesser.enabled and deesser.click_safety_enabled:
+            filters.append(
+                "adeclick="
+                f"window={deesser.adeclick_window:.3f}:"
+                f"overlap={deesser.adeclick_overlap:.3f}:"
+                f"arorder={deesser.adeclick_arorder:.3f}:"
+                f"threshold={deesser.adeclick_threshold:.3f}:"
+                f"burst={deesser.adeclick_burst:.3f}:"
+                f"method={deesser.adeclick_method}"
+            )
+
         return filters
 
     def _load_thumbnail_candidates(
