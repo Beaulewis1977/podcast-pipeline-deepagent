@@ -260,12 +260,16 @@ Scope boundary note:
 - Research and document a complete approach for thumbnail frame extraction + visual-grid selection UX
 - Define 1-3 thumbnail selection data-contract changes and render artifact naming strategy
 - Define viral-thumbnail criteria/scoring recommendations and a file-level implementation impact map
+- Enforce thumbnail output compliance per selected export target during render (format/aspect/size constraints) with fail-fast errors for unsatisfied targets
+- Defer explicit per-platform thumbnail assignment UX (different thumbnail per platform) until post-MVP follow-up
 
 **Success Criteria:**
 1. `spotify_video`/`apple_video` marketing copy survives prompt -> model validation -> artifact generation -> UI edit flow
 2. Regression tests lock marketing parity behavior for both new video platform keys
 3. `research/thumbnail-ui-visual-selection.md` exists with concrete FFmpeg, Streamlit, schema, virality, and phasing recommendations
 4. Phase 6.1 output is ready for direct execution planning of thumbnail visual UX implementation
+5. MVP implementation plan explicitly requires per-target thumbnail spec enforcement for selected export platforms
+6. MVP implementation plan explicitly defers per-platform thumbnail assignment UX to a follow-on increment
 
 Plans:
 - [ ] 06.1-01-PLAN.md — Video-platform marketing copy parity across models/providers/render/UI + regressions
