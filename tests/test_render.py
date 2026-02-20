@@ -702,6 +702,36 @@ class TestRenderEnhancementFilterCapabilities:
         assert "missing required FFmpeg filter" in (result.error or "")
 
 
+class TestPhase6ScopeBoundary:
+    """Tests that lock enhancement-only behavior for Phase 6."""
+
+    def test_phase6_scope_boundary_blocks_edit_core_filter_names(self) -> None:
+        """Enhancement chain must not include edit-core transition filters."""
+        stage = RenderStage(load_config())
+
+        filters = stage._build_audio_enhancement_filters()
+
+        assert all("acrossfade" not in item for item in filters)
+        assert all("xfade" not in item for item in filters)
+
+    def test_enhancement_disabled_noop_for_phase6_optional_filters(self) -> None:
+        """Disabled Phase 6 enhancement toggles should add no optional filters."""
+        config = load_config()
+        config.enhancements.deesser.enabled = False
+        config.enhancements.deesser.click_safety_enabled = False
+        config.enhancements.color_correction.enabled = False
+        stage = RenderStage(config)
+
+        filters = stage._build_audio_enhancement_filters()
+        required = stage._required_enhancement_filters()
+
+        assert all("deesser" not in item for item in filters)
+        assert all("adeclick" not in item for item in filters)
+        assert "normalize" not in required
+        assert "grayworld" not in required
+        assert "eq" not in required
+
+
 class TestRenderStatusSemantics:
     """Tests for top-level render status and platform result details."""
 
