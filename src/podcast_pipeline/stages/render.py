@@ -555,6 +555,27 @@ class RenderStage(Stage):
                 input_video=input_video,
                 output_dir=output_dir,
             )
+            remuxed_input = output_dir / "_dereverb_input.mkv"
+            run_ffmpeg(
+                [
+                    "-i",
+                    str(input_video),
+                    "-i",
+                    str(processed_audio),
+                    "-map",
+                    "0:v:0",
+                    "-map",
+                    "1:a:0",
+                    "-c:v",
+                    "copy",
+                    "-c:a",
+                    "aac",
+                    "-b:a",
+                    audio_bitrate,
+                    str(remuxed_input),
+                ]
+            )
+            self._assert_output_exists(remuxed_input, f"{platform} dereverb remux input")
         except (FFmpegError, RuntimeError, TypeError) as e:
             if dereverb.fallback_mode == "fail":
                 raise
@@ -565,27 +586,6 @@ class RenderStage(Stage):
             )
             return input_video
 
-        remuxed_input = output_dir / "_dereverb_input.mkv"
-        run_ffmpeg(
-            [
-                "-i",
-                str(input_video),
-                "-i",
-                str(processed_audio),
-                "-map",
-                "0:v:0",
-                "-map",
-                "1:a:0",
-                "-c:v",
-                "copy",
-                "-c:a",
-                "aac",
-                "-b:a",
-                audio_bitrate,
-                str(remuxed_input),
-            ]
-        )
-        self._assert_output_exists(remuxed_input, f"{platform} dereverb remux input")
         return remuxed_input
 
     def _build_audio_enhancement_filters(self) -> list[str]:
