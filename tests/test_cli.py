@@ -112,6 +112,12 @@ def test_parse_approve_platforms_rejects_invalid_keys() -> None:
         _parse_approve_platforms("youtube,invalid")
 
 
+def test_parse_approve_platforms_rejects_empty_explicit_value() -> None:
+    """Explicit --platforms with no usable keys should not silently fallback."""
+    with pytest.raises(ValueError, match="No valid platform keys provided"):
+        _parse_approve_platforms("  ,   , ")
+
+
 def test_approve_command_rejects_invalid_platform_keys() -> None:
     """CLI approve command should fail fast with actionable invalid-key diagnostics."""
     result = runner.invoke(app, ["approve", "nonexistent-job-id", "--platforms", "youtube,invalid"])
