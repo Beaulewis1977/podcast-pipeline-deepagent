@@ -235,14 +235,23 @@ function App() {
     async (jobId: string) => {
       await runAction(`detail:${jobId}`, async () => {
         selectJob(jobId);
-        const detail = await fetchSelectedJobDetail(jobId);
-        if (selectedJobIdRef.current === jobId) {
-          setSelectedJobDetail(detail);
+        try {
+          const detail = await fetchSelectedJobDetail(jobId);
+          if (selectedJobIdRef.current === jobId) {
+            setSelectedJobDetail(detail);
+          }
+        } catch (error) {
+          if (isJobNotFoundError(error)) {
+            clearSelectedJob();
+            return `Job ${jobId} not found`;
+          } else {
+            throw error;
+          }
         }
         return `Loaded details for ${jobId}`;
       });
     },
-    [fetchSelectedJobDetail, runAction, selectJob],
+    [clearSelectedJob, fetchSelectedJobDetail, runAction, selectJob],
   );
 
   const handleCreateJob = useCallback(async () => {

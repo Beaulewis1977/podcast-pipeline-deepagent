@@ -55,8 +55,8 @@ We implement smoothing in three cumulative layers:
 | Layer | What | When | Default |
 |-------|------|------|---------|
 | **Micro-fade** | 10-30ms fade-in/out at raw segment edges | Always | 30ms |
-| **Audio crossfade** | 50-200ms acrossfade between segments | Content cuts | 150ms |
-| **Video dissolve** | 100-500ms xfade dissolve | Content cuts only | 300ms |
+| **Audio crossfade** | 50-200ms `acrossfade` between segments | Content cuts | 150ms |
+| **Video dissolve** | 100-500ms `xfade` dissolve | Content cuts only | 300ms |
 
 Filler cuts (short removal of "um"/"uh") only get the micro-fade. Content cuts (longer removals of dead air, tangents, etc.) get all three layers.
 
@@ -99,7 +99,7 @@ Filler cuts (short removal of "um"/"uh") only get the micro-fade. Content cuts (
 
 ### 3.3 How to Chain Multiple Segments
 
-For N segments with content cut crossfades, the acrossfade and xfade must be chained iteratively:
+For N segments with content cut crossfades, the `acrossfade` and `xfade` must be chained iteratively:
 
 ```python
 def _build_crossfade_chain(segments: list, crossfade_s: float, dissolve_s: float):

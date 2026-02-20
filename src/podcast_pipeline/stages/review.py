@@ -53,9 +53,9 @@ class ReviewDecisions(BaseModel):
     def validate_export_platforms(cls, value: Any) -> list[str]:
         """Normalize review export platform keys to canonical values.
 
-        Valid platform keys are normalized (trimmed, lowercased, deduplicated).
-        Unknown/invalid keys are preserved as-is so the render stage can report
-        them as unsupported rather than silently dropping them.
+        All platform keys (valid and invalid) are canonicalized (trimmed, lowercased,
+        deduplicated). Unknown/invalid keys are still preserved in the returned list so
+        the render stage can report them as unsupported rather than silently dropping them.
         """
         if value is None:
             return list(DEFAULT_EXPORT_PLATFORMS)

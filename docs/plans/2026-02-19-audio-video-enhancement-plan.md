@@ -50,7 +50,7 @@ The current render stage (`render.py:910-961`) uses FFmpeg `trim`/`atrim` + `con
 
 For our use case (many small segments), the most practical approach is:
 
-```
+```bash
 # For each kept segment, apply:
 #   afade=t=in:st=0:d=0.05     (50ms fade-in at start)
 #   afade=t=out:st={end-0.05}:d=0.05  (50ms fade-out at end)
@@ -59,7 +59,7 @@ For our use case (many small segments), the most practical approach is:
 
 For content cuts (longer removals), use `acrossfade` with configurable duration:
 
-```
+```bash
 [seg_n_audio][seg_n+1_audio]acrossfade=d=0.15:c1=tri:c2=tri
 ```
 
@@ -67,7 +67,7 @@ For content cuts (longer removals), use `acrossfade` with configurable duration:
 ```yaml
 audio:
   crossfade:
-    filler_cut_ms: 30      # Micro-fade for filler word cuts (ms)
+    filler_cut_ms: 30       # Micro-fade for filler word cuts (ms)
     content_cut_ms: 150     # Crossfade for content cuts (ms)
     curve: tri              # Crossfade curve: tri, log, exp, par
 ```
@@ -76,7 +76,7 @@ audio:
 
 **Tech**: FFmpeg `xfade` filter.
 
-```
+```bash
 [seg_n_video][seg_n+1_video]xfade=transition=fade:duration=0.3:offset={seg_n_duration - 0.3}
 ```
 
@@ -115,7 +115,7 @@ def snap_to_word_boundary(
 
 **Tech**: FFmpeg `adeclick` filter as a safety net on the final output:
 
-```
+```bash
 adeclick=threshold=10:window=50
 ```
 
@@ -390,7 +390,7 @@ ffmpeg -i input.mp4 \
 ```
 
 This creates:
-```
+```text
 output/apple_hls/
   master.m3u8           # Master playlist pointing to variants
   stream_0.m3u8         # 1080p variant playlist
@@ -451,7 +451,7 @@ An optional de-esser in the audio enhancement chain that reduces sibilance witho
 
 Uses FFmpeg's `asplit`, `highpass`, `acompressor`, and `amix` to create a sidechain compressor targeting 5-10kHz:
 
-```
+```bash
 [0:a]asplit=2[main][side];
 [side]highpass=f=5000,lowpass=f=10000,equalizer=f=7000:width_type=h:width=100:g=12[ess];
 [ess]acompressor=threshold=-30dB:ratio=10:attack=0.01:release=0.05[duck];
@@ -519,7 +519,7 @@ Many podcasters record in untreated rooms with audible echo/reverb. The current 
 
 #### Option A: FFmpeg Spectral Approach (Limited)
 
-```
+```bash
 afftdn=nf=-25,highpass=f=200,lowpass=f=5000
 ```
 
@@ -593,7 +593,7 @@ A lightweight, automated color correction pass that normalizes webcam video with
 
 **Tech**: FFmpeg video filters only (no new dependencies):
 
-```
+```bash
 # Auto levels (histogram normalization)
 autolevels,
 # Auto white balance (experimental but effective)

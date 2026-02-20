@@ -2,6 +2,7 @@
 
 import json
 import shutil
+import tempfile
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
@@ -1626,8 +1627,51 @@ class RenderStage(Stage):
                 temp_video.replace(audio_file)
                 temp_audio.unlink()
             else:
-                # Write back directly
-                sf.write(str(audio_file), normalized, rate)
+                # Determine whether the caller requested a non-WAV codec/bitrate.
+                # soundfile can only write uncompressed PCM formats (WAV/FLAC/AIFF
+                # etc.), so if a compressed codec like "aac", "libmp3lame", "libopus"
+                # is requested we must write a temporary WAV first and then
+                # re-encode it with ffmpeg.
+                _wav_codecs = {None, "pcm_s16le", "pcm_s24le", "pcm_f32le", "wav"}
+                needs_reencode = audio_codec not in _wav_codecs or audio_bitrate is not None
+
+                if needs_reencode:
+                    # Write normalized PCM to a temp WAV, then re-encode to target.
+                    with tempfile.NamedTemporaryFile(
+                        suffix=".wav", delete=False, dir=audio_file.parent
+                    ) as tmp_fd:
+                        tmp_wav = Path(tmp_fd.name)
+                    try:
+                        sf.write(str(tmp_wav), normalized, rate)
+                        # Re-encode into a separate file so the original is only
+                        # replaced once the encode succeeds (atomic swap).
+                        tmp_encoded = audio_file.with_name(
+                            f"{audio_file.stem}.normalized_tmp{audio_file.suffix}"
+                        )
+                        run_ffmpeg(
+                            [
+                                "-i",
+                                str(tmp_wav),
+                                "-c:a",
+                                audio_codec or "aac",
+                                *(["-b:a", audio_bitrate] if audio_bitrate is not None else []),
+                                str(tmp_encoded),
+                            ]
+                        )
+                        # Atomic replace — only clobbers original on success.
+                        tmp_encoded.replace(audio_file)
+                    finally:
+                        if tmp_wav.exists():
+                            tmp_wav.unlink()
+                        # Clean up partial encode output if something went wrong.
+                        tmp_encoded_path = audio_file.with_name(
+                            f"{audio_file.stem}.normalized_tmp{audio_file.suffix}"
+                        )
+                        if tmp_encoded_path.exists() and tmp_encoded_path != audio_file:
+                            tmp_encoded_path.unlink()
+                else:
+                    # Plain WAV / no special codec — write back directly.
+                    sf.write(str(audio_file), normalized, rate)
 
             self.logger.info(
                 "loudness_normalized",
