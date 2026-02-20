@@ -1,5 +1,6 @@
 """Base provider protocol and error types."""
 
+import json
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
@@ -98,9 +99,19 @@ class BaseProvider(ABC):
         """Check if provider is available."""
         ...
 
-    def _build_prompt(self, transcript: dict[str, Any]) -> str:
+    def _build_prompt(
+        self,
+        transcript: dict[str, Any],
+        trend_context: dict[str, Any] | None = None,
+    ) -> str:
         """Build the analysis prompt."""
-        transcript_text = transcript.get("text", "")[:10000]  # Limit length
+        transcript_text = str(transcript.get("text", ""))[:10000]  # Limit length
+        resolved_trend_context = trend_context
+        if resolved_trend_context is None:
+            raw_context = transcript.get("trend_context")
+            if isinstance(raw_context, dict):
+                resolved_trend_context = raw_context
+        trend_context_block = self._build_trend_context_block(resolved_trend_context)
 
         return f"""You are a professional podcast editor and marketing strategist.
 
@@ -108,6 +119,29 @@ Analyze this podcast video and transcript to provide editing suggestions and mar
 
 TRANSCRIPT:
 {transcript_text}
+
+TREND CONTEXT:
+{trend_context_block}
+
+Marketing copy requirements (strict):
+- Generate original copy for EVERY marketing platform key: youtube, spotify, spotify_video, apple, apple_video, tiktok, instagram, linkedin, twitter, facebook.
+- Style must be high-impact and viral-ready without spammy clickbait or fabricated claims.
+- Keep tone professional, credible, and audience-appropriate.
+- Tailor language to each platform format instead of duplicating one generic description.
+- Use trend context (keywords, hooks, competitive angle) when relevant and grounded in transcript evidence.
+- For each platform, always provide titles, description, and hashtags fields in the JSON schema.
+
+Platform-specific expectations:
+- youtube: title options optimized for discovery and a detailed long-form description.
+- spotify: concise audio-episode title + description for podcast listeners.
+- spotify_video: video-podcast title/description emphasizing visual value and watch intent.
+- apple: polished audio-episode title + description for Apple Podcasts listeners.
+- apple_video: video-podcast title/description for Apple Podcasts video consumption.
+- tiktok: short hook-forward caption and hashtag set.
+- instagram: reel-friendly caption with concise hook and hashtags.
+- linkedin: professional narrative emphasizing insight/value.
+- twitter: concise post-length copy suitable for X audiences.
+- facebook: conversational social copy optimized for feed engagement.
 
 Provide your analysis as JSON with this exact structure:
 {{
@@ -151,10 +185,30 @@ Provide your analysis as JSON with this exact structure:
       "description": "Spotify description",
       "hashtags": []
     }},
+    "spotify_video": {{
+      "titles": ["Episode title for Spotify Video"],
+      "description": "Spotify Video description focused on visual moments and chapters",
+      "hashtags": []
+    }},
+    "apple": {{
+      "titles": ["Episode title"],
+      "description": "Apple Podcasts description",
+      "hashtags": []
+    }},
+    "apple_video": {{
+      "titles": ["Episode title for Apple Podcasts Video"],
+      "description": "Apple Podcasts Video description emphasizing watchability and key moments",
+      "hashtags": []
+    }},
     "tiktok": {{
       "titles": [],
       "description": "TikTok caption",
       "hashtags": ["#fyp", "#podcast"]
+    }},
+    "instagram": {{
+      "titles": [],
+      "description": "Instagram Reel caption",
+      "hashtags": ["#reels", "#podcast"]
     }},
     "linkedin": {{
       "titles": [],
@@ -166,10 +220,10 @@ Provide your analysis as JSON with this exact structure:
       "description": "Tweet (<280 chars)",
       "hashtags": []
     }},
-    "apple": {{
-      "titles": ["Episode title"],
-      "description": "Apple Podcasts description",
-      "hashtags": []
+    "facebook": {{
+      "titles": [],
+      "description": "Facebook post copy",
+      "hashtags": ["#podcast"]
     }}
   }},
   "metadata": {{
@@ -184,6 +238,50 @@ Identify:
 1. 2-4 content cuts (boring/off-topic sections to remove)
 2. 3-5 viral clip candidates (most engaging 30-60 second moments)
 3. 3-5 thumbnail frame timestamps
-4. Platform-specific marketing copy
+4. Platform-specific marketing copy for ALL listed platform keys
 
 Return ONLY valid JSON, no other text."""
+
+    @staticmethod
+    def _build_trend_context_block(trend_context: dict[str, Any] | None) -> str:
+        """Build a stable trend-context block for prompt injection."""
+        if not trend_context:
+            return (
+                '- "keywords": []\n'
+                '- "trending_hooks": []\n'
+                '- "competitive_angle": ""\n'
+                '- "momentum_signals": []\n'
+                "(No external artifacts were available; infer from transcript only.)"
+            )
+
+        keywords = BaseProvider._coerce_string_list(trend_context.get("keywords"))
+        hooks = BaseProvider._coerce_string_list(trend_context.get("trending_hooks"))
+        momentum = BaseProvider._coerce_string_list(trend_context.get("momentum_signals"))
+        competitive_angle = trend_context.get("competitive_angle", "")
+        if not isinstance(competitive_angle, str):
+            competitive_angle = str(competitive_angle)
+
+        return (
+            f'- "keywords": {json.dumps(keywords)}\n'
+            f'- "trending_hooks": {json.dumps(hooks)}\n'
+            f'- "competitive_angle": {json.dumps(competitive_angle)}\n'
+            f'- "momentum_signals": {json.dumps(momentum)}'
+        )
+
+    @staticmethod
+    def _coerce_string_list(value: Any) -> list[str]:
+        """Normalize potentially mixed values into prompt-safe string lists."""
+        if isinstance(value, str):
+            text = value.strip()
+            return [text] if text else []
+        if not isinstance(value, list):
+            return []
+
+        normalized: list[str] = []
+        for item in value:
+            if item is None:
+                continue
+            text = str(item).strip()
+            if text:
+                normalized.append(text)
+        return normalized

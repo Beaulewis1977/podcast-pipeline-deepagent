@@ -94,7 +94,11 @@ class KimiProvider(BaseProvider):
         if not self.is_available():
             raise ProviderError("Kimi API key not configured")
 
-        prompt = self._build_prompt(transcript)
+        trend_context = transcript.get("trend_context")
+        prompt = self._build_prompt(
+            transcript,
+            trend_context=trend_context if isinstance(trend_context, dict) else None,
+        )
 
         logger.info(
             "kimi_analyzing",
