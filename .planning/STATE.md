@@ -1,28 +1,28 @@
 # Project State: Podcast Pipeline
 
 **Last updated:** 2026-02-20
-**Current phase:** Phase 6.1 planned (pending execution)
-**Overall progress:** 94.7% (36/38 plans complete)
+**Current phase:** Phase 6.1 in progress (plan 06.1-01 complete)
+**Overall progress:** 90.2% (37/41 plans complete)
 
 ## Project Reference
 
 See: `.planning/PROJECT.md`
 
 **Core value:** Turn raw podcast recording into multi-platform content without editing software or manual copywriting.
-**Current focus:** Phase 6.1 planning and execution prep for video marketing parity + thumbnail visual selection research.
+**Current focus:** Phase 6.1 execution for trend-aware, LLM-generated cross-platform marketing copy parity + thumbnail visual selection MVP.
 
 ## Current Position
 
 ```text
-Phase:    6.1 planned (pending execution)
-Plan:     0/2 complete in Phase 6.1; 36 completed overall
-Status:   Phase inserted; ready for wave-based execution
-Last activity: 2026-02-20 - Added Phase 6.1 plans (marketing parity + thumbnail visual selection research)
+Phase:    6.1 in progress
+Plan:     1/5 complete in Phase 6.1; 37 completed overall
+Status:   Wave 1 execution started
+Last activity: 2026-02-20 - Completed 06.1-01 marketing contract lock (full platform matrix + trend-aware provider prompt wiring)
 
-Progress: [████████████████████████░] 94.7% (36/38 plans complete)
+Progress: [███████████████████████░░] 90.2% (37/41 plans complete)
 ```
 
-**Next Phase:** Phase 6.1 - Video Marketing Copy Parity + Thumbnail Visual Selection Research
+**Next Phase:** Phase 6.1 - Video Marketing Copy Parity + Thumbnail Visual Selection MVP
 
 ## Phase Status
 
@@ -35,13 +35,13 @@ Progress: [███████████████████████
 | 5 | Video Podcast Platforms | Complete (verified) | 3/3 | 100% |
 | 5.1 | Streamlit Video Platform UI | Complete (verified) | 3/3 | 100% |
 | 6 | Audio/Video Enhancement & Podcast Video Platform | Complete (verified) | 3/3 | 100% |
-| 6.1 | Video Marketing Copy Parity + Thumbnail Visual Selection Research | Planned | 0/2 | 0% |
+| 6.1 | Video Marketing Copy Parity + Thumbnail Visual Selection MVP | In progress | 1/5 | 20% |
 
 ## Performance Metrics
 
 | Metric | Value |
 |--------|-------|
-| Plans completed | 36/38 |
+| Plans completed | 37/41 |
 | Requirements done | 35/83 (21 partial) |
 | Phases complete | 6/7 |
 | Estimated completion | In progress |
@@ -121,6 +121,9 @@ Progress: [███████████████████████
 | Render preflight derives required FFmpeg filters from enabled enhancement toggles | Fails fast with actionable diagnostics before expensive render runs | 2026-02-20 |
 | Dereverb preprocessing uses optional noisereduce with policy-driven warn-skip/fail fallback | Keeps baseline installs stable while supporting opt-in enhancement depth | 2026-02-20 |
 | Color correction is limited to canonical normalize/grayworld/optional-eq filters | Avoids undocumented FFmpeg filter drift and keeps enhancement scope additive | 2026-02-20 |
+| MarketingCopy schema now includes full 10-platform matrix including spotify/apple video variants | Prevents provider/model drift from stripping platform keys before artifacts/UI consume them | 2026-02-20 |
+| Provider prompt contract enforces viral-impact but professional, platform-tailored copy for all marketing keys | Raises baseline copy quality and blocks generic one-size output regressions | 2026-02-20 |
+| Analyze prompt context now injects compact trend signals from existing research/viral artifacts when present | Enables trend-aware copy generation without breaking no-research execution paths | 2026-02-20 |
 
 ### Roadmap Evolution
 
@@ -152,7 +155,8 @@ Progress: [███████████████████████
 - Phase 6 execution continued: completed 06-02 de-esser/adeclick integration + optional noisereduce dereverb path
 - Phase 6 execution completed: finished 06-03 canonical color correction chain + safety boundary regressions
 - Phase 6 verified: 9/9 must-haves passed with no structural gaps
-- Phase 6.1 added: Video marketing copy parity + thumbnail visual selection research (2 plans, 2 waves)
+- Phase 6.1 expanded: video marketing copy parity + thumbnail visual selection MVP (5 plans, 4 waves)
+- Phase 6.1 execution started: completed 06.1-01 full-platform marketing schema/prompt contract lock with trend-context prompt wiring regressions
 
 ### Technical Notes
 
@@ -211,17 +215,19 @@ Progress: [███████████████████████
 - 2026-02-20: Completed 06-02-PLAN.md (FFmpeg-native de-esser/adeclick chain and optional noisereduce dereverb fallback path)
 - 2026-02-20: Completed 06-03-PLAN.md (canonical normalize/grayworld color correction path with bounded config defaults and safety regressions)
 - 2026-02-20: Verified Phase 6 goal (06-audio-video-enhancement-podcast-video-platform-VERIFICATION.md, status: passed)
-- 2026-02-20: Added Phase 6.1 plans (`06.1-01` marketing copy parity, `06.1-02` thumbnail visual selection research)
+- 2026-02-20: Expanded Phase 6.1 plans to executable thumbnail MVP scope (`06.1-01`..`06.1-05`) with explicit per-target thumbnail compliance and deferred per-platform assignment UX
+- 2026-02-20: Tightened Phase 6.1 marketing plans to require full-platform, trend-aware, viral-professional LLM copy generation with regression guardrails
+- 2026-02-20: Completed 06.1-01-PLAN.md (full marketing platform matrix in model + provider prompt contract with viral-professional directives + analyze trend-context artifact injection + regressions)
 
 ## Session Continuity
 
 ### Last session
 
-2026-02-20 20:28 UTC — Inserted `06.1-video-marketing-copy-thumbnail-visual-selection` phase and created initial plan set.
+2026-02-20 21:37 UTC — Completed `06.1-01-PLAN.md` with task-level atomic commits and contract regressions.
 
 ### Stopped at
 
-Completed phase insertion for `06.1-video-marketing-copy-thumbnail-visual-selection`; next action is `/prompts:gsd-execute-phase phase=6.1`.
+Completed `06.1-01-PLAN.md`; next action is execution of `06.1-02-PLAN.md`.
 
 ### Resume file
 
