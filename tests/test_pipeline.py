@@ -7,8 +7,10 @@ from pathlib import Path
 import pytest
 
 from podcast_pipeline.config import Config
+from podcast_pipeline.models.analysis import AnalysisResult
 from podcast_pipeline.models.job import Job, StageStatus
 from podcast_pipeline.pipeline import Pipeline
+from podcast_pipeline.stages.analyze import AnalyzeStage
 from podcast_pipeline.stages.base import StageResult
 from podcast_pipeline.utils.locks import JobLockAcquisitionError
 
@@ -194,3 +196,91 @@ class TestPipelineLocking:
 
         assert runner_errors == []
         assert not worker.is_alive()
+
+
+class TestAnalyzeStageThumbnailMaterialization:
+    """Tests for analyze-stage thumbnail frame extraction artifacts."""
+
+    def test_analyze_stage_materializes_thumbnail_images_for_ui(
+        self,
+        config: Config,
+        temp_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Analyze stage should persist extracted thumbnail image paths for UI preview cards."""
+
+        class _Provider:
+            name = "stub"
+            model = "stub-model"
+            supports_video = True
+
+            def is_available(self) -> bool:
+                return True
+
+            def analyze(
+                self,
+                video_path: Path,
+                transcript: dict[str, object],
+            ) -> AnalysisResult:
+                del video_path, transcript
+                return AnalysisResult.model_validate(
+                    {
+                        "content_cuts": [],
+                        "viral_clips": [],
+                        "thumbnail_frames": [
+                            {
+                                "timestamp": "00:05",
+                                "timestamp_seconds": 5.0,
+                                "visual_description": "Host smiling",
+                                "suggested_text_overlay": "Big claim",
+                                "emotion": "surprise",
+                            },
+                            {
+                                "timestamp": "00:12",
+                                "timestamp_seconds": 12.0,
+                                "visual_description": "Guest reaction",
+                                "suggested_text_overlay": "Unexpected twist",
+                                "emotion": "joy",
+                            },
+                        ],
+                        "marketing": {},
+                        "metadata": {"summary": "Summary", "topics": [], "mood": "energetic"},
+                    }
+                )
+
+        stage = AnalyzeStage(config)
+        stage.providers = [_Provider()]  # type: ignore[assignment]
+        monkeypatch.setattr(stage, "_run_research", lambda *args, **kwargs: None)
+        monkeypatch.setattr(stage, "_run_viral_signals", lambda *args, **kwargs: None)
+
+        def _fake_ffmpeg(args: list[str], timeout: int = 0, check: bool = True) -> None:
+            del timeout, check
+            output_path = Path(args[-1])
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_bytes(b"thumbnail")
+
+        monkeypatch.setattr("podcast_pipeline.stages.analyze.run_ffmpeg", _fake_ffmpeg)
+
+        job_dir = temp_dir / "jobs" / "thumbnail-job"
+        (job_dir / "analysis").mkdir(parents=True, exist_ok=True)
+        (job_dir / "analysis" / "transcript.json").write_text(json.dumps({"text": "test"}))
+        (job_dir / "intermediate").mkdir(parents=True, exist_ok=True)
+        (job_dir / "intermediate" / "proxy.mp4").write_bytes(b"proxy")
+
+        job = Job(job_id="thumbnail-job", input_file=str(job_dir / "input.mp4"))
+        result = stage.run(job, job_dir)
+
+        assert result.success is True
+
+        analysis_payload = json.loads((job_dir / "analysis" / "analysis.json").read_text())
+        frames = analysis_payload["thumbnail_frames"]
+
+        first_image_path = frames[0].get("image_path")
+        second_image_path = frames[1].get("image_path")
+        assert isinstance(first_image_path, str)
+        assert isinstance(second_image_path, str)
+        assert first_image_path.startswith("intermediate/thumbnails/thumbnail_01_")
+        assert second_image_path.startswith("intermediate/thumbnails/thumbnail_02_")
+        assert first_image_path != second_image_path
+        assert (job_dir / first_image_path).exists()
+        assert (job_dir / second_image_path).exists()

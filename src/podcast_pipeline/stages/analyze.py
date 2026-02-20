@@ -15,6 +15,7 @@ from podcast_pipeline.providers.kimi import KimiProvider
 from podcast_pipeline.research.viral_detector import ViralClipDetector
 from podcast_pipeline.research.youtube import ResearchResult, YouTubeResearcher
 from podcast_pipeline.stages.base import Stage, StageResult
+from podcast_pipeline.utils.ffmpeg import FFmpegError, run_ffmpeg
 from podcast_pipeline.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -109,6 +110,16 @@ class AnalyzeStage(Stage):
                 analysis_payload = result.model_dump()
                 metadata_payload = analysis_payload.setdefault("metadata", {})
                 metadata_payload["degraded_mode"] = degraded_mode
+                thumbnail_artifacts = self._materialize_thumbnail_frames(
+                    proxy_path=proxy_path,
+                    analysis_payload=analysis_payload,
+                    job_dir=job_dir,
+                )
+                if thumbnail_artifacts:
+                    self.logger.info(
+                        "analysis_thumbnail_frames_materialized",
+                        generated=len(thumbnail_artifacts),
+                    )
 
                 # Save analysis result
                 analysis_path = job_dir / "analysis" / "analysis.json"
@@ -180,6 +191,121 @@ class AnalyzeStage(Stage):
             success=False,
             error=f"All providers failed. Last error: {last_error}",
         )
+
+    def _materialize_thumbnail_frames(
+        self,
+        proxy_path: Path,
+        analysis_payload: dict[str, Any],
+        job_dir: Path,
+    ) -> list[str]:
+        """Extract thumbnail frame image artifacts for UI preview rendering."""
+        raw_frames = analysis_payload.get("thumbnail_frames")
+        if not isinstance(raw_frames, list) or not raw_frames:
+            return []
+
+        thumbnail_dir = job_dir / "intermediate" / "thumbnails"
+        thumbnail_dir.mkdir(parents=True, exist_ok=True)
+
+        generated: list[str] = []
+        for index, raw_frame in enumerate(raw_frames, start=1):
+            if not isinstance(raw_frame, dict):
+                continue
+
+            timestamp_seconds = self._parse_thumbnail_timestamp_seconds(
+                raw_seconds=raw_frame.get("timestamp_seconds"),
+                raw_timestamp=raw_frame.get("timestamp"),
+            )
+            if timestamp_seconds is None:
+                self.logger.warning(
+                    "analysis_thumbnail_frame_missing_timestamp",
+                    index=index,
+                )
+                continue
+
+            timestamp_millis = int(round(timestamp_seconds * 1000))
+            thumbnail_path = thumbnail_dir / f"thumbnail_{index:02d}_{timestamp_millis:08d}ms.jpg"
+            ffmpeg_args = [
+                "-ss",
+                f"{timestamp_seconds:.3f}",
+                "-i",
+                str(proxy_path),
+                "-frames:v",
+                "1",
+                "-q:v",
+                "2",
+                str(thumbnail_path),
+            ]
+
+            try:
+                run_ffmpeg(ffmpeg_args, timeout=120)
+            except (FFmpegError, FileNotFoundError) as exc:
+                self.logger.warning(
+                    "analysis_thumbnail_frame_extract_failed",
+                    index=index,
+                    timestamp_seconds=timestamp_seconds,
+                    error=str(exc),
+                )
+                continue
+
+            try:
+                if not thumbnail_path.exists() or thumbnail_path.stat().st_size == 0:
+                    self.logger.warning(
+                        "analysis_thumbnail_frame_extract_empty",
+                        index=index,
+                        path=str(thumbnail_path),
+                    )
+                    continue
+            except OSError as exc:
+                self.logger.warning(
+                    "analysis_thumbnail_frame_stat_failed",
+                    index=index,
+                    path=str(thumbnail_path),
+                    error=str(exc),
+                )
+                continue
+
+            relative_path = str(thumbnail_path.relative_to(job_dir))
+            raw_frame["image_path"] = relative_path
+            generated.append(relative_path)
+
+        return generated
+
+    def _parse_thumbnail_timestamp_seconds(
+        self,
+        raw_seconds: Any,
+        raw_timestamp: Any,
+    ) -> float | None:
+        """Parse thumbnail timestamp values to non-negative seconds."""
+        if isinstance(raw_seconds, (int, float)):
+            return max(float(raw_seconds), 0.0)
+
+        if not isinstance(raw_timestamp, str):
+            return None
+        value = raw_timestamp.strip()
+        if not value:
+            return None
+
+        parts = value.split(":")
+        if len(parts) not in {2, 3}:
+            return None
+        try:
+            numeric = [float(part) for part in parts]
+        except ValueError:
+            return None
+
+        if any(part < 0 for part in numeric):
+            return None
+
+        if len(numeric) == 2:
+            minutes, seconds = numeric
+            if seconds >= 60:
+                return None
+            return (minutes * 60.0) + seconds
+
+        hours, minutes, seconds = numeric
+        if minutes >= 60 or seconds >= 60:
+            return None
+        return (hours * 3600.0) + (minutes * 60.0) + seconds
 
     def _load_prompt_trend_context(self, job_dir: Path) -> dict[str, Any] | None:
         """Load optional trend context from prior research artifacts for prompt injection."""
