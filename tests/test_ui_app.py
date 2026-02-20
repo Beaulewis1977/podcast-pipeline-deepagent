@@ -405,3 +405,44 @@ def test_ui_app_reconcile_runtime_fetch_returns_none_on_http_error() -> None:
         payload = _fetch_runtime_diagnostics("http://127.0.0.1:8787", timeout_seconds=5.0)
 
     assert payload is None
+
+
+def test_ui_app_export_platform_options_include_video_targets() -> None:
+    """Export panel options should expose canonical audio/video/package targets."""
+    from podcast_pipeline.ui.app import _export_platform_options
+
+    options = _export_platform_options()
+    keys = [key for _label, key, _help_text in options]
+
+    assert "spotify_video" in keys
+    assert "apple_video" in keys
+    assert "apple_hls" in keys
+    assert "youtube" in keys
+
+
+def test_ui_app_export_boundary_guidance_mentions_apple_hls_artifact_only() -> None:
+    """Export guidance should explicitly document apple_hls workflow boundaries."""
+    from podcast_pipeline.ui.app import _export_boundary_guidance
+
+    guidance = _export_boundary_guidance()
+    assert "apple_hls" in guidance
+    assert "artifacts" in guidance
+    assert "no direct upload automation" in guidance
+
+
+def test_ui_app_load_normalized_export_platforms_drops_invalid_saved_keys(
+    tmp_path: Path,
+) -> None:
+    """Persisted invalid export keys should be dropped with diagnostics."""
+    from podcast_pipeline.ui.app import _load_normalized_export_platforms
+
+    review_path = tmp_path / "review" / "review_state.json"
+    _write_json(
+        review_path,
+        {"export_platforms": [" youtube ", "spotify_video", "unknown", "spotify_video"]},
+    )
+
+    normalized, invalid = _load_normalized_export_platforms(review_path)
+
+    assert normalized == ["youtube", "spotify_video"]
+    assert invalid == ["unknown"]
