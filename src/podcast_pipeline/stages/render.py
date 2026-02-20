@@ -645,6 +645,27 @@ class RenderStage(Stage):
 
         return filters
 
+    def _build_color_correction_filters(self) -> list[str]:
+        """Build optional canonical FFmpeg color correction chain."""
+        color = self.config.enhancements.color_correction
+        if not color.enabled:
+            return []
+
+        filters: list[str] = []
+        if color.normalize_enabled:
+            filters.append("normalize")
+        if color.grayworld_enabled:
+            filters.append("grayworld")
+        if color.eq_enabled:
+            filters.append(
+                "eq="
+                f"saturation={color.eq_saturation:.3f}:"
+                f"contrast={color.eq_contrast:.3f}:"
+                f"brightness={color.eq_brightness:.3f}:"
+                f"gamma={color.eq_gamma:.3f}"
+            )
+        return filters
+
     def _load_thumbnail_candidates(
         self,
         job_dir: Path,
@@ -1600,6 +1621,7 @@ class RenderStage(Stage):
             filters.append(f"scale=-2:{target_height}")
             filters.append(f"pad={target_width}:{target_height}:(ow-iw)/2:(oh-ih)/2:black")
 
+        filters.extend(self._build_color_correction_filters())
         return filters
 
     def _build_edit_plan_filter(

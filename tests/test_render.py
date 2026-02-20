@@ -920,6 +920,70 @@ class TestAudioEnhancementGuardrails:
         assert captured["input"] == prepared_input
 
 
+class TestRenderColorCorrection:
+    """Tests for optional canonical FFmpeg color correction filters."""
+
+    def test_color_correction_normalize_and_grayworld_filters_when_enabled(self) -> None:
+        """Enabled color correction should emit canonical normalize + grayworld filters."""
+        config = load_config()
+        config.enhancements.color_correction.enabled = True
+        stage = RenderStage(config)
+
+        filters = stage._build_color_correction_filters()
+
+        assert any(item.startswith("normalize") for item in filters)
+        assert any(item.startswith("grayworld") for item in filters)
+
+    def test_color_correction_eq_filter_is_optional(self) -> None:
+        """EQ filter should only be emitted when eq toggle is enabled."""
+        config = load_config()
+        config.enhancements.color_correction.enabled = True
+        config.enhancements.color_correction.eq_enabled = True
+        stage = RenderStage(config)
+
+        filters = stage._build_color_correction_filters()
+
+        assert any(item.startswith("eq=") for item in filters)
+
+    def test_color_correction_filters_wired_into_render_video(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """Render video command should include color filters when color correction is enabled."""
+        config = load_config()
+        config.enhancements.color_correction.enabled = True
+        stage = RenderStage(config)
+        input_video = tmp_path / "input.mp4"
+        input_video.write_bytes(b"video")
+        output_dir = tmp_path / "output"
+        captured: dict[str, list[str]] = {}
+
+        def _fake_ffmpeg(args: list[str]) -> None:
+            captured["args"] = args
+            output_file = Path(args[-1])
+            output_file.parent.mkdir(parents=True, exist_ok=True)
+            output_file.write_bytes(b"rendered")
+
+        monkeypatch.setattr("podcast_pipeline.stages.render.run_ffmpeg", _fake_ffmpeg)
+        monkeypatch.setattr(stage, "_validate_video_platform_compliance", lambda *_a, **_k: None)
+
+        stage._render_video(
+            output_dir=output_dir,
+            input_video=input_video,
+            platform="youtube",
+            spec=config.platforms.youtube,
+            decisions=ReviewDecisions(review_complete=True),
+            video_info={"width": 1920, "height": 1080, "duration": 30.0},
+            edit_plan=None,
+            normalize_audio=False,
+        )
+
+        args = captured["args"]
+        assert "-vf" in args
+        vf_filter = args[args.index("-vf") + 1]
+        assert "normalize" in vf_filter
+        assert "grayworld" in vf_filter
+
+
 class TestRenderStatusSemantics:
     """Tests for top-level render status and platform result details."""
 
