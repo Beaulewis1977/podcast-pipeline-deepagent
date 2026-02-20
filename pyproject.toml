@@ -54,6 +54,9 @@ dev = [
     "types-PyYAML>=6.0.0",
     "types-requests>=2.32.0",
 ]
+enhancement = [
+    "noisereduce>=3.0.3",
+]
 
 [project.scripts]
 podcast-pipeline = "podcast_pipeline.cli:app"

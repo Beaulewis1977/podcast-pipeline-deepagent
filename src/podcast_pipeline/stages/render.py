@@ -1,5 +1,6 @@
 """Render stage: Export final content for all platforms."""
 
+import importlib
 import json
 import re
 import shutil
@@ -481,6 +482,111 @@ class RenderStage(Stage):
             raise RuntimeError(f"{artifact_name} reference escapes output directory: {ref}")
         return resolved
 
+    def _create_dereverb_audio_track(self, input_video: Path, output_dir: Path) -> Path:
+        """Extract and process a temporary audio track with optional noisereduce dereverb."""
+        dereverb = self.config.enhancements.dereverb
+
+        try:
+            noisereduce_module = importlib.import_module("noisereduce")
+        except ModuleNotFoundError as e:
+            raise RuntimeError(
+                "Dereverb is enabled but optional dependency 'noisereduce' is not installed."
+            ) from e
+
+        reduce_noise = getattr(noisereduce_module, "reduce_noise", None)
+        if not callable(reduce_noise):
+            raise TypeError("Dereverb is enabled but noisereduce.reduce_noise is unavailable.")
+
+        source_wav = output_dir / "_dereverb_source.wav"
+        processed_wav = output_dir / "_dereverb_processed.wav"
+
+        run_ffmpeg(
+            [
+                "-i",
+                str(input_video),
+                "-vn",
+                "-c:a",
+                "pcm_s16le",
+                "-ar",
+                str(self.config.audio.sample_rate),
+                "-ac",
+                "2",
+                str(source_wav),
+            ]
+        )
+        self._assert_output_exists(source_wav, "dereverb source audio")
+
+        try:
+            import soundfile as sf
+
+            samples, sample_rate = sf.read(source_wav, always_2d=True)
+            if getattr(samples, "size", 0) == 0:
+                raise RuntimeError("Dereverb source audio is empty.")
+
+            denoised = reduce_noise(
+                y=samples.T,
+                sr=int(sample_rate),
+                prop_decrease=dereverb.prop_decrease,
+                stationary=dereverb.stationary,
+            )
+            processed_samples = denoised.T if hasattr(denoised, "T") else samples
+            sf.write(processed_wav, processed_samples, int(sample_rate))
+        except Exception as e:
+            raise RuntimeError(f"Dereverb processing failed: {e}") from e
+
+        self._assert_output_exists(processed_wav, "dereverb processed audio")
+        return processed_wav
+
+    def _prepare_optional_dereverb_input(
+        self,
+        *,
+        input_video: Path,
+        output_dir: Path,
+        platform: str,
+    ) -> Path:
+        """Optionally preprocess audio with noisereduce and remux with original video."""
+        dereverb = self.config.enhancements.dereverb
+        if not dereverb.enabled:
+            return input_video
+
+        try:
+            processed_audio = self._create_dereverb_audio_track(
+                input_video=input_video,
+                output_dir=output_dir,
+            )
+        except (RuntimeError, TypeError) as e:
+            if dereverb.fallback_mode == "fail":
+                raise
+            self.logger.warning(
+                "dereverb_preprocess_skipped",
+                platform=platform,
+                reason=str(e),
+            )
+            return input_video
+
+        remuxed_input = output_dir / "_dereverb_input.mkv"
+        run_ffmpeg(
+            [
+                "-i",
+                str(input_video),
+                "-i",
+                str(processed_audio),
+                "-map",
+                "0:v:0",
+                "-map",
+                "1:a:0",
+                "-c:v",
+                "copy",
+                "-c:a",
+                "aac",
+                "-b:a",
+                "256k",
+                str(remuxed_input),
+            ]
+        )
+        self._assert_output_exists(remuxed_input, f"{platform} dereverb remux input")
+        return remuxed_input
+
     def _build_audio_enhancement_filters(self) -> list[str]:
         """Build speech-focused enhancement chain for export audio tracks."""
         filters: list[str] = []
@@ -891,12 +997,17 @@ class RenderStage(Stage):
         """Render export for a specific platform."""
         output_dir = job_dir / "output" / platform
         output_dir.mkdir(parents=True, exist_ok=True)
+        prepared_input = self._prepare_optional_dereverb_input(
+            input_video=input_video,
+            output_dir=output_dir,
+            platform=platform,
+        )
 
         # HLS packaging target
         if platform == "apple_hls" or spec.container == "hls":
             return self._render_hls(
                 output_dir,
-                input_video,
+                prepared_input,
                 platform,
                 spec,
                 video_info,
@@ -906,12 +1017,14 @@ class RenderStage(Stage):
 
         # Audio-only platforms
         if spec.audio_only:
-            return self._render_audio_only(output_dir, input_video, platform, spec, normalize_audio)
+            return self._render_audio_only(
+                output_dir, prepared_input, platform, spec, normalize_audio
+            )
 
         # Video platforms
         return self._render_video(
             output_dir,
-            input_video,
+            prepared_input,
             platform,
             spec,
             decisions,

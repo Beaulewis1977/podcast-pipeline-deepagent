@@ -767,6 +767,81 @@ class TestPhase6ScopeBoundary:
         assert "eq" not in required
 
 
+class TestRenderDereverbPath:
+    """Tests for optional noisereduce-backed dereverb preprocessing."""
+
+    def test_dereverb_disabled_returns_original_input(self, tmp_path: Path) -> None:
+        """Disabled dereverb should not alter render input path."""
+        config = load_config()
+        config.enhancements.dereverb.enabled = False
+        stage = RenderStage(config)
+        input_video = tmp_path / "input.mp4"
+        input_video.write_bytes(b"video")
+        output_dir = tmp_path / "output"
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        prepared = stage._prepare_optional_dereverb_input(
+            input_video=input_video,
+            output_dir=output_dir,
+            platform="youtube",
+        )
+
+        assert prepared == input_video
+
+    def test_dereverb_noisereduce_missing_warn_skip_fallback(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """Missing noisereduce should safely skip dereverb when fallback is warn_skip."""
+        config = load_config()
+        config.enhancements.dereverb.enabled = True
+        config.enhancements.dereverb.fallback_mode = "warn_skip"
+        stage = RenderStage(config)
+        input_video = tmp_path / "input.mp4"
+        input_video.write_bytes(b"video")
+        output_dir = tmp_path / "output"
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        monkeypatch.setattr(
+            "podcast_pipeline.stages.render.importlib.import_module",
+            lambda _name: (_ for _ in ()).throw(ModuleNotFoundError("noisereduce")),
+        )
+
+        prepared = stage._prepare_optional_dereverb_input(
+            input_video=input_video,
+            output_dir=output_dir,
+            platform="youtube",
+        )
+
+        assert prepared == input_video
+
+    def test_dereverb_noisereduce_missing_fail_fallback_raises(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        """Missing noisereduce should raise when fallback policy is fail."""
+        config = load_config()
+        config.enhancements.dereverb.enabled = True
+        config.enhancements.dereverb.fallback_mode = "fail"
+        stage = RenderStage(config)
+        input_video = tmp_path / "input.mp4"
+        input_video.write_bytes(b"video")
+        output_dir = tmp_path / "output"
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        monkeypatch.setattr(
+            "podcast_pipeline.stages.render.importlib.import_module",
+            lambda _name: (_ for _ in ()).throw(ModuleNotFoundError("noisereduce")),
+        )
+
+        with pytest.raises(RuntimeError, match="noisereduce"):
+            stage._prepare_optional_dereverb_input(
+                input_video=input_video,
+                output_dir=output_dir,
+                platform="youtube",
+            )
+
+
 class TestRenderStatusSemantics:
     """Tests for top-level render status and platform result details."""
 
