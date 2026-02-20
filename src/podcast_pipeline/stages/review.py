@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from podcast_pipeline.config import Config
 from podcast_pipeline.export_targets import DEFAULT_EXPORT_PLATFORMS, normalize_export_platforms
@@ -34,8 +34,11 @@ class ReviewDecisions(BaseModel):
     # Viral clips - list of indices to export
     selected_clips: list[int] = Field(default_factory=list)
 
-    # Thumbnail - index of selected thumbnail
-    selected_thumbnail: int | None = None
+    # Thumbnails - ranked list of selected indices (primary + up to 2 alternates)
+    selected_thumbnails: list[int] = Field(default_factory=list, max_length=3)
+
+    # Legacy mirror of selected_thumbnails primary selection
+    selected_thumbnail: int | None = Field(default=None, ge=0)
 
     # Marketing copy - edited versions (platform: content)
     marketing_edits: dict[str, dict[str, Any]] = Field(default_factory=dict)
@@ -70,6 +73,55 @@ class ReviewDecisions(BaseModel):
         )
         all_platforms = valid + invalid
         return all_platforms if all_platforms else list(DEFAULT_EXPORT_PLATFORMS)
+
+    @field_validator("selected_thumbnails")
+    @classmethod
+    def validate_selected_thumbnails(cls, value: list[int]) -> list[int]:
+        """Enforce ranked thumbnail index invariants."""
+        if len(set(value)) != len(value):
+            raise ValueError("selected_thumbnails must contain unique indices")
+        if any(index < 0 for index in value):
+            raise ValueError("selected_thumbnails indices must be >= 0")
+        return value
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_thumbnail_selection(cls, value: Any) -> Any:
+        """Normalize legacy and modern thumbnail selection payloads."""
+        if not isinstance(value, dict):
+            return value
+
+        payload = dict(value)
+        raw_primary = payload.get("selected_thumbnail")
+        raw_ranked = payload.get("selected_thumbnails")
+
+        ranked_list: list[Any] | None
+        if isinstance(raw_ranked, (list, tuple)):
+            ranked_list = list(raw_ranked)
+        else:
+            ranked_list = None
+
+        # If scalar selection is present, treat it as canonical primary and merge
+        # any ranked alternates behind it for backward-compatible write paths.
+        if raw_primary is not None:
+            if ranked_list is None:
+                payload["selected_thumbnails"] = [raw_primary]
+            else:
+                payload["selected_thumbnails"] = [
+                    raw_primary,
+                    *[index for index in ranked_list if index != raw_primary],
+                ]
+            payload["selected_thumbnail"] = raw_primary
+            return payload
+
+        if ranked_list:
+            payload["selected_thumbnails"] = ranked_list
+            payload["selected_thumbnail"] = ranked_list[0]
+            return payload
+
+        payload["selected_thumbnails"] = []
+        payload["selected_thumbnail"] = None
+        return payload
 
 
 class ReviewStage(Stage):
@@ -151,6 +203,7 @@ class ReviewStage(Stage):
         if analysis_path.exists():
             analysis = json.loads(analysis_path.read_text())
             if analysis.get("thumbnail_frames"):
+                decisions.selected_thumbnails = [0]
                 decisions.selected_thumbnail = 0
 
         review_path = review_dir / "review_state.json"
@@ -196,6 +249,7 @@ def approve_review(job_dir: Path, platforms: list[str] | None = None) -> ReviewD
 
         # Select first thumbnail
         if analysis.get("thumbnail_frames"):
+            decisions.selected_thumbnails = [0]
             decisions.selected_thumbnail = 0
 
     # Set platforms
