@@ -10,6 +10,7 @@ from podcast_pipeline.models.analysis import (
     ContentCut,
     MarketingCopy,
     Metadata,
+    ThumbnailCandidate,
     ViralClip,
 )
 from podcast_pipeline.models.job import Job, StageStatus
@@ -258,3 +259,51 @@ class TestAnalysis:
             == "Spotify Video description"
         )
         assert round_tripped["marketing"]["apple_video"]["description"] == "Apple Video description"
+
+
+class TestThumbnailCandidate:
+    """Tests for thumbnail candidate schema."""
+
+    def test_thumbnailcandidate_accepts_virality_metadata(self):
+        """ThumbnailCandidate should preserve bounded virality metadata fields."""
+        candidate = ThumbnailCandidate(
+            timestamp="00:30",
+            timestamp_seconds=30.0,
+            visual_description="Host reacting with surprise",
+            suggested_text_overlay="This changed everything",
+            emotion="surprise",
+            virality_score=8.5,
+            viral_style="reaction_closeup",
+            virality_score_source="provider",
+            recommendation_signal="high contrast facial expression",
+        )
+
+        assert candidate.virality_score == pytest.approx(8.5)
+        assert candidate.viral_style == "reaction_closeup"
+        assert candidate.virality_score_source == "provider"
+        assert candidate.recommendation_signal == "high contrast facial expression"
+
+    def test_thumbnailcandidate_virality_score_out_of_bounds_rejected(self):
+        """ThumbnailCandidate virality score must stay in [0, 10]."""
+        with pytest.raises(ValidationError):
+            ThumbnailCandidate(
+                timestamp="00:30",
+                timestamp_seconds=30.0,
+                virality_score=10.5,
+            )
+
+        with pytest.raises(ValidationError):
+            ThumbnailCandidate(
+                timestamp="00:30",
+                timestamp_seconds=30.0,
+                virality_score=-0.5,
+            )
+
+    def test_thumbnailcandidate_virality_defaults_are_safe(self):
+        """ThumbnailCandidate should provide safe defaults for virality metadata."""
+        candidate = ThumbnailCandidate(timestamp="00:30", timestamp_seconds=30.0)
+
+        assert candidate.virality_score == 0.0
+        assert candidate.viral_style == ""
+        assert candidate.virality_score_source == "unspecified"
+        assert candidate.recommendation_signal == ""
