@@ -832,7 +832,12 @@ class RenderStage(Stage):
         self._assert_output_exists(output_file, f"{platform} audio export")
 
         if normalize_audio:
-            self._normalize_loudness(output_file, spec.loudness_lufs)
+            self._normalize_loudness(
+                output_file,
+                spec.loudness_lufs,
+                audio_codec=spec.audio_codec,
+                audio_bitrate=spec.audio_bitrate,
+            )
         else:
             self.logger.info("loudness_normalization_disabled", platform=platform)
         self._assert_output_exists(output_file, f"{platform} audio export")
@@ -1137,7 +1142,12 @@ class RenderStage(Stage):
         self._assert_output_exists(output_file, f"{platform} video export")
 
         if normalize_audio:
-            self._normalize_loudness(output_file, spec.loudness_lufs)
+            self._normalize_loudness(
+                output_file,
+                spec.loudness_lufs,
+                audio_codec=spec.audio_codec,
+                audio_bitrate=spec.audio_bitrate,
+            )
         else:
             self.logger.info("loudness_normalization_disabled", platform=platform)
         self._assert_output_exists(output_file, f"{platform} video export")
@@ -1523,7 +1533,14 @@ class RenderStage(Stage):
 
         return outputs
 
-    def _normalize_loudness(self, audio_file: Path, target_lufs: float) -> dict[str, Any]:
+    def _normalize_loudness(
+        self,
+        audio_file: Path,
+        target_lufs: float,
+        *,
+        audio_codec: str | None = None,
+        audio_bitrate: str | None = None,
+    ) -> dict[str, Any]:
         """Normalize audio to target LUFS with optional-dependency fallback."""
         try:
             import pyloudnorm as pyln
@@ -1592,6 +1609,10 @@ class RenderStage(Stage):
                         str(temp_audio),
                         "-c:v",
                         "copy",
+                        "-c:a",
+                        audio_codec or "aac",
+                        "-b:a",
+                        audio_bitrate or "192k",
                         "-map",
                         "0:v:0",
                         "-map",
@@ -1621,7 +1642,12 @@ class RenderStage(Stage):
                 "pyloudnorm_not_available",
                 message="Falling back to ffmpeg loudnorm",
             )
-            if self._normalize_loudness_with_ffmpeg(audio_file, target_lufs):
+            if self._normalize_loudness_with_ffmpeg(
+                audio_file,
+                target_lufs,
+                audio_codec=audio_codec,
+                audio_bitrate=audio_bitrate,
+            ):
                 return {"status": "normalized", "method": "ffmpeg_loudnorm"}
             return {
                 "status": "skipped",
@@ -1633,7 +1659,12 @@ class RenderStage(Stage):
                 "loudness_normalization_failed",
                 error=str(e),
             )
-            if self._normalize_loudness_with_ffmpeg(audio_file, target_lufs):
+            if self._normalize_loudness_with_ffmpeg(
+                audio_file,
+                target_lufs,
+                audio_codec=audio_codec,
+                audio_bitrate=audio_bitrate,
+            ):
                 return {
                     "status": "normalized",
                     "method": "ffmpeg_loudnorm",
@@ -1641,7 +1672,14 @@ class RenderStage(Stage):
                 }
             return {"status": "failed", "method": "none", "reason": str(e)}
 
-    def _normalize_loudness_with_ffmpeg(self, audio_file: Path, target_lufs: float) -> bool:
+    def _normalize_loudness_with_ffmpeg(
+        self,
+        audio_file: Path,
+        target_lufs: float,
+        *,
+        audio_codec: str | None = None,
+        audio_bitrate: str | None = None,
+    ) -> bool:
         """Fallback normalization path when pyloudnorm stack is unavailable."""
         suffix = audio_file.suffix.lower()
         temp_output = audio_file.with_name(f"{audio_file.stem}.normalized{suffix}")
@@ -1657,14 +1695,14 @@ class RenderStage(Stage):
                     "-af",
                     loudnorm_filter,
                     "-c:a",
-                    "aac",
+                    audio_codec or "aac",
                     "-b:a",
-                    "192k",
+                    audio_bitrate or "192k",
                     str(temp_output),
                 ]
             else:
-                codec = "libmp3lame" if suffix == ".mp3" else "aac"
-                bitrate = "320k" if suffix == ".mp3" else "192k"
+                codec = audio_codec or ("libmp3lame" if suffix == ".mp3" else "aac")
+                bitrate = audio_bitrate or ("320k" if suffix == ".mp3" else "192k")
                 args = [
                     "-i",
                     str(audio_file),
