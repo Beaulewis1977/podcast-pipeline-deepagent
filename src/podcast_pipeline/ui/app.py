@@ -24,6 +24,11 @@ from podcast_pipeline.clients.service_client import (
     ServiceUnavailableError,
 )
 from podcast_pipeline.config import Config, load_config
+from podcast_pipeline.export_targets import (
+    DEFAULT_EXPORT_PLATFORMS,
+    EXPORT_TARGETS,
+    normalize_export_platforms,
+)
 from podcast_pipeline.stages.review import (
     ReviewDecisions,
     approve_review,
@@ -220,6 +225,46 @@ def _save_marketing_edits_to_review_flow(
     }
     decisions.marketing_edits = normalized
     save_review_decisions(job_dir, decisions)
+
+
+def _export_platform_options() -> list[tuple[str, str, str]]:
+    """Build export option tuples from canonical platform registry."""
+    category_icon = {"audio": "🎧", "video": "🎥", "package": "📦"}
+    options: list[tuple[str, str, str]] = []
+    for target in EXPORT_TARGETS:
+        help_text = f"{category_icon.get(target.category, '📁')} {target.description}"
+        if target.artifact_only:
+            help_text = f"{help_text}; artifact packaging only"
+        options.append((target.label, target.key, help_text))
+    return options
+
+
+def _export_boundary_guidance() -> str:
+    """Return operator-facing guidance for provider-mediated publishing limits."""
+    return (
+        "`apple_hls` packages HLS artifacts only; Apple/Spotify publishing remains "
+        "provider/dashboard-mediated (no direct upload automation)."
+    )
+
+
+def _load_normalized_export_platforms(review_path: Path) -> tuple[list[str], list[str]]:
+    """Load normalized export platforms and any dropped invalid keys from review state."""
+    if not review_path.exists():
+        return list(DEFAULT_EXPORT_PLATFORMS), []
+
+    try:
+        payload = json.loads(review_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return list(DEFAULT_EXPORT_PLATFORMS), []
+
+    raw_platforms: Any
+    if isinstance(payload, dict):
+        raw_platforms = payload.get("export_platforms")
+    else:
+        raw_platforms = None
+
+    normalized, invalid = normalize_export_platforms(raw_platforms, include_invalid=True)
+    return normalized, invalid
 
 
 def _prepare_marketing_regeneration_review_state(job_dir: Path) -> None:
@@ -1556,26 +1601,14 @@ def render_export_panel(job_id: str, job_dir: Path) -> None:
     # Platform selection
     st.markdown("**Select Export Platforms:**")
 
-    available_platforms = [
-        ("YouTube", "youtube", "🎥 Video (1920x1080)"),
-        ("Spotify", "spotify", "🎧 Audio (MP3 320kbps)"),
-        ("Apple Podcasts", "apple", "🎧 Audio (AAC 128kbps)"),
-        ("TikTok", "tiktok", "📱 Vertical (1080x1920, 60s max)"),
-        ("Instagram Reels", "instagram", "📷 Vertical (1080x1920, 90s max)"),
-        ("LinkedIn", "linkedin", "💼 Square/Landscape (1080x1080)"),
-        ("Twitter/X", "twitter", "🐦 Landscape (1280x720, 2:20 max)"),
-        ("Facebook", "facebook", "📘 Landscape (1920x1080)"),
-    ]
+    available_platforms = _export_platform_options()
 
     # Load existing selections
     review_path = job_dir / "review" / "review_state.json"
-    selected_platforms = ["youtube", "spotify"]
-    if review_path.exists():
-        try:
-            decisions = ReviewDecisions.model_validate_json(review_path.read_text())
-            selected_platforms = decisions.export_platforms or ["youtube", "spotify"]
-        except Exception:
-            pass
+    selected_platforms, dropped_saved_keys = _load_normalized_export_platforms(review_path)
+    if dropped_saved_keys:
+        dropped_text = ", ".join(dropped_saved_keys)
+        st.info(f"Ignored unsupported saved export targets: {dropped_text}")
 
     # Grid of platform toggles
     cols = st.columns(4)
@@ -1591,6 +1624,7 @@ def render_export_panel(job_id: str, job_dir: Path) -> None:
             ):
                 new_selected.append(key)
 
+    st.caption(_export_boundary_guidance())
     st.divider()
 
     # Quality settings
@@ -1635,13 +1669,17 @@ def render_export_panel(job_id: str, job_dir: Path) -> None:
         if not review_complete:
             if st.button("✅ Approve & Export", key="approve_export"):
                 # Save platform selections
-                update_export_platforms(job_dir, new_selected)
+                normalized_platforms, dropped = update_export_platforms(job_dir, new_selected)
+                if dropped:
+                    st.warning(f"Unsupported platform keys were ignored: {', '.join(dropped)}")
                 # Mark review complete
-                approve_review(job_dir, new_selected)
+                approve_review(job_dir, normalized_platforms)
                 # Run render via service
                 run_stage_via_service(job_id, "render", quality_controls=quality_controls)
         elif st.button("🎬 Export Now", key="export_now"):
-            update_export_platforms(job_dir, new_selected)
+            _, dropped = update_export_platforms(job_dir, new_selected)
+            if dropped:
+                st.warning(f"Unsupported platform keys were ignored: {', '.join(dropped)}")
             run_stage_via_service(job_id, "render", quality_controls=quality_controls)
 
     with col2:
@@ -1768,8 +1806,8 @@ def update_thumbnail_selection(job_dir: Path, thumbnail_idx: int) -> None:
     review_path.write_text(decisions.model_dump_json(indent=2))
 
 
-def update_export_platforms(job_dir: Path, platforms: list[str]) -> None:
-    """Update selected export platforms."""
+def update_export_platforms(job_dir: Path, platforms: list[str]) -> tuple[list[str], list[str]]:
+    """Update selected export platforms with canonical normalization."""
     review_dir = job_dir / "review"
     review_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1780,8 +1818,10 @@ def update_export_platforms(job_dir: Path, platforms: list[str]) -> None:
     else:
         decisions = ReviewDecisions()
 
-    decisions.export_platforms = platforms
+    normalized, invalid = normalize_export_platforms(platforms, include_invalid=True)
+    decisions.export_platforms = normalized
     review_path.write_text(decisions.model_dump_json(indent=2))
+    return normalized, invalid
 
 
 # ============================================================================
