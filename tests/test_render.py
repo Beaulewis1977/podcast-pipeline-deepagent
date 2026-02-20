@@ -558,6 +558,60 @@ class TestMarketingDocGeneration:
         assert "TikTok" in content
         assert "Test Title 1" in content
 
+    def test_marketing_doc_spotify_video_apple_video_instagram_facebook_order(
+        self, tmp_path: Path
+    ) -> None:
+        """Marketing doc should include all supported marketing platforms in stable order."""
+        config = load_config()
+        stage = RenderStage(config)
+
+        analysis_dir = tmp_path / "analysis"
+        analysis_dir.mkdir()
+
+        analysis_data = {
+            "marketing": {
+                "youtube": {"description": "YT"},
+                "spotify": {"description": "Spotify audio"},
+                "spotify_video": {"description": "Spotify video"},
+                "apple": {"description": "Apple audio"},
+                "apple_video": {"description": "Apple video"},
+                "tiktok": {"description": "TikTok"},
+                "instagram": {"description": "Instagram"},
+                "linkedin": {"description": "LinkedIn"},
+                "twitter": {"description": "Twitter"},
+                "facebook": {"description": "Facebook"},
+            },
+            "metadata": {
+                "summary": "Episode summary",
+                "topics": ["growth"],
+                "mood": "energetic",
+            },
+        }
+        (analysis_dir / "analysis.json").write_text(json.dumps(analysis_data))
+
+        stage._generate_marketing_doc(tmp_path)
+
+        content = (tmp_path / "output" / "marketing" / "copy.md").read_text()
+        expected_sections = [
+            "## YouTube",
+            "## Spotify",
+            "## Spotify Video",
+            "## Apple Podcasts",
+            "## Apple Podcasts Video",
+            "## TikTok",
+            "## Instagram Reels",
+            "## LinkedIn",
+            "## Twitter/X",
+            "## Facebook",
+        ]
+
+        previous_index = -1
+        for section in expected_sections:
+            assert section in content
+            current_index = content.index(section)
+            assert current_index > previous_index
+            previous_index = current_index
+
 
 class TestRenderEnhancementAndThumbnailOutputs:
     """Tests for enhancement and thumbnail artifact behavior."""

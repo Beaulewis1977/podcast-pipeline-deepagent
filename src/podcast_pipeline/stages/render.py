@@ -2062,7 +2062,9 @@ class RenderStage(Stage):
         platform_sections = [
             ("YouTube", "youtube"),
             ("Spotify", "spotify"),
+            ("Spotify Video", "spotify_video"),
             ("Apple Podcasts", "apple"),
+            ("Apple Podcasts Video", "apple_video"),
             ("TikTok", "tiktok"),
             ("Instagram Reels", "instagram"),
             ("LinkedIn", "linkedin"),
