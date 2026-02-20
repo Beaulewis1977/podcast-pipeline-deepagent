@@ -68,6 +68,38 @@ def test_ui_app_preview_metadata_duration_drives_slider(tmp_path: Path) -> None:
     assert mock_st.slider.call_args.kwargs["max_value"] == 47.5
 
 
+def test_ui_app_normalize_ranked_thumbnail_selection_prefers_primary_and_dedupes() -> None:
+    """Ranked selection normalizer should keep primary first, dedupe, and cap at 3."""
+    from podcast_pipeline.ui.app import _normalize_ranked_thumbnail_selection
+
+    normalized = _normalize_ranked_thumbnail_selection([2, 3, 2, 4, 5], primary_thumbnail=1)
+
+    assert normalized == [1, 2, 3]
+
+
+def test_ui_app_toggle_ranked_thumbnail_selection_handles_add_remove_and_cap() -> None:
+    """Ranked selector toggle should append/remove deterministically and cap at 3 entries."""
+    from podcast_pipeline.ui.app import _toggle_ranked_thumbnail_selection
+
+    assert _toggle_ranked_thumbnail_selection([0], 2) == [0, 2]
+    assert _toggle_ranked_thumbnail_selection([0, 2], 2) == [0]
+    assert _toggle_ranked_thumbnail_selection([0, 1, 2], 3) == [0, 1, 2]
+
+
+def test_ui_app_thumbnail_image_path_resolves_relative_artifact(tmp_path: Path) -> None:
+    """Thumbnail path helper should resolve relative analysis image paths under job dir."""
+    from podcast_pipeline.ui.app import _thumbnail_image_path
+
+    resolved = _thumbnail_image_path(
+        tmp_path,
+        {"image_path": "intermediate/thumbnails/thumbnail_01_00005000ms.jpg"},
+    )
+    assert resolved == tmp_path / "intermediate" / "thumbnails" / "thumbnail_01_00005000ms.jpg"
+
+    assert _thumbnail_image_path(tmp_path, {"image_path": ""}) is None
+    assert _thumbnail_image_path(tmp_path, {}) is None
+
+
 def test_ui_app_timeline_reads_metadata_for_duration_caption(tmp_path: Path) -> None:
     """Timeline should surface source duration from ingest metadata."""
     from podcast_pipeline.ui.app import render_timeline_editor

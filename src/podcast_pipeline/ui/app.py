@@ -1428,18 +1428,15 @@ def render_thumbnail_selector(job_dir: Path) -> None:
         st.info("No thumbnail candidates found.")
         return
 
-    # Load current selection
-    review_path = job_dir / "review" / "review_state.json"
-    selected_idx = 0
-    if review_path.exists():
-        try:
-            decisions = ReviewDecisions.model_validate_json(review_path.read_text())
-            selected_idx = decisions.selected_thumbnail or 0
-        except Exception:
-            pass
+    decisions = _load_review_decisions(job_dir)
+    selected_thumbnails = _normalize_ranked_thumbnail_selection(
+        decisions.selected_thumbnails,
+        decisions.selected_thumbnail,
+    )
+    rank_by_index = {index: rank for rank, index in enumerate(selected_thumbnails, start=1)}
 
-    # Display thumbnail grid
-    st.markdown("**Select a thumbnail frame:**")
+    st.markdown("**Select up to 3 thumbnail frames (ranked):**")
+    st.caption("Selection order is preserved. Rank #1 is the primary thumbnail.")
 
     cols_per_row = 3
     for row_start in range(0, len(thumbnails), cols_per_row):
@@ -1449,29 +1446,51 @@ def render_thumbnail_selector(job_dir: Path) -> None:
         ):
             thumb = thumbnails[thumb_idx]
             with cols[col_idx]:
-                # Thumbnail card
-                is_selected = thumb_idx == selected_idx
-                border_style = (
-                    "border: 3px solid #00ff00;" if is_selected else "border: 1px solid #ccc;"
-                )
+                rank = rank_by_index.get(thumb_idx)
+                if rank is None:
+                    st.caption("Not selected")
+                elif rank == 1:
+                    st.caption("Selected #1 (Primary)")
+                else:
+                    st.caption(f"Selected #{rank} (Alternate)")
 
-                st.markdown(
-                    f"""
-                    <div style="padding: 10px; {border_style} border-radius: 8px; margin: 5px;">
-                        <p><strong>⏱️ {thumb.get("timestamp", "N/A")}</strong></p>
-                        <p style="font-size: 0.9em;">{thumb.get("visual_description", "")[:100]}...</p>
-                        <p style="font-size: 0.8em; color: #666;">💬 "{thumb.get("suggested_text_overlay", "")}"</p>
-                        <p style="font-size: 0.8em;">😊 {thumb.get("emotion", "neutral")}</p>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
+                image_path = _thumbnail_image_path(job_dir, thumb)
+                if image_path is not None and image_path.exists():
+                    try:
+                        st.image(str(image_path), width="stretch")
+                    except TypeError:
+                        # Streamlit versions before width="stretch" support this fallback path.
+                        st.image(str(image_path), use_container_width=True)
+                else:
+                    st.caption("Preview image unavailable for this candidate.")
 
-                if st.button(
-                    "✓ Select" if not is_selected else "✓ Selected",
-                    key=f"thumb_select_{thumb_idx}",
-                    disabled=is_selected,
-                ):
+                timestamp_label = str(thumb.get("timestamp", "N/A"))
+                visual_description = str(thumb.get("visual_description", "")).strip()
+                overlay_text = str(thumb.get("suggested_text_overlay", "")).strip()
+                emotion = str(thumb.get("emotion", "neutral")).strip() or "neutral"
+                recommendation_signal = str(thumb.get("recommendation_signal", "")).strip()
+                virality_score = thumb.get("virality_score")
+
+                st.caption(f"⏱️ {timestamp_label}")
+                if visual_description:
+                    st.caption(visual_description[:120])
+                if overlay_text:
+                    st.caption(f'💬 "{overlay_text[:120]}"')
+                if isinstance(virality_score, (int, float)):
+                    st.caption(f"🔥 Virality: {float(virality_score):.1f}/10")
+                if recommendation_signal:
+                    st.caption(f"⭐ Signal: {recommendation_signal}")
+                st.caption(f"😊 {emotion}")
+
+                can_add_more = len(selected_thumbnails) < 3
+                if rank is not None:
+                    button_label = f"Remove #{rank}"
+                    button_disabled = False
+                else:
+                    button_label = f"Add as #{len(selected_thumbnails) + 1}" if can_add_more else "Max 3"
+                    button_disabled = not can_add_more
+
+                if st.button(button_label, key=f"thumb_select_{thumb_idx}", disabled=button_disabled):
                     update_thumbnail_selection(job_dir, thumb_idx)
                     st.rerun()
 
@@ -1903,7 +1922,10 @@ def save_review_decisions(job_dir: Path, decisions: ReviewDecisions | None) -> N
 
 
 def update_thumbnail_selection(job_dir: Path, thumbnail_idx: int) -> None:
-    """Update selected thumbnail in review state."""
+    """Toggle thumbnail selection while preserving ranked order and compatibility mirror."""
+    if thumbnail_idx < 0:
+        return
+
     review_dir = job_dir / "review"
     review_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1914,8 +1936,51 @@ def update_thumbnail_selection(job_dir: Path, thumbnail_idx: int) -> None:
     else:
         decisions = ReviewDecisions()
 
-    decisions.selected_thumbnail = thumbnail_idx
+    current_ranked = _normalize_ranked_thumbnail_selection(
+        decisions.selected_thumbnails,
+        decisions.selected_thumbnail,
+    )
+    updated_ranked = _toggle_ranked_thumbnail_selection(current_ranked, thumbnail_idx)
+    decisions.selected_thumbnails = updated_ranked
+    decisions.selected_thumbnail = updated_ranked[0] if updated_ranked else None
     review_path.write_text(decisions.model_dump_json(indent=2))
+
+
+def _normalize_ranked_thumbnail_selection(
+    selected_thumbnails: list[int] | None,
+    primary_thumbnail: int | None,
+) -> list[int]:
+    """Normalize ranked thumbnail selections to unique 0-based indices capped at 3."""
+    normalized: list[int] = []
+    if isinstance(primary_thumbnail, int) and primary_thumbnail >= 0:
+        normalized.append(primary_thumbnail)
+
+    for index in selected_thumbnails or []:
+        if not isinstance(index, int) or index < 0 or index in normalized:
+            continue
+        normalized.append(index)
+        if len(normalized) >= 3:
+            break
+
+    return normalized
+
+
+def _toggle_ranked_thumbnail_selection(current: list[int], thumbnail_idx: int) -> list[int]:
+    """Toggle one thumbnail index in a ranked list with a max of three entries."""
+    deduped = _normalize_ranked_thumbnail_selection(current, None)
+    if thumbnail_idx in deduped:
+        return [index for index in deduped if index != thumbnail_idx]
+    if len(deduped) >= 3:
+        return deduped
+    return [*deduped, thumbnail_idx]
+
+
+def _thumbnail_image_path(job_dir: Path, thumbnail: dict[str, Any]) -> Path | None:
+    """Resolve thumbnail preview image path from analysis payload candidate metadata."""
+    raw_path = thumbnail.get("image_path")
+    if not isinstance(raw_path, str) or not raw_path.strip():
+        return None
+    return job_dir / raw_path
 
 
 def update_export_platforms(job_dir: Path, platforms: list[str]) -> tuple[list[str], list[str]]:
