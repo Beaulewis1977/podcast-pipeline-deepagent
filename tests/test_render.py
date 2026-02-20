@@ -311,6 +311,72 @@ class TestPlatformSpecs:
         assert "keyint_min" in message
 
 
+class TestEnhancementConfig:
+    """Tests for typed Phase 6 enhancement config behavior."""
+
+    def test_config_deesser_defaults_enable_conservative_baseline(self) -> None:
+        """De-esser should be on by default with conservative tuning."""
+        config = load_config()
+
+        assert config.enhancements.deesser.enabled is True
+        assert config.enhancements.deesser.intensity == pytest.approx(0.2)
+        assert config.enhancements.deesser.max_deessing == pytest.approx(0.5)
+        assert config.enhancements.deesser.frequency == pytest.approx(0.5)
+        assert config.enhancements.deesser.output_mode == "o"
+        assert config.enhancements.deesser.click_safety_enabled is True
+
+    def test_config_dereverb_defaults_disabled_with_safe_fallback(self) -> None:
+        """Dereverb should remain opt-in with safe missing-dependency behavior."""
+        config = load_config()
+
+        assert config.enhancements.dereverb.enabled is False
+        assert config.enhancements.dereverb.fallback_mode == "warn_skip"
+        assert config.enhancements.dereverb.prop_decrease == pytest.approx(0.85)
+        assert config.enhancements.dereverb.stationary is False
+
+    def test_config_color_correction_defaults_disabled(self) -> None:
+        """Color correction should be explicit opt-in."""
+        config = load_config()
+
+        assert config.enhancements.color_correction.enabled is False
+        assert config.enhancements.color_correction.normalize_enabled is True
+        assert config.enhancements.color_correction.grayworld_enabled is True
+        assert config.enhancements.color_correction.eq_enabled is False
+
+    def test_config_deesser_bounds_validation(self, tmp_path: Path) -> None:
+        """Out-of-range deesser tuning values should fail at config load."""
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "\n".join(
+                [
+                    "enhancements:",
+                    "  deesser:",
+                    "    intensity: 1.4",
+                ]
+            )
+        )
+
+        with pytest.raises(ValueError, match=r"deesser|intensity"):
+            load_config(config_path)
+
+    def test_config_color_correction_eq_bounds_validation(self, tmp_path: Path) -> None:
+        """EQ tuning should reject values outside conservative bounds."""
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "\n".join(
+                [
+                    "enhancements:",
+                    "  color_correction:",
+                    "    eq_enabled: true",
+                    "    eq_saturation: 4.5",
+                ]
+            )
+        )
+
+        with pytest.raises(ValueError, match=r"color_correction|eq_saturation"):
+            load_config(config_path)
+
+
 class TestRenderStage:
     """Tests for RenderStage class."""
 
