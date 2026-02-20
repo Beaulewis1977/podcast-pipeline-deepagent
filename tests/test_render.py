@@ -612,6 +612,46 @@ class TestMarketingDocGeneration:
             assert current_index > previous_index
             previous_index = current_index
 
+    def test_marketing_doc_full_platform_headers_present_with_partial_payload(
+        self, tmp_path: Path
+    ) -> None:
+        """Marketing doc should keep full platform headers even when payload is sparse."""
+        stage = RenderStage(load_config())
+
+        analysis_dir = tmp_path / "analysis"
+        analysis_dir.mkdir()
+        (analysis_dir / "analysis.json").write_text(
+            json.dumps(
+                {
+                    "marketing": {
+                        "youtube": {
+                            "titles": ["Hook title"],
+                            "description": "Primary long-form description",
+                            "hashtags": ["#podcast"],
+                        }
+                    },
+                    "metadata": {"summary": "Sparse payload", "topics": ["topic"], "mood": "focused"},
+                }
+            )
+        )
+
+        stage._generate_marketing_doc(tmp_path)
+
+        content = (tmp_path / "output" / "marketing" / "copy.md").read_text()
+        for section in (
+            "## YouTube",
+            "## Spotify",
+            "## Spotify Video",
+            "## Apple Podcasts",
+            "## Apple Podcasts Video",
+            "## TikTok",
+            "## Instagram Reels",
+            "## LinkedIn",
+            "## Twitter/X",
+            "## Facebook",
+        ):
+            assert section in content
+
 
 class TestRenderEnhancementAndThumbnailOutputs:
     """Tests for enhancement and thumbnail artifact behavior."""

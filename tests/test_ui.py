@@ -156,3 +156,38 @@ class TestMarketingEditorPlatformSpecs:
         assert spec_by_key["apple_video"].max_description_chars == 4000
         assert spec_by_key["tiktok"].max_description_chars == 150
         assert spec_by_key["twitter"].max_description_chars == 280
+
+
+class TestMarketingReviewOverlay:
+    """Tests for marketing overlay behavior used by editor flows."""
+
+    def test_marketing_overlay_preserves_full_platform_edits_and_metadata(self) -> None:
+        """Review edits should merge into base marketing without dropping video variants."""
+        from podcast_pipeline.stages.review import ReviewDecisions
+        from podcast_pipeline.ui.app import _apply_marketing_review_edits
+
+        analysis = {
+            "marketing": {
+                "youtube": {"description": "base-youtube"},
+                "spotify_video": {"description": "base-spotify-video"},
+                "apple_video": {"description": "base-apple-video"},
+            },
+            "metadata": {"summary": "base-summary", "topics": ["base-topic"], "mood": "calm"},
+        }
+        decisions = ReviewDecisions(
+            marketing_edits={
+                "spotify_video": {"description": "edited-spotify-video"},
+                "apple_video": {"description": "edited-apple-video"},
+                "facebook": {"description": "new-facebook-copy"},
+                "__metadata__": {"summary": "edited-summary", "topics": ["trend-a", "trend-b"]},
+            }
+        )
+
+        marketing, metadata = _apply_marketing_review_edits(analysis, decisions)
+
+        assert marketing["youtube"]["description"] == "base-youtube"
+        assert marketing["spotify_video"]["description"] == "edited-spotify-video"
+        assert marketing["apple_video"]["description"] == "edited-apple-video"
+        assert marketing["facebook"]["description"] == "new-facebook-copy"
+        assert metadata["summary"] == "edited-summary"
+        assert metadata["topics"] == ["trend-a", "trend-b"]
