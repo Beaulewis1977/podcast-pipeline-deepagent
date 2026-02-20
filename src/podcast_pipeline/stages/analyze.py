@@ -222,7 +222,7 @@ class AnalyzeStage(Stage):
                 )
                 continue
 
-            timestamp_millis = int(round(timestamp_seconds * 1000))
+            timestamp_millis = round(timestamp_seconds * 1000)
             thumbnail_path = thumbnail_dir / f"thumbnail_{index:02d}_{timestamp_millis:08d}ms.jpg"
             ffmpeg_args = [
                 "-ss",
@@ -276,36 +276,31 @@ class AnalyzeStage(Stage):
         raw_timestamp: Any,
     ) -> float | None:
         """Parse thumbnail timestamp values to non-negative seconds."""
+        parsed_seconds: float | None = None
         if isinstance(raw_seconds, (int, float)):
-            return max(float(raw_seconds), 0.0)
+            parsed_seconds = max(float(raw_seconds), 0.0)
 
-        if not isinstance(raw_timestamp, str):
-            return None
-        value = raw_timestamp.strip()
-        if not value:
-            return None
+        if parsed_seconds is None and isinstance(raw_timestamp, str):
+            value = raw_timestamp.strip()
+            if value:
+                parts = value.split(":")
+                if len(parts) in {2, 3}:
+                    try:
+                        numeric = [float(part) for part in parts]
+                    except ValueError:
+                        numeric = []
 
-        parts = value.split(":")
-        if len(parts) not in {2, 3}:
-            return None
-        try:
-            numeric = [float(part) for part in parts]
-        except ValueError:
-            return None
+                    if numeric and all(part >= 0 for part in numeric):
+                        if len(numeric) == 2:
+                            minutes, seconds = numeric
+                            if seconds < 60:
+                                parsed_seconds = (minutes * 60.0) + seconds
+                        else:
+                            hours, minutes, seconds = numeric
+                            if minutes < 60 and seconds < 60:
+                                parsed_seconds = (hours * 3600.0) + (minutes * 60.0) + seconds
 
-        if any(part < 0 for part in numeric):
-            return None
-
-        if len(numeric) == 2:
-            minutes, seconds = numeric
-            if seconds >= 60:
-                return None
-            return (minutes * 60.0) + seconds
-
-        hours, minutes, seconds = numeric
-        if minutes >= 60 or seconds >= 60:
-            return None
-        return (hours * 3600.0) + (minutes * 60.0) + seconds
+        return parsed_seconds
 
     def _load_prompt_trend_context(self, job_dir: Path) -> dict[str, Any] | None:
         """Load optional trend context from prior research artifacts for prompt injection."""

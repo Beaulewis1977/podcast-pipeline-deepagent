@@ -1115,12 +1115,12 @@ class RenderStage(Stage):
 
         if source_ratio > target_ratio:
             # Wider source: crop left/right.
-            crop_width = int(round(source_height * target_ratio))
+            crop_width = round(source_height * target_ratio)
             x_offset = max((source_width - crop_width) // 2, 0)
             return f"crop={crop_width}:{source_height}:{x_offset}:0,scale={target_width}:{target_height}"
 
         # Taller source: crop top/bottom.
-        crop_height = int(round(source_width / target_ratio))
+        crop_height = round(source_width / target_ratio)
         y_offset = max((source_height - crop_height) // 2, 0)
         return f"crop={source_width}:{crop_height}:0:{y_offset},scale={target_width}:{target_height}"
 
