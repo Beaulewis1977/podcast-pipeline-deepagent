@@ -970,6 +970,20 @@ class TestThumbnailCompliance:
         assert result["platform_results"]["apple_video"]["status"] == "failed"
         assert "thumbnail dimensions mismatch" in result["platform_results"]["apple_video"]["issues"][0]
 
+    def test_thumbnail_compliance_fail_fast_when_required_assets_missing(self, tmp_path: Path) -> None:
+        """Selected target requiring thumbnails should fail when no generated assets exist."""
+        stage = RenderStage(load_config())
+
+        result = stage._enforce_thumbnail_target_compliance(
+            job_dir=tmp_path,
+            selected_platforms=["youtube"],
+            thumbnail_result={"status": "skipped", "thumbnail_paths": []},
+        )
+
+        assert result["status"] == "failed"
+        assert "no generated thumbnail assets" in result["error"]
+        assert result["platform_results"]["youtube"]["status"] == "failed"
+
 
 class TestPhase6ScopeBoundary:
     """Tests that lock enhancement-only behavior for Phase 6."""

@@ -249,6 +249,9 @@ curl -X POST http://127.0.0.1:8787/jobs/<job-id>/run \
 - Marketing document generation
 - Applies run-scoped quality controls, emits per-platform status map, and verifies non-empty outputs
 - Generates concrete thumbnail artifacts and `output/thumbnails/manifest.json`
+- Thumbnail MVP uses a **single primary** plus up to two ranked alternates from one shared selection set
+- Per-target thumbnail compliance is enforced for selected `youtube`, `spotify_video`, and `apple_video` exports before success is reported
+- Explicit **per-platform thumbnail assignment** is **deferred** beyond MVP scope
 
 ## 📦 Job Output Layout
 
