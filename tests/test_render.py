@@ -842,6 +842,84 @@ class TestRenderDereverbPath:
             )
 
 
+class TestAudioEnhancementGuardrails:
+    """Regression tests for audio enhancement behavior across platform paths."""
+
+    def test_audio_enhancement_ordering_keeps_deesser_before_limiter(self) -> None:
+        """De-esser should remain upstream of compressor/limiter in enhancement ordering."""
+        stage = RenderStage(load_config())
+
+        filters = stage._build_audio_enhancement_filters()
+        deesser_idx = next(i for i, item in enumerate(filters) if item.startswith("deesser="))
+        compressor_idx = next(
+            i for i, item in enumerate(filters) if item.startswith("acompressor=")
+        )
+        limiter_idx = next(i for i, item in enumerate(filters) if item.startswith("alimiter="))
+
+        assert deesser_idx < compressor_idx < limiter_idx
+
+    def test_audio_enhancement_no_op_when_optional_paths_disabled(self) -> None:
+        """Optional enhancement toggles should not inject phase-6-only filters when disabled."""
+        config = load_config()
+        config.audio.noise_reduction = "off"
+        config.enhancements.deesser.enabled = False
+        config.enhancements.deesser.click_safety_enabled = False
+        stage = RenderStage(config)
+
+        filters = stage._build_audio_enhancement_filters()
+
+        assert all("afftdn" not in item for item in filters)
+        assert all("deesser" not in item for item in filters)
+        assert all("adeclick" not in item for item in filters)
+        assert any(item.startswith("acompressor=") for item in filters)
+        assert any(item.startswith("alimiter=") for item in filters)
+
+    def test_audio_enhancement_platform_safe_uses_prepared_input_path(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        """Render platform dispatch should consume dereverb-prepared input when provided."""
+        config = load_config()
+        stage = RenderStage(config)
+        prepared_input = tmp_path / "prepared.mkv"
+        prepared_input.write_bytes(b"prepared")
+        input_video = tmp_path / "input.mp4"
+        input_video.write_bytes(b"raw")
+        captured: dict[str, Path] = {}
+
+        monkeypatch.setattr(
+            stage,
+            "_prepare_optional_dereverb_input",
+            lambda **_kwargs: prepared_input,
+        )
+
+        def _fake_render_video(
+            _output_dir: Path,
+            render_input_video: Path,
+            *_args,
+            **_kwargs,
+        ) -> list[str]:
+            captured["input"] = render_input_video
+            return ["output/youtube/final.mp4"]
+
+        monkeypatch.setattr(stage, "_render_video", _fake_render_video)
+
+        outputs = stage._render_platform(
+            job_dir=tmp_path,
+            input_video=input_video,
+            platform="youtube",
+            spec=config.platforms.youtube,
+            decisions=ReviewDecisions(review_complete=True),
+            video_info={"width": 1920, "height": 1080, "duration": 30.0},
+            edit_plan=None,
+            normalize_audio=False,
+        )
+
+        assert outputs == ["output/youtube/final.mp4"]
+        assert captured["input"] == prepared_input
+
+
 class TestRenderStatusSemantics:
     """Tests for top-level render status and platform result details."""
 
