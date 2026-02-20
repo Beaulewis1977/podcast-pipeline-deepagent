@@ -1,8 +1,8 @@
 # Project State: Podcast Pipeline
 
 **Last updated:** 2026-02-20
-**Current phase:** Phase 6.1 in progress (plan 06.1-03 complete)
-**Overall progress:** 95.1% (39/41 plans complete)
+**Current phase:** Phase 6.1 in progress (plan 06.1-04 complete)
+**Overall progress:** 97.6% (40/41 plans complete)
 
 ## Project Reference
 
@@ -15,11 +15,11 @@ See: `.planning/PROJECT.md`
 
 ```text
 Phase:    6.1 in progress
-Plan:     3/5 complete in Phase 6.1; 39 completed overall
-Status:   Wave 2 execution continued
-Last activity: 2026-02-20 - Completed 06.1-03 thumbnail virality contract + ranked review-state selection compatibility
+Plan:     4/5 complete in Phase 6.1; 40 completed overall
+Status:   Wave 3 execution complete
+Last activity: 2026-02-20 - Completed 06.1-04 analyze thumbnail materialization + visual ranked selector + persistence regressions
 
-Progress: [████████████████████████░] 95.1% (39/41 plans complete)
+Progress: [████████████████████████░] 97.6% (40/41 plans complete)
 ```
 
 **Next Phase:** Phase 6.1 - Video Marketing Copy Parity + Thumbnail Visual Selection MVP
@@ -35,13 +35,13 @@ Progress: [███████████████████████
 | 5 | Video Podcast Platforms | Complete (verified) | 3/3 | 100% |
 | 5.1 | Streamlit Video Platform UI | Complete (verified) | 3/3 | 100% |
 | 6 | Audio/Video Enhancement & Podcast Video Platform | Complete (verified) | 3/3 | 100% |
-| 6.1 | Video Marketing Copy Parity + Thumbnail Visual Selection MVP | In progress | 3/5 | 60% |
+| 6.1 | Video Marketing Copy Parity + Thumbnail Visual Selection MVP | In progress | 4/5 | 80% |
 
 ## Performance Metrics
 
 | Metric | Value |
 |--------|-------|
-| Plans completed | 39/41 |
+| Plans completed | 40/41 |
 | Requirements done | 35/83 (21 partial) |
 | Phases complete | 6/7 |
 | Estimated completion | In progress |
@@ -129,6 +129,9 @@ Progress: [███████████████████████
 | ThumbnailCandidate now carries bounded virality metadata fields with safe defaults | Preserves backward compatibility while exposing explicit ranking/recommendation context for thumbnail selection | 2026-02-20 |
 | Provider thumbnail prompt contract now requires virality metadata and at least one recommendation signal | Prevents underspecified thumbnail candidates and strengthens selection evidence quality | 2026-02-20 |
 | Review decisions now support ranked selected_thumbnails with selected_thumbnail legacy mirroring | Enables 1..3 ordered thumbnail picks while keeping old review_state payloads valid | 2026-02-20 |
+| Analyze stage now materializes thumbnail preview images and stores relative image_path metadata in analysis payloads | Enables Streamlit review UI to render visual thumbnails without on-demand extraction cost | 2026-02-20 |
+| Streamlit thumbnail selector now uses ranked toggle state (max 3) with explicit primary/alternate semantics | Makes operator thumbnail intent deterministic while preserving ranked order across reruns | 2026-02-20 |
+| Ranked thumbnail persistence normalizes selected_thumbnails and mirrors rank #1 into selected_thumbnail | Maintains backward compatibility for legacy scalar consumers while enabling multi-select UX | 2026-02-20 |
 
 ### Roadmap Evolution
 
@@ -164,6 +167,7 @@ Progress: [███████████████████████
 - Phase 6.1 execution started: completed 06.1-01 full-platform marketing schema/prompt contract lock with trend-context prompt wiring regressions
 - Phase 6.1 execution continued: completed 06.1-02 full-platform marketing render/UI parity with trend-visible editing regressions
 - Phase 6.1 execution continued: completed 06.1-03 thumbnail virality schema/prompt contract + ranked review-state selection compatibility
+- Phase 6.1 execution continued: completed 06.1-04 analyze-stage thumbnail frame materialization + Streamlit visual ranked selector persistence
 
 ### Technical Notes
 
@@ -227,16 +231,17 @@ Progress: [███████████████████████
 - 2026-02-20: Completed 06.1-01-PLAN.md (full marketing platform matrix in model + provider prompt contract with viral-professional directives + analyze trend-context artifact injection + regressions)
 - 2026-02-20: Completed 06.1-02-PLAN.md (render marketing doc full-matrix parity, canonical Streamlit marketing editor platform specs/limits, and trend-visible regression coverage across render/UI helpers)
 - 2026-02-20: Completed 06.1-03-PLAN.md (thumbnail virality metadata contract in models/providers plus ranked 1..3 review-state selection with legacy selected_thumbnail mirroring)
+- 2026-02-20: Completed 06.1-04-PLAN.md (analyze-stage thumbnail frame materialization, Streamlit visual ranked selector UX, and deterministic selected_thumbnail(s) persistence regressions)
 
 ## Session Continuity
 
 ### Last session
 
-2026-02-20 21:57 UTC — Completed `06.1-03-PLAN.md` with task-level atomic commits for thumbnail virality contracts and ranked selection compatibility.
+2026-02-20 22:10 UTC — Completed `06.1-04-PLAN.md` with task-level commits for analyze-stage thumbnail assets and Streamlit ranked visual selection persistence.
 
 ### Stopped at
 
-Completed `06.1-03-PLAN.md`; next action is execution of `06.1-04-PLAN.md`.
+Completed `06.1-04-PLAN.md`; next action is execution of `06.1-05-PLAN.md`.
 
 ### Resume file
 
