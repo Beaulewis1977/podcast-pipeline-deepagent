@@ -30,6 +30,48 @@ def test_normalize_export_platforms_trims_dedupes_and_filters() -> None:
     assert invalid == ["unknown"]
 
 
+def test_normalize_export_platforms_empty_input_uses_defaults() -> None:
+    """Missing platform input should resolve to stable default targets."""
+    assert normalize_export_platforms(None) == list(DEFAULT_EXPORT_PLATFORMS)
+    assert normalize_export_platforms([]) == list(DEFAULT_EXPORT_PLATFORMS)
+
+
+def test_normalize_export_platforms_invalid_only_falls_back_to_defaults() -> None:
+    """Invalid-only inputs should not leak unsupported keys into review artifacts."""
+    normalized, invalid = normalize_export_platforms(
+        ["invalid", "also-invalid", "INVALID"],
+        include_invalid=True,
+    )
+
+    assert normalized == list(DEFAULT_EXPORT_PLATFORMS)
+    assert invalid == ["invalid", "also-invalid"]
+
+
+def test_review_decisions_legacy_unknown_export_keys_fallback_to_defaults() -> None:
+    """Legacy review_state payloads with unknown keys should normalize safely."""
+    decisions = ReviewDecisions.model_validate(
+        {"export_platforms": ["unknown", "mystery"], "review_complete": False}
+    )
+
+    assert decisions.export_platforms == list(DEFAULT_EXPORT_PLATFORMS)
+
+
+def test_review_decisions_preserves_video_export_keys() -> None:
+    """Video podcast keys should survive ReviewDecisions normalization untouched."""
+    decisions = ReviewDecisions.model_validate(
+        {
+            "export_platforms": [
+                "spotify_video",
+                " apple_video ",
+                "apple_hls",
+                "spotify_video",
+            ]
+        }
+    )
+
+    assert decisions.export_platforms == ["spotify_video", "apple_video", "apple_hls"]
+
+
 def _seed_review_inputs(job_dir: Path) -> None:
     analysis_dir = job_dir / "analysis"
     analysis_dir.mkdir(parents=True, exist_ok=True)
@@ -68,4 +110,12 @@ def test_approve_review_invalid_export_platforms_fallback_to_defaults(tmp_path: 
     _seed_review_inputs(tmp_path)
 
     decisions = approve_review(tmp_path, ["invalid", "unknown"])
+    assert decisions.export_platforms == list(DEFAULT_EXPORT_PLATFORMS)
+
+
+def test_approve_review_none_platforms_fallback_to_defaults(tmp_path: Path) -> None:
+    """Omitted explicit platform list should keep canonical default targets."""
+    _seed_review_inputs(tmp_path)
+
+    decisions = approve_review(tmp_path, None)
     assert decisions.export_platforms == list(DEFAULT_EXPORT_PLATFORMS)
