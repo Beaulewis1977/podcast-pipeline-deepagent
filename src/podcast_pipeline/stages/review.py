@@ -4,9 +4,10 @@ import json
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from podcast_pipeline.config import Config
+from podcast_pipeline.export_targets import DEFAULT_EXPORT_PLATFORMS, normalize_export_platforms
 from podcast_pipeline.models.edit_plan import (
     ClipRange,
     ContentCutRange,
@@ -40,12 +41,35 @@ class ReviewDecisions(BaseModel):
     marketing_edits: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
     # Export settings
-    export_platforms: list[str] = Field(default_factory=lambda: ["youtube", "spotify"])
+    export_platforms: list[str] = Field(default_factory=lambda: list(DEFAULT_EXPORT_PLATFORMS))
     export_quality: str = "final"  # draft or final
 
     # Review completion
     review_complete: bool = False
     review_notes: str = ""
+
+    @field_validator("export_platforms", mode="before")
+    @classmethod
+    def validate_export_platforms(cls, value: Any) -> list[str]:
+        """Normalize review export platform keys to canonical values.
+
+        All platform keys (valid and invalid) are canonicalized (trimmed, lowercased,
+        deduplicated). Unknown/invalid keys are still preserved in the returned list so
+        the render stage can report them as unsupported rather than silently dropping them.
+        """
+        if value is None:
+            return list(DEFAULT_EXPORT_PLATFORMS)
+        if isinstance(value, str):
+            raw_platforms: list[Any] = [part.strip() for part in value.split(",")]
+        elif isinstance(value, (list, tuple, set)):
+            raw_platforms = list(value)
+        else:
+            raw_platforms = []
+        valid, invalid = normalize_export_platforms(
+            raw_platforms, include_invalid=True, fallback_to_default=False
+        )
+        all_platforms = valid + invalid
+        return all_platforms if all_platforms else list(DEFAULT_EXPORT_PLATFORMS)
 
 
 class ReviewStage(Stage):
@@ -175,7 +199,7 @@ def approve_review(job_dir: Path, platforms: list[str] | None = None) -> ReviewD
             decisions.selected_thumbnail = 0
 
     # Set platforms
-    decisions.export_platforms = platforms or ["youtube", "spotify"]
+    decisions.export_platforms = normalize_export_platforms(platforms)
     decisions.review_complete = True
 
     # Save
@@ -346,6 +370,8 @@ def get_review_summary(job_dir: Path) -> dict[str, Any]:
     # Current review decisions
     review_path = job_dir / "review" / "review_state.json"
     if review_path.exists():
-        summary["decisions"] = json.loads(review_path.read_text())
+        summary["decisions"] = ReviewDecisions.model_validate_json(
+            review_path.read_text()
+        ).model_dump()
 
     return summary

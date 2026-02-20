@@ -9,6 +9,11 @@ from rich.table import Table
 
 from podcast_pipeline import __version__
 from podcast_pipeline.config import load_config
+from podcast_pipeline.export_targets import (
+    DEFAULT_EXPORT_PLATFORMS,
+    SUPPORTED_EXPORT_PLATFORMS,
+    normalize_export_platforms,
+)
 from podcast_pipeline.models.job import StageStatus
 from podcast_pipeline.pipeline import Pipeline
 from podcast_pipeline.stages.review import approve_review, get_review_summary
@@ -29,6 +34,30 @@ def version_callback(value: bool) -> None:
     if value:
         console.print(f"podcast-pipeline version {__version__}")
         raise typer.Exit()
+
+
+def _parse_approve_platforms(platforms: str | None) -> list[str]:
+    """Parse and validate approve-platform input against canonical supported keys."""
+    if platforms is None:
+        return list(DEFAULT_EXPORT_PLATFORMS)
+
+    raw_platforms = [part.strip() for part in platforms.split(",")]
+    normalized, invalid = normalize_export_platforms(
+        raw_platforms,
+        fallback_to_default=False,
+        include_invalid=True,
+    )
+    supported = ", ".join(SUPPORTED_EXPORT_PLATFORMS)
+    if invalid:
+        invalid_text = ", ".join(invalid)
+        raise ValueError(
+            f"Unsupported platform key(s): {invalid_text}. Supported keys: {supported}"
+        )
+    if not normalized:
+        raise ValueError(
+            f"No valid platform keys provided in --platforms. Supported keys: {supported}"
+        )
+    return normalized
 
 
 @app.callback()
@@ -328,13 +357,19 @@ def review(
 def approve(
     job_id: str = typer.Argument(..., help="Job ID to approve"),
     platforms: str | None = typer.Option(
-        "youtube,spotify",
+        None,
         "--platforms",
         "-p",
         help="Comma-separated list of platforms to export",
     ),
 ) -> None:
     """Auto-approve all AI suggestions and mark review as complete."""
+    try:
+        platform_list = _parse_approve_platforms(platforms)
+    except ValueError as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(1) from None
+
     config = load_config()
     pipeline = Pipeline(config)
 
@@ -345,10 +380,6 @@ def approve(
         raise typer.Exit(1) from None
 
     job_dir = job.get_job_dir(config.paths.jobs_dir)
-    platform_list = (
-        [p.strip() for p in platforms.split(",")] if platforms else ["youtube", "spotify"]
-    )
-
     decisions = approve_review(job_dir, platform_list)
 
     console.print(

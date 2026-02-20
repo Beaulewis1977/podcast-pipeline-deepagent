@@ -2,6 +2,7 @@
 
 import json
 import shutil
+import tempfile
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
@@ -832,7 +833,12 @@ class RenderStage(Stage):
         self._assert_output_exists(output_file, f"{platform} audio export")
 
         if normalize_audio:
-            self._normalize_loudness(output_file, spec.loudness_lufs)
+            self._normalize_loudness(
+                output_file,
+                spec.loudness_lufs,
+                audio_codec=spec.audio_codec,
+                audio_bitrate=spec.audio_bitrate,
+            )
         else:
             self.logger.info("loudness_normalization_disabled", platform=platform)
         self._assert_output_exists(output_file, f"{platform} audio export")
@@ -1137,7 +1143,12 @@ class RenderStage(Stage):
         self._assert_output_exists(output_file, f"{platform} video export")
 
         if normalize_audio:
-            self._normalize_loudness(output_file, spec.loudness_lufs)
+            self._normalize_loudness(
+                output_file,
+                spec.loudness_lufs,
+                audio_codec=spec.audio_codec,
+                audio_bitrate=spec.audio_bitrate,
+            )
         else:
             self.logger.info("loudness_normalization_disabled", platform=platform)
         self._assert_output_exists(output_file, f"{platform} video export")
@@ -1523,7 +1534,14 @@ class RenderStage(Stage):
 
         return outputs
 
-    def _normalize_loudness(self, audio_file: Path, target_lufs: float) -> dict[str, Any]:
+    def _normalize_loudness(
+        self,
+        audio_file: Path,
+        target_lufs: float,
+        *,
+        audio_codec: str | None = None,
+        audio_bitrate: str | None = None,
+    ) -> dict[str, Any]:
         """Normalize audio to target LUFS with optional-dependency fallback."""
         try:
             import pyloudnorm as pyln
@@ -1592,6 +1610,10 @@ class RenderStage(Stage):
                         str(temp_audio),
                         "-c:v",
                         "copy",
+                        "-c:a",
+                        audio_codec or "aac",
+                        "-b:a",
+                        audio_bitrate or "192k",
                         "-map",
                         "0:v:0",
                         "-map",
@@ -1605,8 +1627,51 @@ class RenderStage(Stage):
                 temp_video.replace(audio_file)
                 temp_audio.unlink()
             else:
-                # Write back directly
-                sf.write(str(audio_file), normalized, rate)
+                # Determine whether the caller requested a non-WAV codec/bitrate.
+                # soundfile can only write uncompressed PCM formats (WAV/FLAC/AIFF
+                # etc.), so if a compressed codec like "aac", "libmp3lame", "libopus"
+                # is requested we must write a temporary WAV first and then
+                # re-encode it with ffmpeg.
+                _wav_codecs = {None, "pcm_s16le", "pcm_s24le", "pcm_f32le", "wav"}
+                needs_reencode = audio_codec not in _wav_codecs or audio_bitrate is not None
+
+                if needs_reencode:
+                    # Write normalized PCM to a temp WAV, then re-encode to target.
+                    with tempfile.NamedTemporaryFile(
+                        suffix=".wav", delete=False, dir=audio_file.parent
+                    ) as tmp_fd:
+                        tmp_wav = Path(tmp_fd.name)
+                    try:
+                        sf.write(str(tmp_wav), normalized, rate)
+                        # Re-encode into a separate file so the original is only
+                        # replaced once the encode succeeds (atomic swap).
+                        tmp_encoded = audio_file.with_name(
+                            f"{audio_file.stem}.normalized_tmp{audio_file.suffix}"
+                        )
+                        run_ffmpeg(
+                            [
+                                "-i",
+                                str(tmp_wav),
+                                "-c:a",
+                                audio_codec or "aac",
+                                *(["-b:a", audio_bitrate] if audio_bitrate is not None else []),
+                                str(tmp_encoded),
+                            ]
+                        )
+                        # Atomic replace — only clobbers original on success.
+                        tmp_encoded.replace(audio_file)
+                    finally:
+                        if tmp_wav.exists():
+                            tmp_wav.unlink()
+                        # Clean up partial encode output if something went wrong.
+                        tmp_encoded_path = audio_file.with_name(
+                            f"{audio_file.stem}.normalized_tmp{audio_file.suffix}"
+                        )
+                        if tmp_encoded_path.exists() and tmp_encoded_path != audio_file:
+                            tmp_encoded_path.unlink()
+                else:
+                    # Plain WAV / no special codec — write back directly.
+                    sf.write(str(audio_file), normalized, rate)
 
             self.logger.info(
                 "loudness_normalized",
@@ -1621,7 +1686,12 @@ class RenderStage(Stage):
                 "pyloudnorm_not_available",
                 message="Falling back to ffmpeg loudnorm",
             )
-            if self._normalize_loudness_with_ffmpeg(audio_file, target_lufs):
+            if self._normalize_loudness_with_ffmpeg(
+                audio_file,
+                target_lufs,
+                audio_codec=audio_codec,
+                audio_bitrate=audio_bitrate,
+            ):
                 return {"status": "normalized", "method": "ffmpeg_loudnorm"}
             return {
                 "status": "skipped",
@@ -1633,7 +1703,12 @@ class RenderStage(Stage):
                 "loudness_normalization_failed",
                 error=str(e),
             )
-            if self._normalize_loudness_with_ffmpeg(audio_file, target_lufs):
+            if self._normalize_loudness_with_ffmpeg(
+                audio_file,
+                target_lufs,
+                audio_codec=audio_codec,
+                audio_bitrate=audio_bitrate,
+            ):
                 return {
                     "status": "normalized",
                     "method": "ffmpeg_loudnorm",
@@ -1641,7 +1716,14 @@ class RenderStage(Stage):
                 }
             return {"status": "failed", "method": "none", "reason": str(e)}
 
-    def _normalize_loudness_with_ffmpeg(self, audio_file: Path, target_lufs: float) -> bool:
+    def _normalize_loudness_with_ffmpeg(
+        self,
+        audio_file: Path,
+        target_lufs: float,
+        *,
+        audio_codec: str | None = None,
+        audio_bitrate: str | None = None,
+    ) -> bool:
         """Fallback normalization path when pyloudnorm stack is unavailable."""
         suffix = audio_file.suffix.lower()
         temp_output = audio_file.with_name(f"{audio_file.stem}.normalized{suffix}")
@@ -1657,14 +1739,14 @@ class RenderStage(Stage):
                     "-af",
                     loudnorm_filter,
                     "-c:a",
-                    "aac",
+                    audio_codec or "aac",
                     "-b:a",
-                    "192k",
+                    audio_bitrate or "192k",
                     str(temp_output),
                 ]
             else:
-                codec = "libmp3lame" if suffix == ".mp3" else "aac"
-                bitrate = "320k" if suffix == ".mp3" else "192k"
+                codec = audio_codec or ("libmp3lame" if suffix == ".mp3" else "aac")
+                bitrate = audio_bitrate or ("320k" if suffix == ".mp3" else "192k")
                 args = [
                     "-i",
                     str(audio_file),

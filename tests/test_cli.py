@@ -2,9 +2,10 @@
 
 import re
 
+import pytest
 from typer.testing import CliRunner
 
-from podcast_pipeline.cli import app
+from podcast_pipeline.cli import _parse_approve_platforms, app
 
 runner = CliRunner()
 
@@ -92,3 +93,36 @@ def test_service_help() -> None:
     assert "--host" in output
     assert "--port" in output
     assert "sidecar" in output.lower() or "service" in output.lower()
+
+
+def test_parse_approve_platforms_defaults_when_omitted() -> None:
+    """Approve parser should keep backward-compatible default platforms."""
+    assert _parse_approve_platforms(None) == ["youtube", "spotify"]
+
+
+def test_parse_approve_platforms_accepts_video_targets() -> None:
+    """Approve parser should normalize and keep valid video target keys."""
+    parsed = _parse_approve_platforms(" spotify_video,apple_video, apple_hls ,spotify_video ")
+    assert parsed == ["spotify_video", "apple_video", "apple_hls"]
+
+
+def test_parse_approve_platforms_rejects_invalid_keys() -> None:
+    """Approve parser should fail when explicit unsupported keys are provided."""
+    with pytest.raises(ValueError, match="Unsupported platform key"):
+        _parse_approve_platforms("youtube,invalid")
+
+
+def test_parse_approve_platforms_rejects_empty_explicit_value() -> None:
+    """Explicit --platforms with no usable keys should not silently fallback."""
+    with pytest.raises(ValueError, match="No valid platform keys provided"):
+        _parse_approve_platforms("  ,   , ")
+
+
+def test_approve_command_rejects_invalid_platform_keys() -> None:
+    """CLI approve command should fail fast with actionable invalid-key diagnostics."""
+    result = runner.invoke(app, ["approve", "nonexistent-job-id", "--platforms", "youtube,invalid"])
+
+    output = _strip_ansi(result.output)
+    assert result.exit_code == 1
+    assert "Unsupported platform key" in output
+    assert "Supported keys:" in output

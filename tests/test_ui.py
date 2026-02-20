@@ -95,7 +95,7 @@ class TestReviewDecisionsUpdate:
         assert updated.selected_thumbnail == 5
 
     def test_update_export_platforms(self, tmp_path: Path) -> None:
-        """Test updating export platforms."""
+        """Test updating export platforms with canonical normalization."""
         from podcast_pipeline.stages.review import ReviewDecisions
         from podcast_pipeline.ui.app import update_export_platforms
 
@@ -108,10 +108,12 @@ class TestReviewDecisionsUpdate:
         (review_dir / "review_state.json").write_text(initial.model_dump_json())
 
         # Update platforms
-        new_platforms = ["youtube", "tiktok", "instagram"]
-        update_export_platforms(tmp_path, new_platforms)
+        new_platforms = [" youtube ", "tiktok", "invalid", "instagram", "tiktok"]
+        normalized, invalid = update_export_platforms(tmp_path, new_platforms)
 
         # Verify
         review_path = review_dir / "review_state.json"
         updated = ReviewDecisions.model_validate_json(review_path.read_text())
-        assert set(updated.export_platforms) == set(new_platforms)
+        assert normalized == ["youtube", "tiktok", "instagram"]
+        assert invalid == ["invalid"]
+        assert updated.export_platforms == ["youtube", "tiktok", "instagram"]

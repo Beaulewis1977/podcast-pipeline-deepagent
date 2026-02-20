@@ -3,6 +3,7 @@
 import json
 from collections import namedtuple
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -981,6 +982,91 @@ class TestRenderComplianceWiring:
                 output_file=tmp_path / "final.mp4",
                 spec=config.platforms.apple_video,
             )
+
+
+class TestRenderLoudnessBitratePreservation:
+    """Tests for keeping configured audio codec/bitrate during loudness normalization."""
+
+    def test_render_video_passes_audio_codec_and_bitrate_to_loudness_normalization(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        """Video render should pass platform codec/bitrate into normalization step."""
+        config = load_config()
+        stage = RenderStage(config)
+        spec = config.platforms.spotify_video
+        output_dir = tmp_path / "output"
+        input_video = tmp_path / "input.mp4"
+        input_video.write_bytes(b"video")
+        captured: dict[str, Any] = {}
+
+        def _fake_ffmpeg(args: list[str]) -> None:
+            output_file = Path(args[-1])
+            output_file.parent.mkdir(parents=True, exist_ok=True)
+            output_file.write_bytes(b"rendered")
+
+        def _fake_normalize(
+            _audio_file: Path,
+            _target_lufs: float,
+            *,
+            audio_codec: str | None = None,
+            audio_bitrate: str | None = None,
+        ) -> dict[str, Any]:
+            captured["audio_codec"] = audio_codec
+            captured["audio_bitrate"] = audio_bitrate
+            return {"status": "normalized", "method": "test"}
+
+        monkeypatch.setattr("podcast_pipeline.stages.render.run_ffmpeg", _fake_ffmpeg)
+        monkeypatch.setattr(stage, "_normalize_loudness", _fake_normalize)
+        monkeypatch.setattr(stage, "_validate_video_platform_compliance", lambda *_a, **_k: None)
+
+        stage._render_video(
+            output_dir=output_dir,
+            input_video=input_video,
+            platform="spotify_video",
+            spec=spec,
+            decisions=ReviewDecisions(review_complete=True),
+            video_info={"width": 1920, "height": 1080, "duration": 30.0},
+            edit_plan=None,
+            normalize_audio=True,
+        )
+
+        assert captured["audio_codec"] == spec.audio_codec
+        assert captured["audio_bitrate"] == spec.audio_bitrate
+
+    def test_ffmpeg_fallback_uses_requested_audio_codec_and_bitrate_for_video(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        """ffmpeg fallback should preserve configured codec/bitrate for video remux."""
+        config = load_config()
+        stage = RenderStage(config)
+        input_video = tmp_path / "final.mp4"
+        input_video.write_bytes(b"video")
+        captured_args: dict[str, list[str]] = {}
+
+        def _fake_ffmpeg(args: list[str]) -> None:
+            captured_args["args"] = args
+            output_file = Path(args[-1])
+            output_file.write_bytes(b"normalized-video")
+
+        monkeypatch.setattr("podcast_pipeline.stages.render.run_ffmpeg", _fake_ffmpeg)
+
+        ok = stage._normalize_loudness_with_ffmpeg(
+            input_video,
+            target_lufs=-14.0,
+            audio_codec="aac",
+            audio_bitrate="192k",
+        )
+
+        assert ok is True
+        args = captured_args["args"]
+        assert "-c:a" in args
+        assert args[args.index("-c:a") + 1] == "aac"
+        assert "-b:a" in args
+        assert args[args.index("-b:a") + 1] == "192k"
 
     def test_platform_status_includes_validation_details_for_compliance_error(
         self,

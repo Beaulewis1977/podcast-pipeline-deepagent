@@ -1,9 +1,9 @@
 # Roadmap: Podcast Pipeline
 
 **Created:** 2026-01-29
-**Last Updated:** 2026-02-19
+**Last Updated:** 2026-02-20
 **Milestone:** v1.0 (Streamlit-first)
-**Phases:** 5
+**Phases:** 5 + follow-up 5.1
 
 ## Overview
 
@@ -169,6 +169,40 @@ Plans are sequenced in 3 waves:
 - Wave 1 locks conservative mezzanine-first defaults and schema guardrails from Phase 05 research.
 - Wave 2 enforces Spotify/Apple compliance behavior in render with deterministic post-render validation.
 - Wave 3 adds optional Apple HLS artifacts and codifies provider/dashboard workflow constraints for operators.
+
+---
+
+### Phase 5.1: Streamlit Video Platform UI
+
+**Goal:** Expose Phase 5 video podcast targets in Streamlit/CLI export workflows with backward-compatible review-state persistence, strict key validation, and truthful operator guidance for provider-mediated publishing boundaries.
+**Depends on:** Phase 5
+**Status:** Complete (verified 2026-02-20)
+**Plans:** 3 plans
+
+**Scope / Requirements:**
+- Add a canonical export-target registry shared by review, Streamlit UI, and CLI approval paths
+- Include `spotify_video`, `apple_video`, and `apple_hls` in Streamlit export selection UX
+- Normalize persisted/exported platform keys with safe fallback defaults for legacy jobs
+- Reject unknown platform keys in CLI approval flows with actionable validation errors
+- Preserve `youtube,spotify` defaults when no valid explicit selection is provided
+- Keep `apple_hls` guidance explicit as artifact packaging only (no direct upload automation)
+- Add regression coverage for cross-surface key parity and review-state round trips
+
+**Success Criteria:**
+1. Streamlit export panel exposes all supported audio/video/package targets and persists valid selections
+2. Review state and CLI approval paths share one validated platform-key contract
+3. Unknown platform keys fail loudly in CLI and are handled safely for persisted review-state data
+4. Operator-facing guidance remains truthful for Apple/Spotify publication boundaries
+
+Plans:
+- [x] 05.1-01-PLAN.md — Canonical export target registry + review-state normalization contract
+- [x] 05.1-02-PLAN.md — Streamlit export UI wiring for video targets + persistence round-trip safeguards
+- [x] 05.1-03-PLAN.md — CLI approval parity + invalid-key error contracts + regression coverage
+
+**Details:**
+Plans run in 2 execution waves:
+- Wave 1 defines canonical platform contracts and normalization.
+- Wave 2 executes Streamlit UI wiring and CLI parity in parallel using shared contracts.
 
 ---
 
