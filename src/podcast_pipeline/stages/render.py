@@ -531,7 +531,7 @@ class RenderStage(Stage):
             )
             processed_samples = denoised.T if hasattr(denoised, "T") else samples
             sf.write(processed_wav, processed_samples, int(sample_rate))
-        except Exception as e:
+        except (RuntimeError, ValueError, OSError, TypeError) as e:
             raise RuntimeError(f"Dereverb processing failed: {e}") from e
 
         self._assert_output_exists(processed_wav, "dereverb processed audio")
@@ -543,6 +543,7 @@ class RenderStage(Stage):
         input_video: Path,
         output_dir: Path,
         platform: str,
+        audio_bitrate: str = "256k",
     ) -> Path:
         """Optionally preprocess audio with noisereduce and remux with original video."""
         dereverb = self.config.enhancements.dereverb
@@ -554,7 +555,7 @@ class RenderStage(Stage):
                 input_video=input_video,
                 output_dir=output_dir,
             )
-        except (RuntimeError, TypeError) as e:
+        except (FFmpegError, RuntimeError, TypeError) as e:
             if dereverb.fallback_mode == "fail":
                 raise
             self.logger.warning(
@@ -580,7 +581,7 @@ class RenderStage(Stage):
                 "-c:a",
                 "aac",
                 "-b:a",
-                "256k",
+                audio_bitrate,
                 str(remuxed_input),
             ]
         )
@@ -1022,6 +1023,7 @@ class RenderStage(Stage):
             input_video=input_video,
             output_dir=output_dir,
             platform=platform,
+            audio_bitrate=spec.audio_bitrate,
         )
 
         # HLS packaging target
