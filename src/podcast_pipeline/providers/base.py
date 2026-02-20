@@ -131,6 +131,10 @@ Marketing copy requirements (strict):
 - Use trend context (keywords, hooks, competitive angle) when relevant and grounded in transcript evidence.
 - For each platform, always provide titles, description, and hashtags fields in the JSON schema.
 
+Thumbnail requirements (strict):
+- Include virality metadata for every thumbnail candidate: virality_score, viral_style, virality_score_source, recommendation_signal.
+- When thumbnail candidates are present, include at least one strong recommendation_signal that explains why that frame should be prioritized.
+
 Platform-specific expectations:
 - youtube: title options optimized for discovery and a detailed long-form description.
 - spotify: concise audio-episode title + description for podcast listeners.
@@ -171,7 +175,11 @@ Provide your analysis as JSON with this exact structure:
       "timestamp_seconds": 0.0,
       "visual_description": "What's in the frame",
       "suggested_text_overlay": "Text for thumbnail",
-      "emotion": "joy/surprise/etc"
+      "emotion": "joy/surprise/etc",
+      "virality_score": 0.0,
+      "viral_style": "reaction/story/mystery/etc",
+      "virality_score_source": "provider/heuristic",
+      "recommendation_signal": "Specific recommendation reason"
     }}
   ],
   "marketing": {{

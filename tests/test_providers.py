@@ -185,8 +185,58 @@ def test_provider_prompt_includes_trend_context_when_available() -> None:
 
     assert '"keywords": ["growth loop", "creator workflow"]' in prompt
     assert '"trending_hooks": ["contrarian retention take"]' in prompt
-    assert '"competitive_angle": "Medium competition; differentiation via workflow framing."' in prompt
+    assert (
+        '"competitive_angle": "Medium competition; differentiation via workflow framing."' in prompt
+    )
     assert '"momentum_signals": ["avg_velocity_per_hour=12.50"]' in prompt
+
+
+def test_provider_thumbnail_schema_includes_virality_metadata_fields() -> None:
+    """Provider prompt should request virality metadata for each thumbnail candidate."""
+    provider = _PromptTestProvider()
+    prompt = provider._build_prompt({"text": "A transcript excerpt"})
+
+    assert '"virality_score": 0.0' in prompt
+    assert '"viral_style": "reaction/story/mystery/etc"' in prompt
+    assert '"virality_score_source": "provider/heuristic"' in prompt
+    assert '"recommendation_signal": "Specific recommendation reason"' in prompt
+
+
+def test_provider_thumbnail_contract_requires_recommendation_signal() -> None:
+    """Provider prompt should require at least one strong thumbnail recommendation signal."""
+    provider = _PromptTestProvider()
+    prompt = provider._build_prompt({"text": "A transcript excerpt"})
+
+    assert (
+        "When thumbnail candidates are present, include at least one strong recommendation_signal"
+        in prompt
+    )
+
+
+def test_provider_parse_accepts_thumbnail_virality_metadata_fields() -> None:
+    """Provider parse path should preserve thumbnail virality metadata fields."""
+    payload = _valid_analysis_payload()
+    payload["thumbnail_frames"] = [
+        {
+            "timestamp": "00:12",
+            "timestamp_seconds": 12.0,
+            "visual_description": "Host leaning in",
+            "suggested_text_overlay": "Don't miss this",
+            "emotion": "surprise",
+            "virality_score": 9.0,
+            "viral_style": "reaction_closeup",
+            "virality_score_source": "provider",
+            "recommendation_signal": "high emotional expression",
+        }
+    ]
+
+    result = AnalysisResult.model_validate(payload)
+    thumbnail = result.thumbnail_frames[0]
+
+    assert thumbnail.virality_score == pytest.approx(9.0)
+    assert thumbnail.viral_style == "reaction_closeup"
+    assert thumbnail.virality_score_source == "provider"
+    assert thumbnail.recommendation_signal == "high emotional expression"
 
 
 def test_gemini_parse_failure_raises_provider_parse_error(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -472,9 +522,7 @@ def test_analyze_stage_injects_trend_context_when_artifacts_exist(
 
         def analyze(self, video_path: Path, transcript: dict[str, Any]) -> AnalysisResult:
             trend_context = transcript.get("trend_context")
-            self.captured_trend_context = (
-                trend_context if isinstance(trend_context, dict) else None
-            )
+            self.captured_trend_context = trend_context if isinstance(trend_context, dict) else None
             return AnalysisResult.model_validate(_valid_analysis_payload())
 
     config = Config()
