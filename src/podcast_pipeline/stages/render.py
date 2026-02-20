@@ -576,7 +576,7 @@ class RenderStage(Stage):
                 ]
             )
             self._assert_output_exists(remuxed_input, f"{platform} dereverb remux input")
-        except (FFmpegError, RuntimeError, TypeError) as e:
+        except (FFmpegError, FileNotFoundError, RuntimeError, TypeError) as e:
             if dereverb.fallback_mode == "fail":
                 raise
             self.logger.warning(
