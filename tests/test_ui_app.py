@@ -127,6 +127,64 @@ def test_ui_app_marketing_review_flow_save_writes_review_state_only(tmp_path: Pa
     assert (tmp_path / "review" / "edit_plan.json").exists()
 
 
+def test_ui_app_marketing_platform_video_matrix_save_persists_all_keys(tmp_path: Path) -> None:
+    """Marketing save helper should persist edits for every supported platform key."""
+    from podcast_pipeline.stages.review import ReviewDecisions
+    from podcast_pipeline.ui.app import _save_marketing_edits_to_review_flow
+
+    _write_json(
+        tmp_path / "analysis" / "analysis.json",
+        {
+            "marketing": {},
+            "metadata": {"summary": "Original", "topics": [], "mood": "focused"},
+            "content_cuts": [],
+        },
+    )
+    _write_json(tmp_path / "analysis" / "filler_cuts.json", [])
+
+    edited_marketing = {
+        "youtube": {"titles": ["YT title"], "description": "YT desc", "hashtags": ["#yt"]},
+        "spotify": {"titles": ["Spotify title"], "description": "Spotify desc", "hashtags": []},
+        "spotify_video": {"titles": ["Spotify video title"], "description": "SV desc"},
+        "apple": {"titles": ["Apple title"], "description": "Apple desc", "hashtags": []},
+        "apple_video": {"titles": ["Apple video title"], "description": "AV desc"},
+        "tiktok": {"description": "TikTok desc", "hashtags": ["#fyp"]},
+        "instagram": {"description": "Instagram desc", "hashtags": ["#reels"]},
+        "linkedin": {"description": "LinkedIn desc", "hashtags": ["#insight"]},
+        "twitter": {"description": "Twitter desc", "hashtags": []},
+        "facebook": {"description": "Facebook desc", "hashtags": ["#podcast"]},
+    }
+
+    _save_marketing_edits_to_review_flow(
+        tmp_path,
+        ReviewDecisions(),
+        edited_marketing=edited_marketing,
+        summary="Updated summary",
+        topics="growth, retention",
+        mood="energetic",
+    )
+
+    review_state = ReviewDecisions.model_validate_json(
+        (tmp_path / "review" / "review_state.json").read_text()
+    )
+    saved_keys = set(review_state.marketing_edits.keys())
+    assert saved_keys >= {
+        "youtube",
+        "spotify",
+        "spotify_video",
+        "apple",
+        "apple_video",
+        "tiktok",
+        "instagram",
+        "linkedin",
+        "twitter",
+        "facebook",
+        "__metadata__",
+    }
+    assert review_state.marketing_edits["spotify_video"]["titles"] == ["Spotify video title"]
+    assert review_state.marketing_edits["apple_video"]["description"] == "AV desc"
+
+
 def test_ui_app_marketing_review_flow_regeneration_resets_review_state(tmp_path: Path) -> None:
     """Regeneration should clear marketing edits and require re-review."""
     from podcast_pipeline.stages.review import ReviewDecisions

@@ -117,3 +117,42 @@ class TestReviewDecisionsUpdate:
         assert normalized == ["youtube", "tiktok", "instagram"]
         assert invalid == ["invalid"]
         assert updated.export_platforms == ["youtube", "tiktok", "instagram"]
+
+
+class TestMarketingEditorPlatformSpecs:
+    """Tests for marketing editor platform coverage and limits."""
+
+    def test_marketing_platform_matrix_includes_video_variants(self) -> None:
+        """Marketing editor should expose all supported platform keys in stable order."""
+        from podcast_pipeline.ui.app import _marketing_editor_platform_specs
+
+        keys = [spec.key for spec in _marketing_editor_platform_specs()]
+
+        assert keys == [
+            "youtube",
+            "spotify",
+            "spotify_video",
+            "apple",
+            "apple_video",
+            "tiktok",
+            "instagram",
+            "linkedin",
+            "twitter",
+            "facebook",
+        ]
+
+    def test_marketing_platform_video_title_modes_and_description_limits(self) -> None:
+        """Video/audio podcast targets should keep platform-specific title and char guidance."""
+        from podcast_pipeline.ui.app import _marketing_editor_platform_specs
+
+        spec_by_key = {spec.key: spec for spec in _marketing_editor_platform_specs()}
+
+        assert spec_by_key["youtube"].title_mode == "multi"
+        assert spec_by_key["spotify"].title_mode == "single"
+        assert spec_by_key["spotify_video"].title_mode == "single"
+        assert spec_by_key["apple"].title_mode == "single"
+        assert spec_by_key["apple_video"].title_mode == "single"
+        assert spec_by_key["spotify_video"].max_description_chars == 4000
+        assert spec_by_key["apple_video"].max_description_chars == 4000
+        assert spec_by_key["tiktok"].max_description_chars == 150
+        assert spec_by_key["twitter"].max_description_chars == 280

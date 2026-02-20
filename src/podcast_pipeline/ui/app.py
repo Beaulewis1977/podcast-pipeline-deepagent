@@ -9,6 +9,7 @@ directory on the local machine.
 
 import contextlib
 import json
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from itertools import pairwise
 from pathlib import Path
@@ -44,6 +45,118 @@ _NAV_LABELS_BY_PAGE = {
     "settings": "⚙️ Settings",
 }
 _NAV_PAGES_BY_LABEL = {label: page for page, label in _NAV_LABELS_BY_PAGE.items()}
+
+
+@dataclass(frozen=True, slots=True)
+class MarketingEditorPlatformSpec:
+    """Field-shape and character-bound guidance for one marketing platform."""
+
+    label: str
+    key: str
+    icon: str
+    title_mode: str
+    max_description_chars: int
+    description_height: int
+    description_guidance: str
+
+
+_MARKETING_EDITOR_PLATFORM_SPECS: tuple[MarketingEditorPlatformSpec, ...] = (
+    MarketingEditorPlatformSpec(
+        label="YouTube",
+        key="youtube",
+        icon="🎥",
+        title_mode="multi",
+        max_description_chars=5000,
+        description_height=150,
+        description_guidance="Long-form SEO description with chapters and key takeaways.",
+    ),
+    MarketingEditorPlatformSpec(
+        label="Spotify",
+        key="spotify",
+        icon="🎧",
+        title_mode="single",
+        max_description_chars=4000,
+        description_height=120,
+        description_guidance="Listener-first audio show notes with a concise value promise.",
+    ),
+    MarketingEditorPlatformSpec(
+        label="Spotify Video",
+        key="spotify_video",
+        icon="🎬",
+        title_mode="single",
+        max_description_chars=4000,
+        description_height=120,
+        description_guidance="Video-podcast positioning focused on watch intent and chapter moments.",
+    ),
+    MarketingEditorPlatformSpec(
+        label="Apple Podcasts",
+        key="apple",
+        icon="🍎",
+        title_mode="single",
+        max_description_chars=4000,
+        description_height=120,
+        description_guidance="Editorial-style audio description tuned for Apple podcast browsing.",
+    ),
+    MarketingEditorPlatformSpec(
+        label="Apple Video",
+        key="apple_video",
+        icon="📺",
+        title_mode="single",
+        max_description_chars=4000,
+        description_height=120,
+        description_guidance="Video-forward Apple copy emphasizing visual moments and episode flow.",
+    ),
+    MarketingEditorPlatformSpec(
+        label="TikTok",
+        key="tiktok",
+        icon="📱",
+        title_mode="none",
+        max_description_chars=150,
+        description_height=80,
+        description_guidance="Ultra-short hook caption optimized for first-swipe attention.",
+    ),
+    MarketingEditorPlatformSpec(
+        label="Instagram",
+        key="instagram",
+        icon="📷",
+        title_mode="none",
+        max_description_chars=2200,
+        description_height=80,
+        description_guidance="Reel-style caption with a quick hook and clear audience context.",
+    ),
+    MarketingEditorPlatformSpec(
+        label="LinkedIn",
+        key="linkedin",
+        icon="💼",
+        title_mode="none",
+        max_description_chars=3000,
+        description_height=150,
+        description_guidance="Professional narrative focused on insight, outcomes, and practical value.",
+    ),
+    MarketingEditorPlatformSpec(
+        label="Twitter/X",
+        key="twitter",
+        icon="🐦",
+        title_mode="none",
+        max_description_chars=280,
+        description_height=80,
+        description_guidance="Single high-signal post that fits in one short-form tweet.",
+    ),
+    MarketingEditorPlatformSpec(
+        label="Facebook",
+        key="facebook",
+        icon="📘",
+        title_mode="none",
+        max_description_chars=63206,
+        description_height=120,
+        description_guidance="Conversational post copy with enough context for feed-driven discovery.",
+    ),
+)
+
+
+def _marketing_editor_platform_specs() -> tuple[MarketingEditorPlatformSpec, ...]:
+    """Return canonical marketing editor platform specs in deterministic order."""
+    return _MARKETING_EDITOR_PLATFORM_SPECS
 
 # Page config must be first Streamlit command
 st.set_page_config(
@@ -1486,56 +1599,55 @@ def render_marketing_editor(job_dir: Path) -> None:
                     st.warning(f"Failed to load viral signals: {e}")
 
     # Platform-specific marketing
-    platforms = [
-        ("YouTube", "youtube", "🎥"),
-        ("Spotify", "spotify", "🎧"),
-        ("TikTok", "tiktok", "📱"),
-        ("Instagram", "instagram", "📷"),
-        ("LinkedIn", "linkedin", "💼"),
-        ("Twitter/X", "twitter", "🐦"),
-        ("Facebook", "facebook", "📘"),
-    ]
-
     edited_marketing: dict[str, Any] = {}
 
-    for platform_name, platform_key, icon in platforms:
+    for platform_spec in _marketing_editor_platform_specs():
+        platform_name = platform_spec.label
+        platform_key = platform_spec.key
+        icon = platform_spec.icon
         platform_data = marketing.get(platform_key, {})
 
         with st.expander(f"{icon} {platform_name}", expanded=(platform_key == "youtube")):
-            # Titles (for platforms that support multiple)
-            if platform_key in ["youtube"]:
-                titles = platform_data.get("titles", [])
+            titles = [title for title in platform_data.get("titles", []) if isinstance(title, str)]
+
+            # Titles
+            if platform_spec.title_mode == "multi":
                 st.markdown("**Title Options:**")
                 edited_titles = []
-                for i, title in enumerate(titles[:5]):
+                existing_titles = titles[:5] if titles else [""]
+                for i, title in enumerate(existing_titles):
                     edited_title = st.text_input(
                         f"Title {i + 1}",
                         value=title,
                         key=f"{platform_key}_title_{i}",
                     )
-                    edited_titles.append(edited_title)
+                    if edited_title.strip():
+                        edited_titles.append(edited_title.strip())
                 edited_marketing[platform_key] = {"titles": edited_titles}
+            elif platform_spec.title_mode == "single":
+                st.markdown("**Episode Title:**")
+                base_title = titles[0] if titles else ""
+                edited_title = st.text_input(
+                    "Title",
+                    value=base_title,
+                    key=f"{platform_key}_title_0",
+                )
+                edited_marketing[platform_key] = {
+                    "titles": [edited_title.strip()] if edited_title.strip() else []
+                }
 
             # Description
             description = platform_data.get("description", "")
-            max_chars = {
-                "youtube": 5000,
-                "tiktok": 150,
-                "instagram": 2200,
-                "twitter": 280,
-                "linkedin": 3000,
-                "facebook": 63206,
-                "spotify": 4000,
-            }.get(platform_key, 2000)
 
             edited_desc = st.text_area(
                 "Description",
                 value=description,
-                height=150 if platform_key in ["youtube", "linkedin"] else 80,
-                max_chars=max_chars,
+                height=platform_spec.description_height,
+                max_chars=platform_spec.max_description_chars,
                 key=f"{platform_key}_desc",
             )
-            st.caption(f"{len(edited_desc)}/{max_chars} characters")
+            st.caption(f"{len(edited_desc)}/{platform_spec.max_description_chars} characters")
+            st.caption(platform_spec.description_guidance)
 
             if platform_key not in edited_marketing:
                 edited_marketing[platform_key] = {}
