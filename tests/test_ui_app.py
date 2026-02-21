@@ -706,6 +706,36 @@ def test_ui_app_save_review_decisions_legacy_filler_fallback_remains_supported(
     assert [cut["word"] for cut in edit_plan["filler_cuts"]] == ["like"]
 
 
+def test_ui_app_save_review_decisions_mixed_payload_prefers_explicit_actions(
+    tmp_path: Path,
+) -> None:
+    """Mixed explicit+legacy payloads should keep explicit filler actions deterministic."""
+    from podcast_pipeline.stages.review import FillerDecision, ReviewDecisions
+    from podcast_pipeline.ui.app import save_review_decisions
+
+    _write_json(
+        tmp_path / "analysis" / "analysis.json",
+        {"content_cuts": [], "viral_clips": [], "thumbnail_frames": []},
+    )
+    _write_json(
+        tmp_path / "analysis" / "filler_cuts.json",
+        [
+            {"start_seconds": 1.0, "end_seconds": 1.2, "word": "um"},
+            {"start_seconds": 2.0, "end_seconds": 2.2, "word": "like"},
+            {"start_seconds": 3.0, "end_seconds": 3.3, "word": "uh"},
+        ],
+    )
+    decisions = ReviewDecisions(
+        approved_filler_cuts=[0, 2],
+        filler_decisions=[FillerDecision(index=1, action="remove")],
+    )
+
+    save_review_decisions(tmp_path, decisions)
+
+    edit_plan = json.loads((tmp_path / "review" / "edit_plan.json").read_text())
+    assert [cut["word"] for cut in edit_plan["filler_cuts"]] == ["like"]
+
+
 def test_ui_app_recovery_summary_normalizes_runtime_payload() -> None:
     """Recovery summary helper should normalize runtime diagnostics payloads."""
     from podcast_pipeline.ui.app import _runtime_recovery_summary
