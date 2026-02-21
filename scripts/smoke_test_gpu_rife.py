@@ -82,11 +82,11 @@ def _write_test_frames(tmp: Path) -> tuple[Path, Path]:
 
 def _resolve_rife_script() -> str | None:
     """Resolve the RIFE script path from config or default installation location."""
-    from podcast_pipeline.config.settings import SmoothingConfig  # noqa: PLC0415
+    from podcast_pipeline.config.settings import load_config  # noqa: PLC0415
 
-    config = SmoothingConfig()
-    if config.rife_script_path:
-        return config.rife_script_path
+    config = load_config()
+    if config.smoothing.rife_script_path:
+        return config.smoothing.rife_script_path
 
     default = Path("/opt/practical-rife/inference_img.py")
     if default.exists():

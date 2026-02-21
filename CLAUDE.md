@@ -110,7 +110,8 @@ uv run pytest tests/ -m "not integration" # Skip integration tests
 ## Dependencies
 
 - **FFmpeg**: Required system dependency for audio/video processing
-- **GPU (optional)**: faster-whisper benefits from CUDA for transcription
+- **GPU (optional)**: faster-whisper benefits from CUDA for transcription. **Phase 8 GPU features (RIFE)** require RTX 5060 Ti (sm_120) with CUDA 12.8 (`cu128`).
+- **GPU Smoke Test**: Run `python scripts/smoke_test_gpu_rife.py` to verify the GPU + RIFE stack.
 - **API Keys**: See `.env.example` for required environment variables
 
 ## Common Tasks

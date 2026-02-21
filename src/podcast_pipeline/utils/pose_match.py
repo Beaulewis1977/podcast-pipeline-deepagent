@@ -57,7 +57,7 @@ def pose_distance(frame_a_path: Path, frame_b_path: Path) -> float:
     flow = cv2.calcOpticalFlowFarneback(
         gray_a,
         gray_b,
-        None,
+        np.zeros((*gray_a.shape, 2), dtype=np.float32),
         pyr_scale=0.5,
         levels=3,
         winsize=15,

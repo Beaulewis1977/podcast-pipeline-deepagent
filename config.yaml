@@ -12,16 +12,16 @@ paths:
 # NOTE: gemini-2.0-flash is RETIRING March 31, 2026 - do not use!
 models:
   provider: gemini
-  model: gemini-2.5-flash  # Best balance of cost/performance for video
+  model: gemini-2.5-flash # Best balance of cost/performance for video
   fallback_provider: kimi
-  fallback_model: kimi-k2.5  # Latest Kimi multimodal model
+  fallback_model: kimi-k2.5 # Latest Kimi multimodal model
 
 # Transcription (faster-whisper)
 transcription:
   provider: whisper
-  model: large-v3  # large-v3 for best quality, small for faster
-  device: cuda     # cuda for GPU, cpu for CPU-only
-  compute_type: float16  # float16 for GPU, int8 for CPU/lower memory
+  model: large-v3 # large-v3 for best quality, small for faster
+  device: cuda # cuda for GPU, cpu for CPU-only
+  compute_type: float16 # float16 for GPU, int8 for CPU/lower memory
 
 # Filler Word Detection
 fillers:
@@ -85,7 +85,7 @@ enhancements:
     eq_brightness: 0.0
     eq_gamma: 1.0
 
-# Phase 7 smoothing controls (conservative defaults; additive to existing render flow)
+# Phase 7 & 8 smoothing controls (conservative defaults; additive to existing render flow)
 smoothing:
   enabled: true
   micro_fade_ms: 30
@@ -94,6 +94,9 @@ smoothing:
   max_snap_shift_ms: 250
   join_clamp_ratio: 0.35
   require_transition_filters: false
+  # Phase 8 add-ons
+  rife_enabled: true
+  rife_script_path: /home/kngpnn/dev/practical-rife/inference_img.py
 
 # Thumbnail compliance constraints by selected export target
 # YouTube values reflect official custom thumbnail guidance.
@@ -301,7 +304,7 @@ platforms:
     width: 1920
     height: 1080
     aspect_ratio: "16:9"
-    max_duration: 14400  # 4 hours
+    max_duration: 14400 # 4 hours
     fps: 30
     preset: medium
     pix_fmt: yuv420p

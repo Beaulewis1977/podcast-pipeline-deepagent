@@ -122,14 +122,16 @@ class RifeBridge:
         output_dir.mkdir(parents=True, exist_ok=True)
         exp = self.frames_to_exp(num_frames)  # e.g. num_frames=4 → exp=2 (2^2=4 frames)
 
+        # Run RIFE from its repo directory so relative model imports resolve correctly.
+        rife_dir = self.script_path.parent
         cmd = [
             "python",
             str(self.script_path),
             "--img",
-            str(frame_a),
-            str(frame_b),
+            str(frame_a.resolve()),
+            str(frame_b.resolve()),
             "--output",
-            str(output_dir),
+            str(output_dir.resolve()),
             "--exp",
             str(exp),
         ]
@@ -145,7 +147,7 @@ class RifeBridge:
             output_dir=str(output_dir),
         )
 
-        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        result = subprocess.run(cmd, capture_output=True, text=True, check=False, cwd=str(rife_dir))
         if result.returncode != 0:
             logger.error(
                 "rife_failed",
