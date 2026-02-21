@@ -9,6 +9,7 @@ directory on the local machine.
 
 import contextlib
 import json
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from itertools import pairwise
 from pathlib import Path
@@ -44,6 +45,119 @@ _NAV_LABELS_BY_PAGE = {
     "settings": "⚙️ Settings",
 }
 _NAV_PAGES_BY_LABEL = {label: page for page, label in _NAV_LABELS_BY_PAGE.items()}
+
+
+@dataclass(frozen=True, slots=True)
+class MarketingEditorPlatformSpec:
+    """Field-shape and character-bound guidance for one marketing platform."""
+
+    label: str
+    key: str
+    icon: str
+    title_mode: str
+    max_description_chars: int
+    description_height: int
+    description_guidance: str
+
+
+_MARKETING_EDITOR_PLATFORM_SPECS: tuple[MarketingEditorPlatformSpec, ...] = (
+    MarketingEditorPlatformSpec(
+        label="YouTube",
+        key="youtube",
+        icon="🎥",
+        title_mode="multi",
+        max_description_chars=5000,
+        description_height=150,
+        description_guidance="Long-form SEO description with chapters and key takeaways.",
+    ),
+    MarketingEditorPlatformSpec(
+        label="Spotify",
+        key="spotify",
+        icon="🎧",
+        title_mode="single",
+        max_description_chars=4000,
+        description_height=120,
+        description_guidance="Listener-first audio show notes with a concise value promise.",
+    ),
+    MarketingEditorPlatformSpec(
+        label="Spotify Video",
+        key="spotify_video",
+        icon="🎬",
+        title_mode="single",
+        max_description_chars=4000,
+        description_height=120,
+        description_guidance="Video-podcast positioning focused on watch intent and chapter moments.",
+    ),
+    MarketingEditorPlatformSpec(
+        label="Apple Podcasts",
+        key="apple",
+        icon="🍎",
+        title_mode="single",
+        max_description_chars=4000,
+        description_height=120,
+        description_guidance="Editorial-style audio description tuned for Apple podcast browsing.",
+    ),
+    MarketingEditorPlatformSpec(
+        label="Apple Video",
+        key="apple_video",
+        icon="📺",
+        title_mode="single",
+        max_description_chars=4000,
+        description_height=120,
+        description_guidance="Video-forward Apple copy emphasizing visual moments and episode flow.",
+    ),
+    MarketingEditorPlatformSpec(
+        label="TikTok",
+        key="tiktok",
+        icon="📱",
+        title_mode="none",
+        max_description_chars=150,
+        description_height=80,
+        description_guidance="Ultra-short hook caption optimized for first-swipe attention.",
+    ),
+    MarketingEditorPlatformSpec(
+        label="Instagram",
+        key="instagram",
+        icon="📷",
+        title_mode="none",
+        max_description_chars=2200,
+        description_height=80,
+        description_guidance="Reel-style caption with a quick hook and clear audience context.",
+    ),
+    MarketingEditorPlatformSpec(
+        label="LinkedIn",
+        key="linkedin",
+        icon="💼",
+        title_mode="none",
+        max_description_chars=3000,
+        description_height=150,
+        description_guidance="Professional narrative focused on insight, outcomes, and practical value.",
+    ),
+    MarketingEditorPlatformSpec(
+        label="Twitter/X",
+        key="twitter",
+        icon="🐦",
+        title_mode="none",
+        max_description_chars=280,
+        description_height=80,
+        description_guidance="Single high-signal post that fits in one short-form tweet.",
+    ),
+    MarketingEditorPlatformSpec(
+        label="Facebook",
+        key="facebook",
+        icon="📘",
+        title_mode="none",
+        max_description_chars=63206,
+        description_height=120,
+        description_guidance="Conversational post copy with enough context for feed-driven discovery.",
+    ),
+)
+
+
+def _marketing_editor_platform_specs() -> tuple[MarketingEditorPlatformSpec, ...]:
+    """Return canonical marketing editor platform specs in deterministic order."""
+    return _MARKETING_EDITOR_PLATFORM_SPECS
+
 
 # Page config must be first Streamlit command
 st.set_page_config(
@@ -1315,18 +1429,16 @@ def render_thumbnail_selector(job_dir: Path) -> None:
         st.info("No thumbnail candidates found.")
         return
 
-    # Load current selection
-    review_path = job_dir / "review" / "review_state.json"
-    selected_idx = 0
-    if review_path.exists():
-        try:
-            decisions = ReviewDecisions.model_validate_json(review_path.read_text())
-            selected_idx = decisions.selected_thumbnail or 0
-        except Exception:
-            pass
+    decisions = _load_review_decisions(job_dir)
+    selected_thumbnails = _normalize_ranked_thumbnail_selection(
+        decisions.selected_thumbnails,
+        decisions.selected_thumbnail,
+        max_index=len(thumbnails) - 1,
+    )
+    rank_by_index = {index: rank for rank, index in enumerate(selected_thumbnails, start=1)}
 
-    # Display thumbnail grid
-    st.markdown("**Select a thumbnail frame:**")
+    st.markdown("**Select up to 3 thumbnail frames (ranked):**")
+    st.caption("Selection order is preserved. Rank #1 is the primary thumbnail.")
 
     cols_per_row = 3
     for row_start in range(0, len(thumbnails), cols_per_row):
@@ -1336,28 +1448,54 @@ def render_thumbnail_selector(job_dir: Path) -> None:
         ):
             thumb = thumbnails[thumb_idx]
             with cols[col_idx]:
-                # Thumbnail card
-                is_selected = thumb_idx == selected_idx
-                border_style = (
-                    "border: 3px solid #00ff00;" if is_selected else "border: 1px solid #ccc;"
-                )
+                rank = rank_by_index.get(thumb_idx)
+                if rank is None:
+                    st.caption("Not selected")
+                elif rank == 1:
+                    st.caption("Selected #1 (Primary)")
+                else:
+                    st.caption(f"Selected #{rank} (Alternate)")
 
-                st.markdown(
-                    f"""
-                    <div style="padding: 10px; {border_style} border-radius: 8px; margin: 5px;">
-                        <p><strong>⏱️ {thumb.get("timestamp", "N/A")}</strong></p>
-                        <p style="font-size: 0.9em;">{thumb.get("visual_description", "")[:100]}...</p>
-                        <p style="font-size: 0.8em; color: #666;">💬 "{thumb.get("suggested_text_overlay", "")}"</p>
-                        <p style="font-size: 0.8em;">😊 {thumb.get("emotion", "neutral")}</p>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
+                image_path = _thumbnail_image_path(job_dir, thumb)
+                if image_path is not None and image_path.exists():
+                    try:
+                        st.image(str(image_path), width="stretch")
+                    except TypeError:
+                        # Streamlit versions before width="stretch" support this fallback path.
+                        st.image(str(image_path), use_container_width=True)
+                else:
+                    st.caption("Preview image unavailable for this candidate.")
+
+                timestamp_label = str(thumb.get("timestamp", "N/A"))
+                visual_description = str(thumb.get("visual_description", "")).strip()
+                overlay_text = str(thumb.get("suggested_text_overlay", "")).strip()
+                emotion = str(thumb.get("emotion", "neutral")).strip() or "neutral"
+                recommendation_signal = str(thumb.get("recommendation_signal", "")).strip()
+                virality_score = thumb.get("virality_score")
+
+                st.caption(f"⏱️ {timestamp_label}")
+                if visual_description:
+                    st.caption(visual_description[:120])
+                if overlay_text:
+                    st.caption(f'💬 "{overlay_text[:120]}"')
+                if isinstance(virality_score, (int, float)):
+                    st.caption(f"🔥 Virality: {float(virality_score):.1f}/10")
+                if recommendation_signal:
+                    st.caption(f"⭐ Signal: {recommendation_signal}")
+                st.caption(f"😊 {emotion}")
+
+                can_add_more = len(selected_thumbnails) < 3
+                if rank is not None:
+                    button_label = f"Remove #{rank}"
+                    button_disabled = False
+                else:
+                    button_label = (
+                        f"Add as #{len(selected_thumbnails) + 1}" if can_add_more else "Max 3"
+                    )
+                    button_disabled = not can_add_more
 
                 if st.button(
-                    "✓ Select" if not is_selected else "✓ Selected",
-                    key=f"thumb_select_{thumb_idx}",
-                    disabled=is_selected,
+                    button_label, key=f"thumb_select_{thumb_idx}", disabled=button_disabled
                 ):
                     update_thumbnail_selection(job_dir, thumb_idx)
                     st.rerun()
@@ -1486,56 +1624,55 @@ def render_marketing_editor(job_dir: Path) -> None:
                     st.warning(f"Failed to load viral signals: {e}")
 
     # Platform-specific marketing
-    platforms = [
-        ("YouTube", "youtube", "🎥"),
-        ("Spotify", "spotify", "🎧"),
-        ("TikTok", "tiktok", "📱"),
-        ("Instagram", "instagram", "📷"),
-        ("LinkedIn", "linkedin", "💼"),
-        ("Twitter/X", "twitter", "🐦"),
-        ("Facebook", "facebook", "📘"),
-    ]
-
     edited_marketing: dict[str, Any] = {}
 
-    for platform_name, platform_key, icon in platforms:
+    for platform_spec in _marketing_editor_platform_specs():
+        platform_name = platform_spec.label
+        platform_key = platform_spec.key
+        icon = platform_spec.icon
         platform_data = marketing.get(platform_key, {})
 
         with st.expander(f"{icon} {platform_name}", expanded=(platform_key == "youtube")):
-            # Titles (for platforms that support multiple)
-            if platform_key in ["youtube"]:
-                titles = platform_data.get("titles", [])
+            titles = [title for title in platform_data.get("titles", []) if isinstance(title, str)]
+
+            # Titles
+            if platform_spec.title_mode == "multi":
                 st.markdown("**Title Options:**")
                 edited_titles = []
-                for i, title in enumerate(titles[:5]):
+                existing_titles = titles[:5] if titles else [""]
+                for i, title in enumerate(existing_titles):
                     edited_title = st.text_input(
                         f"Title {i + 1}",
                         value=title,
                         key=f"{platform_key}_title_{i}",
                     )
-                    edited_titles.append(edited_title)
+                    if edited_title.strip():
+                        edited_titles.append(edited_title.strip())
                 edited_marketing[platform_key] = {"titles": edited_titles}
+            elif platform_spec.title_mode == "single":
+                st.markdown("**Episode Title:**")
+                base_title = titles[0] if titles else ""
+                edited_title = st.text_input(
+                    "Title",
+                    value=base_title,
+                    key=f"{platform_key}_title_0",
+                )
+                edited_marketing[platform_key] = {
+                    "titles": [edited_title.strip()] if edited_title.strip() else []
+                }
 
             # Description
             description = platform_data.get("description", "")
-            max_chars = {
-                "youtube": 5000,
-                "tiktok": 150,
-                "instagram": 2200,
-                "twitter": 280,
-                "linkedin": 3000,
-                "facebook": 63206,
-                "spotify": 4000,
-            }.get(platform_key, 2000)
 
             edited_desc = st.text_area(
                 "Description",
                 value=description,
-                height=150 if platform_key in ["youtube", "linkedin"] else 80,
-                max_chars=max_chars,
+                height=platform_spec.description_height,
+                max_chars=platform_spec.max_description_chars,
                 key=f"{platform_key}_desc",
             )
-            st.caption(f"{len(edited_desc)}/{max_chars} characters")
+            st.caption(f"{len(edited_desc)}/{platform_spec.max_description_chars} characters")
+            st.caption(platform_spec.description_guidance)
 
             if platform_key not in edited_marketing:
                 edited_marketing[platform_key] = {}
@@ -1791,19 +1928,83 @@ def save_review_decisions(job_dir: Path, decisions: ReviewDecisions | None) -> N
 
 
 def update_thumbnail_selection(job_dir: Path, thumbnail_idx: int) -> None:
-    """Update selected thumbnail in review state."""
+    """Toggle thumbnail selection while preserving ranked order and compatibility mirror."""
+    if thumbnail_idx < 0:
+        return
+
     review_dir = job_dir / "review"
     review_dir.mkdir(parents=True, exist_ok=True)
-
     review_path = review_dir / "review_state.json"
 
-    if review_path.exists():
-        decisions = ReviewDecisions.model_validate_json(review_path.read_text())
-    else:
-        decisions = ReviewDecisions()
+    decisions = _load_review_decisions(job_dir)
 
-    decisions.selected_thumbnail = thumbnail_idx
+    current_ranked = _normalize_ranked_thumbnail_selection(
+        decisions.selected_thumbnails,
+        decisions.selected_thumbnail,
+    )
+    updated_ranked = _toggle_ranked_thumbnail_selection(current_ranked, thumbnail_idx)
+    decisions.selected_thumbnails = updated_ranked
+    decisions.selected_thumbnail = updated_ranked[0] if updated_ranked else None
     review_path.write_text(decisions.model_dump_json(indent=2))
+
+
+def _normalize_ranked_thumbnail_selection(
+    selected_thumbnails: list[int] | None,
+    primary_thumbnail: int | None,
+    max_index: int | None = None,
+) -> list[int]:
+    """Normalize ranked thumbnail selections to unique 0-based indices capped at 3.
+
+    ``max_index`` bounds selections to the current thumbnail count so stale
+    indices from a previous analysis run cannot lock the UI.
+    """
+    normalized: list[int] = []
+    if isinstance(primary_thumbnail, int) and primary_thumbnail >= 0:
+        if max_index is None or primary_thumbnail <= max_index:
+            normalized.append(primary_thumbnail)
+
+    for index in selected_thumbnails or []:
+        if not isinstance(index, int) or index < 0 or index in normalized:
+            continue
+        if max_index is not None and index > max_index:
+            continue
+        normalized.append(index)
+        if len(normalized) >= 3:
+            break
+
+    return normalized
+
+
+def _toggle_ranked_thumbnail_selection(current: list[int], thumbnail_idx: int) -> list[int]:
+    """Toggle one thumbnail index in a ranked list with a max of three entries."""
+    deduped = _normalize_ranked_thumbnail_selection(current, None)
+    if thumbnail_idx in deduped:
+        return [index for index in deduped if index != thumbnail_idx]
+    if len(deduped) >= 3:
+        return deduped
+    return [*deduped, thumbnail_idx]
+
+
+def _thumbnail_image_path(job_dir: Path, thumbnail: dict[str, Any]) -> Path | None:
+    """Resolve thumbnail preview image path from analysis payload candidate metadata."""
+    raw_path = thumbnail.get("image_path")
+    if not isinstance(raw_path, str) or not raw_path.strip():
+        return None
+
+    candidate = Path(raw_path)
+    if candidate.is_absolute():
+        logger.warning("rejected_absolute_thumbnail_path", path=raw_path)
+        return None
+
+    job_root = job_dir.resolve()
+    resolved = (job_root / candidate).resolve()
+    try:
+        resolved.relative_to(job_root)
+    except ValueError:
+        logger.warning("rejected_thumbnail_path_outside_job_dir", path=raw_path)
+        return None
+
+    return resolved
 
 
 def update_export_platforms(job_dir: Path, platforms: list[str]) -> tuple[list[str], list[str]]:

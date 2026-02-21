@@ -132,6 +132,48 @@ class TestPlatformSpecs:
         assert spec.gop == 30
         assert spec.keyint_min == 30
 
+    def test_thumbnail_config_defaults_cover_selected_video_targets(self) -> None:
+        """Thumbnail config should define typed constraints for youtube/spotify_video/apple_video."""
+        config = load_config()
+
+        youtube = config.thumbnails.youtube
+        spotify_video = config.thumbnails.spotify_video
+        apple_video = config.thumbnails.apple_video
+
+        assert (youtube.width, youtube.height, youtube.aspect_ratio) == (1280, 720, "16:9")
+        assert (spotify_video.width, spotify_video.height, spotify_video.aspect_ratio) == (
+            1280,
+            720,
+            "16:9",
+        )
+        assert (apple_video.width, apple_video.height, apple_video.aspect_ratio) == (
+            3000,
+            3000,
+            "1:1",
+        )
+        assert "jpg" in youtube.formats
+        assert youtube.max_size_bytes == 2 * 1024 * 1024
+
+    def test_thumbnail_config_rejects_mismatched_aspect_ratio(self, tmp_path: Path) -> None:
+        """Invalid thumbnail width/height to aspect mapping should fail fast."""
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "\n".join(
+                [
+                    "thumbnails:",
+                    "  youtube:",
+                    "    width: 1280",
+                    "    height: 720",
+                    "    aspect_ratio: '1:1'",
+                    "    formats: [jpg]",
+                    "    max_size_bytes: 2097152",
+                ]
+            )
+        )
+
+        with pytest.raises(ValueError, match=r"aspect_ratio|width|height"):
+            load_config(config_path)
+
     def test_platform_spec_defaults_preserve_legacy_audio_only_targets(self) -> None:
         """Dedicated video targets must not change legacy spotify/apple audio-only presets."""
         config = load_config()
@@ -558,6 +600,106 @@ class TestMarketingDocGeneration:
         assert "TikTok" in content
         assert "Test Title 1" in content
 
+    def test_marketing_doc_spotify_video_apple_video_instagram_facebook_order(
+        self, tmp_path: Path
+    ) -> None:
+        """Marketing doc should include all supported marketing platforms in stable order."""
+        config = load_config()
+        stage = RenderStage(config)
+
+        analysis_dir = tmp_path / "analysis"
+        analysis_dir.mkdir()
+
+        analysis_data = {
+            "marketing": {
+                "youtube": {"description": "YT"},
+                "spotify": {"description": "Spotify audio"},
+                "spotify_video": {"description": "Spotify video"},
+                "apple": {"description": "Apple audio"},
+                "apple_video": {"description": "Apple video"},
+                "tiktok": {"description": "TikTok"},
+                "instagram": {"description": "Instagram"},
+                "linkedin": {"description": "LinkedIn"},
+                "twitter": {"description": "Twitter"},
+                "facebook": {"description": "Facebook"},
+            },
+            "metadata": {
+                "summary": "Episode summary",
+                "topics": ["growth"],
+                "mood": "energetic",
+            },
+        }
+        (analysis_dir / "analysis.json").write_text(json.dumps(analysis_data))
+
+        stage._generate_marketing_doc(tmp_path)
+
+        content = (tmp_path / "output" / "marketing" / "copy.md").read_text()
+        lines = [line.strip() for line in content.splitlines()]
+        expected_sections = [
+            "## YouTube",
+            "## Spotify",
+            "## Spotify Video",
+            "## Apple Podcasts",
+            "## Apple Podcasts Video",
+            "## TikTok",
+            "## Instagram Reels",
+            "## LinkedIn",
+            "## Twitter/X",
+            "## Facebook",
+        ]
+
+        previous_index = -1
+        for section in expected_sections:
+            assert section in lines, f"Missing section: {section}"
+            current_index = lines.index(section)
+            assert current_index > previous_index, f"Section out of order: {section}"
+            previous_index = current_index
+
+    def test_marketing_doc_full_platform_headers_present_with_partial_payload(
+        self, tmp_path: Path
+    ) -> None:
+        """Marketing doc should keep full platform headers even when payload is sparse."""
+        stage = RenderStage(load_config())
+
+        analysis_dir = tmp_path / "analysis"
+        analysis_dir.mkdir()
+        (analysis_dir / "analysis.json").write_text(
+            json.dumps(
+                {
+                    "marketing": {
+                        "youtube": {
+                            "titles": ["Hook title"],
+                            "description": "Primary long-form description",
+                            "hashtags": ["#podcast"],
+                        }
+                    },
+                    "metadata": {
+                        "summary": "Sparse payload",
+                        "topics": ["topic"],
+                        "mood": "focused",
+                    },
+                }
+            )
+        )
+
+        stage._generate_marketing_doc(tmp_path)
+
+        content = (tmp_path / "output" / "marketing" / "copy.md").read_text()
+        lines = [line.strip() for line in content.splitlines()]
+        for section in (
+            "## YouTube",
+            "## Spotify",
+            "## Spotify Video",
+            "## Apple Podcasts",
+            "## Apple Podcasts Video",
+            "## TikTok",
+            "## Instagram Reels",
+            "## LinkedIn",
+            "## Twitter/X",
+            "## Facebook",
+        ):
+            assert section in lines, f"Missing section: {section}"
+
 
 class TestRenderEnhancementAndThumbnailOutputs:
     """Tests for enhancement and thumbnail artifact behavior."""
@@ -764,6 +906,96 @@ class TestRenderEnhancementFilterCapabilities:
 
         assert result.success is False
         assert "missing required FFmpeg filter" in (result.error or "")
+
+
+class TestThumbnailCompliance:
+    """Tests for per-target thumbnail compliance generation and validation."""
+
+    def test_thumbnail_compliance_generates_target_outputs_for_selected_platforms(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        """Selected platforms should receive derived thumbnail assets after compliance pass."""
+        stage = RenderStage(load_config())
+        source_thumbnail = tmp_path / "output" / "thumbnails" / "thumbnail_01.jpg"
+        source_thumbnail.parent.mkdir(parents=True, exist_ok=True)
+        source_thumbnail.write_bytes(b"thumbnail")
+
+        def _fake_transform(_source: Path, target: Path, _spec) -> None:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(b"derived")
+
+        monkeypatch.setattr(stage, "_transform_thumbnail_to_spec", _fake_transform)
+        monkeypatch.setattr(stage, "_validate_thumbnail_asset", lambda *_args, **_kwargs: [])
+
+        result = stage._enforce_thumbnail_target_compliance(
+            job_dir=tmp_path,
+            selected_platforms=["youtube", "spotify_video"],
+            thumbnail_result={"thumbnail_paths": ["output/thumbnails/thumbnail_01.jpg"]},
+        )
+
+        assert result["status"] == "complete"
+        assert result["platform_results"]["youtube"]["status"] == "success"
+        assert result["platform_results"]["spotify_video"]["status"] == "success"
+        assert any(path.startswith("output/thumbnails/youtube/") for path in result["outputs"])
+        assert any(
+            path.startswith("output/thumbnails/spotify_video/") for path in result["outputs"]
+        )
+
+    def test_thumbnail_compliance_fails_with_target_specific_diagnostics(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        """Compliance failures should return explicit platform-specific issue payloads."""
+        stage = RenderStage(load_config())
+        source_thumbnail = tmp_path / "output" / "thumbnails" / "thumbnail_01.jpg"
+        source_thumbnail.parent.mkdir(parents=True, exist_ok=True)
+        source_thumbnail.write_bytes(b"thumbnail")
+
+        def _fake_transform(_source: Path, target: Path, _spec) -> None:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(b"derived")
+
+        monkeypatch.setattr(stage, "_transform_thumbnail_to_spec", _fake_transform)
+        monkeypatch.setattr(
+            stage,
+            "_validate_thumbnail_asset",
+            lambda _path, _spec, platform: (
+                [f"{platform}: thumbnail dimensions mismatch"] if platform == "apple_video" else []
+            ),
+        )
+
+        result = stage._enforce_thumbnail_target_compliance(
+            job_dir=tmp_path,
+            selected_platforms=["apple_video"],
+            thumbnail_result={"thumbnail_paths": ["output/thumbnails/thumbnail_01.jpg"]},
+        )
+
+        assert result["status"] == "failed"
+        assert "apple_video" in result["error"]
+        assert result["platform_results"]["apple_video"]["status"] == "failed"
+        assert (
+            "thumbnail dimensions mismatch"
+            in result["platform_results"]["apple_video"]["issues"][0]
+        )
+
+    def test_thumbnail_compliance_fail_fast_when_required_assets_missing(
+        self, tmp_path: Path
+    ) -> None:
+        """Selected target requiring thumbnails should fail when no generated assets exist."""
+        stage = RenderStage(load_config())
+
+        result = stage._enforce_thumbnail_target_compliance(
+            job_dir=tmp_path,
+            selected_platforms=["youtube"],
+            thumbnail_result={"status": "skipped", "thumbnail_paths": []},
+        )
+
+        assert result["status"] == "failed"
+        assert "no generated thumbnail assets" in result["error"]
+        assert result["platform_results"]["youtube"]["status"] == "failed"
 
 
 class TestPhase6ScopeBoundary:

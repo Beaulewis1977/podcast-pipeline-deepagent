@@ -68,6 +68,38 @@ def test_ui_app_preview_metadata_duration_drives_slider(tmp_path: Path) -> None:
     assert mock_st.slider.call_args.kwargs["max_value"] == 47.5
 
 
+def test_ui_app_normalize_ranked_thumbnail_selection_prefers_primary_and_dedupes() -> None:
+    """Ranked selection normalizer should keep primary first, dedupe, and cap at 3."""
+    from podcast_pipeline.ui.app import _normalize_ranked_thumbnail_selection
+
+    normalized = _normalize_ranked_thumbnail_selection([2, 3, 2, 4, 5], primary_thumbnail=1)
+
+    assert normalized == [1, 2, 3]
+
+
+def test_ui_app_toggle_ranked_thumbnail_selection_handles_add_remove_and_cap() -> None:
+    """Ranked selector toggle should append/remove deterministically and cap at 3 entries."""
+    from podcast_pipeline.ui.app import _toggle_ranked_thumbnail_selection
+
+    assert _toggle_ranked_thumbnail_selection([0], 2) == [0, 2]
+    assert _toggle_ranked_thumbnail_selection([0, 2], 2) == [0]
+    assert _toggle_ranked_thumbnail_selection([0, 1, 2], 3) == [0, 1, 2]
+
+
+def test_ui_app_thumbnail_image_path_resolves_relative_artifact(tmp_path: Path) -> None:
+    """Thumbnail path helper should resolve relative analysis image paths under job dir."""
+    from podcast_pipeline.ui.app import _thumbnail_image_path
+
+    resolved = _thumbnail_image_path(
+        tmp_path,
+        {"image_path": "intermediate/thumbnails/thumbnail_01_00005000ms.jpg"},
+    )
+    assert resolved == tmp_path / "intermediate" / "thumbnails" / "thumbnail_01_00005000ms.jpg"
+
+    assert _thumbnail_image_path(tmp_path, {"image_path": ""}) is None
+    assert _thumbnail_image_path(tmp_path, {}) is None
+
+
 def test_ui_app_timeline_reads_metadata_for_duration_caption(tmp_path: Path) -> None:
     """Timeline should surface source duration from ingest metadata."""
     from podcast_pipeline.ui.app import render_timeline_editor
@@ -125,6 +157,170 @@ def test_ui_app_marketing_review_flow_save_writes_review_state_only(tmp_path: Pa
     assert review_state.marketing_edits["__metadata__"]["topics"] == ["topic-1", "topic-2"]
 
     assert (tmp_path / "review" / "edit_plan.json").exists()
+
+
+def test_ui_app_marketing_platform_video_matrix_save_persists_all_keys(tmp_path: Path) -> None:
+    """Marketing save helper should persist edits for every supported platform key."""
+    from podcast_pipeline.stages.review import ReviewDecisions
+    from podcast_pipeline.ui.app import _save_marketing_edits_to_review_flow
+
+    _write_json(
+        tmp_path / "analysis" / "analysis.json",
+        {
+            "marketing": {},
+            "metadata": {"summary": "Original", "topics": [], "mood": "focused"},
+            "content_cuts": [],
+        },
+    )
+    _write_json(tmp_path / "analysis" / "filler_cuts.json", [])
+
+    edited_marketing = {
+        "youtube": {"titles": ["YT title"], "description": "YT desc", "hashtags": ["#yt"]},
+        "spotify": {"titles": ["Spotify title"], "description": "Spotify desc", "hashtags": []},
+        "spotify_video": {"titles": ["Spotify video title"], "description": "SV desc"},
+        "apple": {"titles": ["Apple title"], "description": "Apple desc", "hashtags": []},
+        "apple_video": {"titles": ["Apple video title"], "description": "AV desc"},
+        "tiktok": {"description": "TikTok desc", "hashtags": ["#fyp"]},
+        "instagram": {"description": "Instagram desc", "hashtags": ["#reels"]},
+        "linkedin": {"description": "LinkedIn desc", "hashtags": ["#insight"]},
+        "twitter": {"description": "Twitter desc", "hashtags": []},
+        "facebook": {"description": "Facebook desc", "hashtags": ["#podcast"]},
+    }
+
+    _save_marketing_edits_to_review_flow(
+        tmp_path,
+        ReviewDecisions(),
+        edited_marketing=edited_marketing,
+        summary="Updated summary",
+        topics="growth, retention",
+        mood="energetic",
+    )
+
+    review_state = ReviewDecisions.model_validate_json(
+        (tmp_path / "review" / "review_state.json").read_text()
+    )
+    saved_keys = set(review_state.marketing_edits.keys())
+    assert saved_keys >= {
+        "youtube",
+        "spotify",
+        "spotify_video",
+        "apple",
+        "apple_video",
+        "tiktok",
+        "instagram",
+        "linkedin",
+        "twitter",
+        "facebook",
+        "__metadata__",
+    }
+    assert review_state.marketing_edits["spotify_video"]["titles"] == ["Spotify video title"]
+    assert review_state.marketing_edits["apple_video"]["description"] == "AV desc"
+
+
+def test_ui_app_marketing_editor_exposes_full_matrix_and_trend_signals(tmp_path: Path) -> None:
+    """Marketing editor should keep trend context visible while exposing all platform editors."""
+    from podcast_pipeline.ui.app import render_marketing_editor
+
+    _write_json(
+        tmp_path / "analysis" / "analysis.json",
+        {
+            "marketing": {
+                "youtube": {"titles": ["YT title"], "description": "YT desc", "hashtags": ["#yt"]},
+                "spotify": {
+                    "titles": ["Spotify title"],
+                    "description": "Spotify desc",
+                    "hashtags": [],
+                },
+                "spotify_video": {
+                    "titles": ["Spotify video title"],
+                    "description": "Spotify video desc",
+                    "hashtags": [],
+                },
+                "apple": {"titles": ["Apple title"], "description": "Apple desc", "hashtags": []},
+                "apple_video": {
+                    "titles": ["Apple video title"],
+                    "description": "Apple video desc",
+                    "hashtags": [],
+                },
+                "tiktok": {"description": "TikTok desc", "hashtags": ["#fyp"]},
+                "instagram": {"description": "Instagram desc", "hashtags": ["#reels"]},
+                "linkedin": {"description": "LinkedIn desc", "hashtags": ["#insight"]},
+                "twitter": {"description": "Twitter desc", "hashtags": []},
+                "facebook": {"description": "Facebook desc", "hashtags": ["#podcast"]},
+            },
+            "metadata": {"summary": "Summary", "topics": ["growth"], "mood": "energetic"},
+            "content_cuts": [],
+        },
+    )
+    _write_json(tmp_path / "analysis" / "filler_cuts.json", [])
+    _write_json(
+        tmp_path / "analysis" / "research.json",
+        {
+            "query": "podcast growth",
+            "suggested_keywords": ["growth loop", "retention hook"],
+            "insights": {
+                "competition_score": 63.4,
+                "competition_tier": "medium",
+                "best_posting_windows": [{"window": "15:00-15:59 UTC", "videos_published": 8}],
+            },
+        },
+    )
+    _write_json(
+        tmp_path / "analysis" / "viral_signals.json",
+        {
+            "signals": [
+                {
+                    "timestamp_seconds": 42.0,
+                    "signal_type": "controversy",
+                    "description": "Hot take spike",
+                    "strength": 0.9,
+                }
+            ],
+            "clip_scores": [
+                {
+                    "clip": {"start_seconds": 30, "end_seconds": 50, "description": "Clip A"},
+                    "ai_score": 8.2,
+                    "detector_score": 8.8,
+                    "combined_score": 8.53,
+                    "reasons": ["Strong hook"],
+                }
+            ],
+        },
+    )
+
+    mock_st = MagicMock()
+    mock_st.session_state = {}
+    mock_st.expander.return_value = contextlib.nullcontext()
+    mock_st.spinner.return_value = contextlib.nullcontext()
+    mock_st.text_area.side_effect = lambda *_args, value="", **_kwargs: value
+    mock_st.text_input.side_effect = lambda *_args, value="", **_kwargs: value
+    mock_st.button.return_value = False
+    mock_st.columns.side_effect = lambda spec: [
+        MagicMock() for _ in range(len(spec) if isinstance(spec, list) else int(spec))
+    ]
+
+    with patch("podcast_pipeline.ui.app.st", mock_st):
+        render_marketing_editor(tmp_path)
+
+    desc_keys = {
+        call.kwargs.get("key")
+        for call in mock_st.text_area.call_args_list
+        if isinstance(call.kwargs.get("key"), str) and call.kwargs["key"].endswith("_desc")
+    }
+    assert desc_keys == {
+        "youtube_desc",
+        "spotify_desc",
+        "spotify_video_desc",
+        "apple_desc",
+        "apple_video_desc",
+        "tiktok_desc",
+        "instagram_desc",
+        "linkedin_desc",
+        "twitter_desc",
+        "facebook_desc",
+    }
+    mock_st.write.assert_any_call("growth loop, retention hook")
+    assert mock_st.table.called
 
 
 def test_ui_app_marketing_review_flow_regeneration_resets_review_state(tmp_path: Path) -> None:

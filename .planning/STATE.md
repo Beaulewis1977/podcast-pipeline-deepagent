@@ -1,28 +1,28 @@
 # Project State: Podcast Pipeline
 
 **Last updated:** 2026-02-20
-**Current phase:** Phase 6 complete (verified)
-**Overall progress:** 100.0% (36/36 plans complete)
+**Current phase:** Phase 6.1 complete (verified)
+**Overall progress:** 100.0% (41/41 plans complete)
 
 ## Project Reference
 
 See: `.planning/PROJECT.md`
 
 **Core value:** Turn raw podcast recording into multi-platform content without editing software or manual copywriting.
-**Current focus:** Phase 6 is complete and verified; v1.0 milestone is ready for audit/closeout.
+**Current focus:** Phase 6.1 execution for trend-aware, LLM-generated cross-platform marketing copy parity + thumbnail visual selection MVP.
 
 ## Current Position
 
 ```text
-Phase:    6 complete (all planned phases complete)
-Plan:     3/3 complete in Phase 6; 36 completed overall
-Status:   Phase 6 execution + verification complete
-Last activity: 2026-02-20 - Verified Phase 6 (9/9 must-haves passed)
+Phase:    6.1 complete (verified)
+Plan:     5/5 complete in Phase 6.1; 41 completed overall
+Status:   Phase verified and complete
+Last activity: 2026-02-20 - Verified Phase 6.1 goal with no structural gaps (`06.1-...-VERIFICATION.md`)
 
-Progress: [█████████████████████████] 100.0% (36/36 plans complete)
+Progress: [█████████████████████████] 100.0% (41/41 plans complete)
 ```
 
-**Next Phase:** None (roadmap phases complete; proceed to milestone audit)
+**Next Phase:** Milestone audit / completion routing
 
 ## Phase Status
 
@@ -35,14 +35,15 @@ Progress: [███████████████████████
 | 5 | Video Podcast Platforms | Complete (verified) | 3/3 | 100% |
 | 5.1 | Streamlit Video Platform UI | Complete (verified) | 3/3 | 100% |
 | 6 | Audio/Video Enhancement & Podcast Video Platform | Complete (verified) | 3/3 | 100% |
+| 6.1 | Video Marketing Copy Parity + Thumbnail Visual Selection MVP | Complete (verified) | 5/5 | 100% |
 
 ## Performance Metrics
 
 | Metric | Value |
 |--------|-------|
-| Plans completed | 36/36 |
+| Plans completed | 41/41 |
 | Requirements done | 35/83 (21 partial) |
-| Phases complete | 6/6 |
+| Phases complete | 7/7 |
 | Estimated completion | In progress |
 
 ## Accumulated Context
@@ -120,6 +121,20 @@ Progress: [███████████████████████
 | Render preflight derives required FFmpeg filters from enabled enhancement toggles | Fails fast with actionable diagnostics before expensive render runs | 2026-02-20 |
 | Dereverb preprocessing uses optional noisereduce with policy-driven warn-skip/fail fallback | Keeps baseline installs stable while supporting opt-in enhancement depth | 2026-02-20 |
 | Color correction is limited to canonical normalize/grayworld/optional-eq filters | Avoids undocumented FFmpeg filter drift and keeps enhancement scope additive | 2026-02-20 |
+| MarketingCopy schema now includes full 10-platform matrix including spotify/apple video variants | Prevents provider/model drift from stripping platform keys before artifacts/UI consume them | 2026-02-20 |
+| Provider prompt contract enforces viral-impact but professional, platform-tailored copy for all marketing keys | Raises baseline copy quality and blocks generic one-size output regressions | 2026-02-20 |
+| Analyze prompt context now injects compact trend signals from existing research/viral artifacts when present | Enables trend-aware copy generation without breaking no-research execution paths | 2026-02-20 |
+| Marketing render output now enforces deterministic full-platform section ordering with adjacent audio/video variants | Prevents silent section loss and keeps artifact parity stable with marketing schema keys | 2026-02-20 |
+| Streamlit marketing editor behavior is now driven by a canonical per-platform spec map | Centralizes title modes, description limits, and guidance so full-platform editing stays consistent and testable | 2026-02-20 |
+| ThumbnailCandidate now carries bounded virality metadata fields with safe defaults | Preserves backward compatibility while exposing explicit ranking/recommendation context for thumbnail selection | 2026-02-20 |
+| Provider thumbnail prompt contract now requires virality metadata and at least one recommendation signal | Prevents underspecified thumbnail candidates and strengthens selection evidence quality | 2026-02-20 |
+| Review decisions now support ranked selected_thumbnails with selected_thumbnail legacy mirroring | Enables 1..3 ordered thumbnail picks while keeping old review_state payloads valid | 2026-02-20 |
+| Analyze stage now materializes thumbnail preview images and stores relative image_path metadata in analysis payloads | Enables Streamlit review UI to render visual thumbnails without on-demand extraction cost | 2026-02-20 |
+| Streamlit thumbnail selector now uses ranked toggle state (max 3) with explicit primary/alternate semantics | Makes operator thumbnail intent deterministic while preserving ranked order across reruns | 2026-02-20 |
+| Ranked thumbnail persistence normalizes selected_thumbnails and mirrors rank #1 into selected_thumbnail | Maintains backward compatibility for legacy scalar consumers while enabling multi-select UX | 2026-02-20 |
+| Thumbnail constraints are now typed per target (`youtube`, `spotify_video`, `apple_video`) with explicit source/policy metadata | Makes compliance rules operator-visible and deterministic across environments | 2026-02-20 |
+| Render now derives and validates target-specific thumbnail artifacts before success reporting | Prevents silent success when selected target thumbnail requirements are unsatisfied | 2026-02-20 |
+| Thumbnail MVP boundary is documented as single primary + optional alternates with per-platform assignment deferred | Locks scope and avoids hidden UX assumptions beyond current phase deliverable | 2026-02-20 |
 
 ### Roadmap Evolution
 
@@ -151,6 +166,13 @@ Progress: [███████████████████████
 - Phase 6 execution continued: completed 06-02 de-esser/adeclick integration + optional noisereduce dereverb path
 - Phase 6 execution completed: finished 06-03 canonical color correction chain + safety boundary regressions
 - Phase 6 verified: 9/9 must-haves passed with no structural gaps
+- Phase 6.1 expanded: video marketing copy parity + thumbnail visual selection MVP (5 plans, 4 waves)
+- Phase 6.1 execution started: completed 06.1-01 full-platform marketing schema/prompt contract lock with trend-context prompt wiring regressions
+- Phase 6.1 execution continued: completed 06.1-02 full-platform marketing render/UI parity with trend-visible editing regressions
+- Phase 6.1 execution continued: completed 06.1-03 thumbnail virality schema/prompt contract + ranked review-state selection compatibility
+- Phase 6.1 execution continued: completed 06.1-04 analyze-stage thumbnail frame materialization + Streamlit visual ranked selector persistence
+- Phase 6.1 execution completed: finished 06.1-05 per-target thumbnail compliance enforcement + MVP/deferred assignment docs
+- Phase 6.1 verified: 7/7 must-haves passed with no structural gaps
 
 ### Technical Notes
 
@@ -209,16 +231,24 @@ Progress: [███████████████████████
 - 2026-02-20: Completed 06-02-PLAN.md (FFmpeg-native de-esser/adeclick chain and optional noisereduce dereverb fallback path)
 - 2026-02-20: Completed 06-03-PLAN.md (canonical normalize/grayworld color correction path with bounded config defaults and safety regressions)
 - 2026-02-20: Verified Phase 6 goal (06-audio-video-enhancement-podcast-video-platform-VERIFICATION.md, status: passed)
+- 2026-02-20: Expanded Phase 6.1 plans to executable thumbnail MVP scope (`06.1-01`..`06.1-05`) with explicit per-target thumbnail compliance and deferred per-platform assignment UX
+- 2026-02-20: Tightened Phase 6.1 marketing plans to require full-platform, trend-aware, viral-professional LLM copy generation with regression guardrails
+- 2026-02-20: Completed 06.1-01-PLAN.md (full marketing platform matrix in model + provider prompt contract with viral-professional directives + analyze trend-context artifact injection + regressions)
+- 2026-02-20: Completed 06.1-02-PLAN.md (render marketing doc full-matrix parity, canonical Streamlit marketing editor platform specs/limits, and trend-visible regression coverage across render/UI helpers)
+- 2026-02-20: Completed 06.1-03-PLAN.md (thumbnail virality metadata contract in models/providers plus ranked 1..3 review-state selection with legacy selected_thumbnail mirroring)
+- 2026-02-20: Completed 06.1-04-PLAN.md (analyze-stage thumbnail frame materialization, Streamlit visual ranked selector UX, and deterministic selected_thumbnail(s) persistence regressions)
+- 2026-02-20: Completed 06.1-05-PLAN.md (typed per-target thumbnail specs, render compliance fail-fast validation, and explicit deferred per-platform thumbnail assignment docs)
+- 2026-02-20: Verified 06.1 phase goal (`06.1-video-marketing-copy-thumbnail-visual-selection-VERIFICATION.md`, status: passed)
 
 ## Session Continuity
 
 ### Last session
 
-2026-02-20 03:39 UTC — Verified `06-audio-video-enhancement-podcast-video-platform` goal (passed, 9/9 must-haves).
+2026-02-20 22:21 UTC — Verified `06.1` phase goal as passed and prepared phase completion metadata commit.
 
 ### Stopped at
 
-Completed `06-audio-video-enhancement-podcast-video-platform-VERIFICATION.md`; next action is milestone audit/closeout.
+Completed phase verification and metadata updates; next action is milestone-level routing.
 
 ### Resume file
 

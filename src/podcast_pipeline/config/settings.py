@@ -41,6 +41,7 @@ PIX_FMT_BY_CODEC = {
     "hevc": {"yuv420p", "yuv420p10le", "yuv422p10le", "yuv444p10le"},
     "libx265": {"yuv420p", "yuv420p10le", "yuv422p10le", "yuv444p10le"},
 }
+THUMBNAIL_FORMATS = {"jpg", "jpeg", "png", "webp"}
 
 
 class PathsConfig(BaseModel):
@@ -310,6 +311,110 @@ class HLSConfig(BaseModel):
         if not pattern.endswith(".ts"):
             raise ValueError("segment_filename_pattern must end with '.ts'")
         return pattern
+
+
+class ThumbnailTargetSpec(BaseModel):
+    """Per-platform thumbnail compliance constraints."""
+
+    width: int = Field(default=1280, ge=64)
+    height: int = Field(default=720, ge=64)
+    aspect_ratio: str = "16:9"
+    formats: list[str] = Field(default_factory=lambda: ["jpg", "png"])
+    max_size_bytes: int = Field(default=2 * 1024 * 1024, ge=16 * 1024)
+    source: str = "official"
+    notes: str = ""
+
+    @field_validator("formats", mode="before")
+    @classmethod
+    def normalize_formats(cls, value: Any) -> list[str]:
+        """Normalize and validate configured image formats."""
+        raw_formats: list[Any]
+        if isinstance(value, str):
+            raw_formats = [part.strip() for part in value.split(",")]
+        elif isinstance(value, (list, tuple, set)):
+            raw_formats = list(value)
+        else:
+            raw_formats = []
+
+        normalized: list[str] = []
+        for item in raw_formats:
+            text = str(item).strip().lower()
+            if not text:
+                continue
+            if text not in THUMBNAIL_FORMATS:
+                allowed = ", ".join(sorted(THUMBNAIL_FORMATS))
+                raise ValueError(
+                    f"Unsupported thumbnail format '{text}'. Expected one of: {allowed}"
+                )
+            if text not in normalized:
+                normalized.append(text)
+
+        if not normalized:
+            raise ValueError("Thumbnail formats must include at least one value")
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_aspect_ratio(self) -> Self:
+        """Ensure declared aspect ratio aligns with configured width/height."""
+        ratio = self.aspect_ratio.strip()
+        match = re.fullmatch(r"(\d+)\s*:\s*(\d+)", ratio)
+        if not match:
+            raise ValueError("aspect_ratio must use '<width>:<height>' format (for example, 16:9)")
+
+        ratio_w = int(match.group(1))
+        ratio_h = int(match.group(2))
+        if ratio_w <= 0 or ratio_h <= 0:
+            raise ValueError("aspect_ratio values must be positive integers")
+
+        expected = ratio_w / ratio_h
+        actual = self.width / self.height
+        if abs(expected - actual) > 0.02:
+            raise ValueError(
+                "aspect_ratio does not match width/height "
+                f"(aspect={self.aspect_ratio}, width={self.width}, height={self.height})"
+            )
+        return self
+
+
+class ThumbnailSpecs(BaseModel):
+    """Thumbnail constraints for selected export targets."""
+
+    youtube: ThumbnailTargetSpec = Field(
+        default_factory=lambda: ThumbnailTargetSpec(
+            width=1280,
+            height=720,
+            aspect_ratio="16:9",
+            formats=["jpg", "png"],
+            max_size_bytes=2 * 1024 * 1024,
+            source="official",
+            notes="YouTube custom thumbnail guideline baseline.",
+        )
+    )
+    spotify_video: ThumbnailTargetSpec = Field(
+        default_factory=lambda: ThumbnailTargetSpec(
+            width=1280,
+            height=720,
+            aspect_ratio="16:9",
+            formats=["jpg", "png"],
+            max_size_bytes=2 * 1024 * 1024,
+            source="project_policy",
+            notes=(
+                "Spotify does not publish strict video-episode thumbnail dimensions; "
+                "policy aligns to YouTube-safe 16:9 assets for cross-platform parity."
+            ),
+        )
+    )
+    apple_video: ThumbnailTargetSpec = Field(
+        default_factory=lambda: ThumbnailTargetSpec(
+            width=3000,
+            height=3000,
+            aspect_ratio="1:1",
+            formats=["jpg", "png"],
+            max_size_bytes=2 * 1024 * 1024,
+            source="official",
+            notes="Apple Podcasts artwork baseline for cover/episode visual assets.",
+        )
+    )
 
 
 class PlatformSpec(BaseModel):
@@ -685,6 +790,7 @@ class Config(BaseModel):
     fillers: FillerConfig = Field(default_factory=FillerConfig)
     audio: AudioConfig = Field(default_factory=AudioConfig)
     enhancements: EnhancementsConfig = Field(default_factory=EnhancementsConfig)
+    thumbnails: ThumbnailSpecs = Field(default_factory=ThumbnailSpecs)
     platforms: PlatformSpecs = Field(default_factory=PlatformSpecs)
     api_keys: APIKeysConfig = Field(default_factory=APIKeysConfig)
     service: ServiceConfig = Field(default_factory=ServiceConfig)

@@ -73,8 +73,8 @@ class TestUIConfig:
 class TestReviewDecisionsUpdate:
     """Tests for review decisions updates."""
 
-    def test_update_thumbnail_selection(self, tmp_path: Path) -> None:
-        """Test updating thumbnail selection."""
+    def test_update_selected_thumbnail_selection_ranked_behavior(self, tmp_path: Path) -> None:
+        """Test ranked thumbnail toggle behavior with primary mirror compatibility."""
         from podcast_pipeline.stages.review import ReviewDecisions
         from podcast_pipeline.ui.app import update_thumbnail_selection
 
@@ -86,13 +86,39 @@ class TestReviewDecisionsUpdate:
         initial = ReviewDecisions(selected_thumbnail=0)
         (review_dir / "review_state.json").write_text(initial.model_dump_json())
 
-        # Update selection
+        # Append alternate selection (primary should remain first-selected)
         update_thumbnail_selection(tmp_path, 5)
 
-        # Verify
         review_path = review_dir / "review_state.json"
         updated = ReviewDecisions.model_validate_json(review_path.read_text())
-        assert updated.selected_thumbnail == 5
+        assert updated.selected_thumbnails == [0, 5]
+        assert updated.selected_thumbnail == 0
+
+        # Removing primary should promote next ranked alternate to primary mirror
+        update_thumbnail_selection(tmp_path, 0)
+        promoted = ReviewDecisions.model_validate_json(review_path.read_text())
+        assert promoted.selected_thumbnails == [5]
+        assert promoted.selected_thumbnail == 5
+
+    def test_update_selected_thumbnail_selection_caps_ranked_list_at_three(
+        self, tmp_path: Path
+    ) -> None:
+        """Adding a fourth thumbnail should preserve existing 1..3 ranked choices."""
+        from podcast_pipeline.stages.review import ReviewDecisions
+        from podcast_pipeline.ui.app import update_thumbnail_selection
+
+        review_dir = tmp_path / "review"
+        review_dir.mkdir()
+        initial = ReviewDecisions(selected_thumbnails=[0, 1, 2], selected_thumbnail=0)
+        (review_dir / "review_state.json").write_text(initial.model_dump_json())
+
+        update_thumbnail_selection(tmp_path, 3)
+
+        updated = ReviewDecisions.model_validate_json(
+            (review_dir / "review_state.json").read_text()
+        )
+        assert updated.selected_thumbnails == [0, 1, 2]
+        assert updated.selected_thumbnail == 0
 
     def test_update_export_platforms(self, tmp_path: Path) -> None:
         """Test updating export platforms with canonical normalization."""
@@ -117,3 +143,77 @@ class TestReviewDecisionsUpdate:
         assert normalized == ["youtube", "tiktok", "instagram"]
         assert invalid == ["invalid"]
         assert updated.export_platforms == ["youtube", "tiktok", "instagram"]
+
+
+class TestMarketingEditorPlatformSpecs:
+    """Tests for marketing editor platform coverage and limits."""
+
+    def test_marketing_platform_matrix_includes_video_variants(self) -> None:
+        """Marketing editor should expose all supported platform keys in stable order."""
+        from podcast_pipeline.ui.app import _marketing_editor_platform_specs
+
+        keys = [spec.key for spec in _marketing_editor_platform_specs()]
+
+        assert keys == [
+            "youtube",
+            "spotify",
+            "spotify_video",
+            "apple",
+            "apple_video",
+            "tiktok",
+            "instagram",
+            "linkedin",
+            "twitter",
+            "facebook",
+        ]
+
+    def test_marketing_platform_video_title_modes_and_description_limits(self) -> None:
+        """Video/audio podcast targets should keep platform-specific title and char guidance."""
+        from podcast_pipeline.ui.app import _marketing_editor_platform_specs
+
+        spec_by_key = {spec.key: spec for spec in _marketing_editor_platform_specs()}
+
+        assert spec_by_key["youtube"].title_mode == "multi"
+        assert spec_by_key["spotify"].title_mode == "single"
+        assert spec_by_key["spotify_video"].title_mode == "single"
+        assert spec_by_key["apple"].title_mode == "single"
+        assert spec_by_key["apple_video"].title_mode == "single"
+        assert spec_by_key["spotify_video"].max_description_chars == 4000
+        assert spec_by_key["apple_video"].max_description_chars == 4000
+        assert spec_by_key["tiktok"].max_description_chars == 150
+        assert spec_by_key["twitter"].max_description_chars == 280
+
+
+class TestMarketingReviewOverlay:
+    """Tests for marketing overlay behavior used by editor flows."""
+
+    def test_marketing_overlay_preserves_full_platform_edits_and_metadata(self) -> None:
+        """Review edits should merge into base marketing without dropping video variants."""
+        from podcast_pipeline.stages.review import ReviewDecisions
+        from podcast_pipeline.ui.app import _apply_marketing_review_edits
+
+        analysis = {
+            "marketing": {
+                "youtube": {"description": "base-youtube"},
+                "spotify_video": {"description": "base-spotify-video"},
+                "apple_video": {"description": "base-apple-video"},
+            },
+            "metadata": {"summary": "base-summary", "topics": ["base-topic"], "mood": "calm"},
+        }
+        decisions = ReviewDecisions(
+            marketing_edits={
+                "spotify_video": {"description": "edited-spotify-video"},
+                "apple_video": {"description": "edited-apple-video"},
+                "facebook": {"description": "new-facebook-copy"},
+                "__metadata__": {"summary": "edited-summary", "topics": ["trend-a", "trend-b"]},
+            }
+        )
+
+        marketing, metadata = _apply_marketing_review_edits(analysis, decisions)
+
+        assert marketing["youtube"]["description"] == "base-youtube"
+        assert marketing["spotify_video"]["description"] == "edited-spotify-video"
+        assert marketing["apple_video"]["description"] == "edited-apple-video"
+        assert marketing["facebook"]["description"] == "new-facebook-copy"
+        assert metadata["summary"] == "edited-summary"
+        assert metadata["topics"] == ["trend-a", "trend-b"]

@@ -85,6 +85,36 @@ enhancements:
     eq_brightness: 0.0
     eq_gamma: 1.0
 
+# Thumbnail compliance constraints by selected export target
+# YouTube values reflect official custom thumbnail guidance.
+# Spotify video values are project policy aligned to YouTube-safe 16:9 assets.
+# Apple video values follow Apple Podcasts square artwork baseline.
+thumbnails:
+  youtube:
+    width: 1280
+    height: 720
+    aspect_ratio: "16:9"
+    formats: [jpg, png]
+    max_size_bytes: 2097152
+    source: official
+    notes: "YouTube custom thumbnail baseline."
+  spotify_video:
+    width: 1280
+    height: 720
+    aspect_ratio: "16:9"
+    formats: [jpg, png]
+    max_size_bytes: 2097152
+    source: project_policy
+    notes: "Policy alignment for cross-platform video thumbnail parity."
+  apple_video:
+    width: 3000
+    height: 3000
+    aspect_ratio: "1:1"
+    formats: [jpg, png]
+    max_size_bytes: 2097152
+    source: official
+    notes: "Apple Podcasts artwork-style square visual."
+
 # Platform Export Specifications
 platforms:
   # YouTube - Long-form horizontal video

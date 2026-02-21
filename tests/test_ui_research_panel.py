@@ -79,3 +79,26 @@ def test_build_clip_score_rows_handles_legacy_shapes_with_missing_fields() -> No
     assert rows[0]["Detector Score"] == 7.2
     assert rows[0]["Combined Score"] == 3.96
     assert "legacy detector reason" in rows[0]["Reasons"].lower()
+
+
+def test_build_research_panel_data_preserves_keyword_priority_and_window_visibility() -> None:
+    """Trend keywords and posting windows should stay visible in deterministic order."""
+    research_payload = {
+        "query": "creator growth systems",
+        "suggested_keywords": [f"keyword-{index}" for index in range(12)],
+        "insights": {
+            "competition_score": 55,
+            "best_posting_windows": [
+                {"window": "07:00-07:59 UTC"},
+                {"window": "20:00-20:59 UTC", "videos_published": 3},
+            ],
+        },
+    }
+
+    panel = _build_research_panel_data(research_payload)
+
+    assert panel["keywords"] == [f"keyword-{index}" for index in range(10)]
+    assert panel["posting_windows"] == [
+        "07:00-07:59 UTC",
+        "20:00-20:59 UTC (3 videos)",
+    ]

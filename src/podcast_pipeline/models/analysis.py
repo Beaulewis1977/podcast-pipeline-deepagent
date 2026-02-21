@@ -117,6 +117,10 @@ class ThumbnailCandidate(BaseModel):
     visual_description: str = ""
     suggested_text_overlay: str = ""
     emotion: str = ""
+    virality_score: float = Field(default=0.0, ge=0.0, le=10.0)
+    viral_style: str = ""
+    virality_score_source: str = "unspecified"
+    recommendation_signal: str = ""
     confidence_score: float | None = Field(default=None, ge=0.0, le=1.0)
     source_label: str | None = None
 
@@ -152,7 +156,9 @@ class MarketingCopy(BaseModel):
 
     youtube: PlatformMarketing = Field(default_factory=PlatformMarketing)
     spotify: PlatformMarketing = Field(default_factory=PlatformMarketing)
+    spotify_video: PlatformMarketing = Field(default_factory=PlatformMarketing)
     apple: PlatformMarketing = Field(default_factory=PlatformMarketing)
+    apple_video: PlatformMarketing = Field(default_factory=PlatformMarketing)
     tiktok: PlatformMarketing = Field(default_factory=PlatformMarketing)
     instagram: PlatformMarketing = Field(default_factory=PlatformMarketing)
     linkedin: PlatformMarketing = Field(default_factory=PlatformMarketing)

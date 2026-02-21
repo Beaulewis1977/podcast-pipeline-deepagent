@@ -12,10 +12,28 @@ from tenacity import stop_after_attempt, wait_none
 from podcast_pipeline.config import Config
 from podcast_pipeline.models.analysis import AnalysisResult
 from podcast_pipeline.models.job import Job
-from podcast_pipeline.providers.base import ProviderError, ProviderParseError, RateLimitError
+from podcast_pipeline.providers.base import (
+    BaseProvider,
+    ProviderError,
+    ProviderParseError,
+    RateLimitError,
+)
 from podcast_pipeline.providers.gemini import GeminiProvider
 from podcast_pipeline.providers.kimi import KIMI_API_URL, KimiProvider
 from podcast_pipeline.stages.analyze import AnalyzeStage
+
+REQUIRED_MARKETING_PLATFORMS = (
+    "youtube",
+    "spotify",
+    "spotify_video",
+    "apple",
+    "apple_video",
+    "tiktok",
+    "instagram",
+    "linkedin",
+    "twitter",
+    "facebook",
+)
 
 
 def _valid_analysis_payload() -> dict[str, Any]:
@@ -118,6 +136,107 @@ class _FakeKimiResponse:
     def json(self) -> dict[str, Any]:
         """Return fake JSON payload."""
         return self._payload
+
+
+class _PromptTestProvider(BaseProvider):
+    """Concrete provider for prompt-contract tests."""
+
+    name = "prompt-test"
+    model = "prompt-model"
+    supports_video = False
+
+    def analyze(self, video_path: Path, transcript: dict[str, Any]) -> AnalysisResult:
+        return AnalysisResult.model_validate(_valid_analysis_payload())
+
+    def is_available(self) -> bool:
+        return True
+
+
+def test_provider_prompt_schema_covers_full_marketing_platform_matrix() -> None:
+    """Prompt JSON schema should include every required marketing platform key."""
+    provider = _PromptTestProvider()
+    prompt = provider._build_prompt({"text": "A transcript excerpt"})
+    for platform_key in REQUIRED_MARKETING_PLATFORMS:
+        assert f'"{platform_key}": {{' in prompt
+
+
+def test_provider_prompt_includes_viral_professional_quality_directives() -> None:
+    """Prompt should enforce viral-impact copy without losing professional standards."""
+    provider = _PromptTestProvider()
+    prompt = provider._build_prompt({"text": "A transcript excerpt"})
+
+    assert "high-impact and viral-ready without spammy clickbait" in prompt
+    assert "Keep tone professional, credible, and audience-appropriate." in prompt
+    assert "Tailor language to each platform format" in prompt
+
+
+def test_provider_prompt_includes_trend_context_when_available() -> None:
+    """Prompt should embed optional trend context payload for copy generation."""
+    provider = _PromptTestProvider()
+    prompt = provider._build_prompt(
+        {"text": "A transcript excerpt"},
+        trend_context={
+            "keywords": ["growth loop", "creator workflow"],
+            "trending_hooks": ["contrarian retention take"],
+            "competitive_angle": "Medium competition; differentiation via workflow framing.",
+            "momentum_signals": ["avg_velocity_per_hour=12.50"],
+        },
+    )
+
+    assert '"keywords": ["growth loop", "creator workflow"]' in prompt
+    assert '"trending_hooks": ["contrarian retention take"]' in prompt
+    assert (
+        '"competitive_angle": "Medium competition; differentiation via workflow framing."' in prompt
+    )
+    assert '"momentum_signals": ["avg_velocity_per_hour=12.50"]' in prompt
+
+
+def test_provider_thumbnail_schema_includes_virality_metadata_fields() -> None:
+    """Provider prompt should request virality metadata for each thumbnail candidate."""
+    provider = _PromptTestProvider()
+    prompt = provider._build_prompt({"text": "A transcript excerpt"})
+
+    assert '"virality_score": 0.0' in prompt
+    assert '"viral_style": "reaction/story/mystery/etc"' in prompt
+    assert '"virality_score_source": "provider/heuristic"' in prompt
+    assert '"recommendation_signal": "Specific recommendation reason"' in prompt
+
+
+def test_provider_thumbnail_contract_requires_recommendation_signal() -> None:
+    """Provider prompt should require at least one strong thumbnail recommendation signal."""
+    provider = _PromptTestProvider()
+    prompt = provider._build_prompt({"text": "A transcript excerpt"})
+
+    assert (
+        "When thumbnail candidates are present, include at least one strong recommendation_signal"
+        in prompt
+    )
+
+
+def test_provider_parse_accepts_thumbnail_virality_metadata_fields() -> None:
+    """Provider parse path should preserve thumbnail virality metadata fields."""
+    payload = _valid_analysis_payload()
+    payload["thumbnail_frames"] = [
+        {
+            "timestamp": "00:12",
+            "timestamp_seconds": 12.0,
+            "visual_description": "Host leaning in",
+            "suggested_text_overlay": "Don't miss this",
+            "emotion": "surprise",
+            "virality_score": 9.0,
+            "viral_style": "reaction_closeup",
+            "virality_score_source": "provider",
+            "recommendation_signal": "high emotional expression",
+        }
+    ]
+
+    result = AnalysisResult.model_validate(payload)
+    thumbnail = result.thumbnail_frames[0]
+
+    assert thumbnail.virality_score == pytest.approx(9.0)
+    assert thumbnail.viral_style == "reaction_closeup"
+    assert thumbnail.virality_score_source == "provider"
+    assert thumbnail.recommendation_signal == "high emotional expression"
 
 
 def test_gemini_parse_failure_raises_provider_parse_error(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -382,3 +501,89 @@ def test_analyze_fallback_sets_degraded_mode_metadata(
     assert degraded_mode["enabled"] is True
     assert degraded_mode["provider"] == "kimi"
     assert degraded_mode["reason"] == "fallback_provider_transcript_only"
+
+
+def test_analyze_stage_injects_trend_context_when_artifacts_exist(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Analyze stage should pass trend context from existing artifacts into provider prompt path."""
+
+    class _CapturingProvider:
+        name = "gemini"
+        model = "gemini-2.5-flash"
+        supports_video = True
+
+        def __init__(self) -> None:
+            self.captured_trend_context: dict[str, Any] | None = None
+
+        def is_available(self) -> bool:
+            return True
+
+        def analyze(self, video_path: Path, transcript: dict[str, Any]) -> AnalysisResult:
+            trend_context = transcript.get("trend_context")
+            self.captured_trend_context = trend_context if isinstance(trend_context, dict) else None
+            return AnalysisResult.model_validate(_valid_analysis_payload())
+
+    config = Config()
+    stage = AnalyzeStage(config)
+    provider = _CapturingProvider()
+    stage.providers = [provider]  # type: ignore[assignment]
+    monkeypatch.setattr(stage, "_run_research", lambda *args, **kwargs: None)
+    monkeypatch.setattr(stage, "_run_viral_signals", lambda *args, **kwargs: None)
+
+    job_dir = tmp_path / "job-2"
+    (job_dir / "analysis").mkdir(parents=True, exist_ok=True)
+    (job_dir / "analysis" / "transcript.json").write_text(json.dumps({"text": "hello"}))
+    (job_dir / "intermediate").mkdir(parents=True, exist_ok=True)
+    (job_dir / "intermediate" / "proxy.mp4").write_bytes(b"proxy")
+
+    (job_dir / "analysis" / "research.json").write_text(
+        json.dumps(
+            {
+                "suggested_keywords": ["growth loop", "creator workflow"],
+                "insights": {
+                    "recommendation": "Lean into creator-retention differentiation.",
+                    "engagement_benchmarks": {"avg_velocity_per_hour": 42.5},
+                    "query_derivation": {
+                        "query": "creator growth podcast",
+                        "related_topics": ["retention hook"],
+                    },
+                },
+            }
+        )
+    )
+    (job_dir / "analysis" / "viral_signals.json").write_text(
+        json.dumps(
+            {
+                "clip_scores": [
+                    {
+                        "rank": 1,
+                        "combined_score": 9.1,
+                        "reasons": ["Strong controversy framing"],
+                        "clip": {"suggested_hook": "The retention hack no one uses"},
+                    },
+                    {
+                        "rank": 2,
+                        "combined_score": 8.4,
+                        "reasons": ["High novelty framing"],
+                        "clip": {"suggested_hook": "Why most creators plateau"},
+                    },
+                ]
+            }
+        )
+    )
+
+    job = Job(job_id="job-2", input_file=str(job_dir / "input.mp4"))
+    result = stage.run(job, job_dir)
+
+    assert result.success is True
+    assert provider.captured_trend_context is not None
+    trend_context = provider.captured_trend_context
+    assert "growth loop" in trend_context["keywords"]
+    assert "creator workflow" in trend_context["keywords"]
+    assert trend_context["competitive_angle"] == "Lean into creator-retention differentiation."
+    assert "The retention hack no one uses" in trend_context["trending_hooks"]
+    assert "Strong controversy framing" in trend_context["trending_hooks"]
+    assert "avg_velocity_per_hour=42.50" in trend_context["momentum_signals"]
+    assert "clip_rank_1_combined_score=9.10" in trend_context["momentum_signals"]
