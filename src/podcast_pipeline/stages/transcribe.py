@@ -237,17 +237,29 @@ class TranscribeStage(Stage):
         return len(self._detect_audio_tracks(video_path))
 
     def _detect_fillers(self, segments: list[Segment]) -> list[FillerCut]:
-        """Detect filler words in transcript."""
-        filler_words = {self._normalize_filler_token(w) for w in self.config.fillers.words}
-        single_word_fillers = {w for w in filler_words if " " not in w}
-        multi_word_fillers = {
-            tuple(self._normalize_filler_token(token) for token in w.split())
-            for w in filler_words
-            if " " in w
+        """Detect filler words in transcript with category, pause timing, and protection gate."""
+        filler_cfg = self.config.fillers
+        context_n = filler_cfg.llm_triage_max_context_words
+        protect_threshold_ms = filler_cfg.protect_pause_threshold_ms
+
+        # Build category-keyed normalised sets
+        disfluency_set = {self._normalize_filler_token(w) for w in filler_cfg.disfluencies}
+        # Backward-compat: words field treated as extra disfluencies
+        disfluency_set |= {self._normalize_filler_token(w) for w in filler_cfg.words}
+        hedge_set = {self._normalize_filler_token(w) for w in filler_cfg.hedge_words}
+        custom_set = {self._normalize_filler_token(w) for w in filler_cfg.custom_words}
+
+        # Combined set for matching (hedge/custom take priority over disfluency for category)
+        all_fillers = disfluency_set | hedge_set | custom_set
+
+        single_word_fillers = {w for w in all_fillers if " " not in w}
+        multi_word_fillers: set[tuple[str, ...]] = {
+            tuple(w.split()) for w in all_fillers if " " in w
         }
-        min_confidence = self.config.fillers.min_confidence
-        min_duration_ms = self.config.fillers.min_duration_ms
-        padding_ms = self.config.fillers.padding_ms
+
+        min_confidence = filler_cfg.min_confidence
+        min_duration_ms = filler_cfg.min_duration_ms
+        padding_ms = filler_cfg.padding_ms
 
         filler_cuts: list[FillerCut] = []
 
@@ -259,7 +271,7 @@ class TranscribeStage(Stage):
                 word_text = self._normalize_filler_token(word.word)
                 duration_ms = (word.end - word.start) * 1000
 
-                # Check if it's a filler word
+                # Check if it's a single filler word
                 is_filler = word_text in single_word_fillers
 
                 # Also check two-word fillers like "you know"
@@ -267,6 +279,7 @@ class TranscribeStage(Stage):
                     next_word = words[i + 1]
                     next_text = self._normalize_filler_token(next_word.word)
                     phrase = (word_text, next_text)
+                    phrase_str = f"{word_text} {next_text}"
                     phrase_duration_ms = (next_word.end - word.start) * 1000
                     phrase_confidence = min(word.confidence, next_word.confidence)
 
@@ -275,36 +288,94 @@ class TranscribeStage(Stage):
                         and phrase_confidence >= min_confidence
                         and phrase_duration_ms >= min_duration_ms
                     ):
+                        phrase_len = 2
+                        # Determine category for multi-word phrase
+                        category = self._filler_category(phrase_str, hedge_set, custom_set)
+                        # Pause timing uses raw word timestamps (before padding)
+                        pause_before_ms = (word.start - words[i - 1].end) * 1000 if i > 0 else 0.0
+                        next_idx = i + phrase_len
+                        pause_after_ms = (
+                            (words[next_idx].start - next_word.end) * 1000
+                            if next_idx < len(words)
+                            else 0.0
+                        )
+                        # Context window
+                        context_before = " ".join(w.word for w in words[max(0, i - context_n) : i])
+                        context_after = " ".join(
+                            w.word for w in words[next_idx : next_idx + context_n]
+                        )
+                        protected = (
+                            pause_before_ms >= protect_threshold_ms
+                            or pause_after_ms >= protect_threshold_ms
+                        )
                         start = max(0, word.start - padding_ms / 1000)
                         end = next_word.end + padding_ms / 1000
                         filler_cuts.append(
                             FillerCut(
                                 start=start,
                                 end=end,
-                                word=f"{word_text} {next_text}",
+                                word=phrase_str,
                                 confidence=phrase_confidence,
+                                category=category,
+                                pause_before_ms=pause_before_ms,
+                                pause_after_ms=pause_after_ms,
+                                context_before=context_before,
+                                context_after=context_after,
+                                protected=protected,
                             )
                         )
-                        i += 2
+                        i += phrase_len
                         continue
 
                 if is_filler and word.confidence >= min_confidence:
                     if duration_ms >= min_duration_ms:
+                        # Determine category for single word
+                        category = self._filler_category(word_text, hedge_set, custom_set)
+                        # Pause timing uses raw word timestamps (before padding)
+                        pause_before_ms = (word.start - words[i - 1].end) * 1000 if i > 0 else 0.0
+                        pause_after_ms = (
+                            (words[i + 1].start - word.end) * 1000 if i + 1 < len(words) else 0.0
+                        )
+                        # Context window
+                        context_before = " ".join(w.word for w in words[max(0, i - context_n) : i])
+                        context_after = " ".join(w.word for w in words[i + 1 : i + 1 + context_n])
+                        protected = (
+                            pause_before_ms >= protect_threshold_ms
+                            or pause_after_ms >= protect_threshold_ms
+                        )
                         # Add padding
                         start = max(0, word.start - padding_ms / 1000)
                         end = word.end + padding_ms / 1000
-
                         filler_cuts.append(
                             FillerCut(
                                 start=start,
                                 end=end,
                                 word=word.word,
                                 confidence=word.confidence,
+                                category=category,
+                                pause_before_ms=pause_before_ms,
+                                pause_after_ms=pause_after_ms,
+                                context_before=context_before,
+                                context_after=context_after,
+                                protected=protected,
                             )
                         )
                 i += 1
 
         return filler_cuts
+
+    @staticmethod
+    def _filler_category(
+        normalized_word: str,
+        hedge_set: set[str],
+        custom_set: set[str],
+    ) -> str:
+        """Determine filler category: hedge > custom > disfluency."""
+        if normalized_word in hedge_set:
+            return "hedge"
+        if normalized_word in custom_set:
+            return "custom"
+        return "disfluency"
 
     @staticmethod
     def _normalize_filler_token(word: str) -> str:
