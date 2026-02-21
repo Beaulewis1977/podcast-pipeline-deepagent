@@ -1975,7 +1975,9 @@ class RenderStage(Stage):
         transition_available = self._resolve_transition_filter_availability(
             needs_content_transitions=has_content_join
         )
-        normalize_for_xfade = has_content_join and transition_available["xfade"]
+        normalize_for_xfade = (
+            has_content_join and transition_available["xfade"] and base_dissolve_s > 0
+        )
 
         filter_parts: list[str] = []
         for idx, (start, end) in enumerate(keep_ranges):
@@ -2012,24 +2014,61 @@ class RenderStage(Stage):
                 and base_crossfade_s > 0
                 and transition_available["acrossfade"]
             )
-            if apply_content_audio:
+            apply_content_video = (
+                join_kind == "content" and base_dissolve_s > 0 and transition_available["xfade"]
+            )
+
+            # Couple audio and video overlap durations at each content join so both
+            # streams shorten by the same amount and A/V sync is preserved.
+            if apply_content_audio and apply_content_video:
+                candidate_crossfade = self._clamp_transition_duration(
+                    base_duration_s=base_crossfade_s,
+                    left_duration_s=audio_duration,
+                    right_duration_s=next_duration,
+                    clamp_ratio=smoothing.join_clamp_ratio,
+                )
+                candidate_dissolve = self._clamp_transition_duration(
+                    base_duration_s=base_dissolve_s,
+                    left_duration_s=video_duration,
+                    right_duration_s=next_duration,
+                    clamp_ratio=smoothing.join_clamp_ratio,
+                )
+                effective_s = min(candidate_crossfade, candidate_dissolve)
+                if effective_s <= _EPSILON:
+                    # Both fall back to concat to keep streams aligned.
+                    apply_content_audio = False
+                    apply_content_video = False
+                    crossfade_s = 0.0
+                    dissolve_s = 0.0
+                else:
+                    crossfade_s = effective_s
+                    dissolve_s = effective_s
+            elif apply_content_audio:
                 crossfade_s = self._clamp_transition_duration(
                     base_duration_s=base_crossfade_s,
                     left_duration_s=audio_duration,
                     right_duration_s=next_duration,
                     clamp_ratio=smoothing.join_clamp_ratio,
                 )
-                if crossfade_s > _EPSILON:
-                    filter_parts.append(
-                        f"[{audio_label}][{next_audio}]"
-                        f"acrossfade=d={crossfade_s:.3f}:c1=tri:c2=tri[{join_label_audio}]"
-                    )
-                    audio_duration = max(audio_duration + next_duration - crossfade_s, 0.0)
-                else:
-                    filter_parts.append(
-                        f"[{audio_label}][{next_audio}]concat=n=2:v=0:a=1[{join_label_audio}]"
-                    )
-                    audio_duration += next_duration
+                dissolve_s = 0.0
+            elif apply_content_video:
+                dissolve_s = self._clamp_transition_duration(
+                    base_duration_s=base_dissolve_s,
+                    left_duration_s=video_duration,
+                    right_duration_s=next_duration,
+                    clamp_ratio=smoothing.join_clamp_ratio,
+                )
+                crossfade_s = 0.0
+            else:
+                crossfade_s = 0.0
+                dissolve_s = 0.0
+
+            if apply_content_audio and crossfade_s > _EPSILON:
+                filter_parts.append(
+                    f"[{audio_label}][{next_audio}]"
+                    f"acrossfade=d={crossfade_s:.3f}:c1=tri:c2=tri[{join_label_audio}]"
+                )
+                audio_duration = max(audio_duration + next_duration - crossfade_s, 0.0)
             else:
                 filter_parts.append(
                     f"[{audio_label}][{next_audio}]concat=n=2:v=0:a=1[{join_label_audio}]"
@@ -2037,29 +2076,14 @@ class RenderStage(Stage):
                 audio_duration += next_duration
             audio_label = join_label_audio
 
-            apply_content_video = (
-                join_kind == "content" and base_dissolve_s > 0 and transition_available["xfade"]
-            )
-            if apply_content_video:
-                dissolve_s = self._clamp_transition_duration(
-                    base_duration_s=base_dissolve_s,
-                    left_duration_s=video_duration,
-                    right_duration_s=next_duration,
-                    clamp_ratio=smoothing.join_clamp_ratio,
+            if apply_content_video and dissolve_s > _EPSILON:
+                offset = max(video_duration - dissolve_s, 0.0)
+                filter_parts.append(
+                    f"[{video_label}][{next_video}]"
+                    f"xfade=transition=fade:duration={dissolve_s:.3f}:offset={offset:.3f}"
+                    f"[{join_label_video}]"
                 )
-                if dissolve_s > _EPSILON:
-                    offset = max(video_duration - dissolve_s, 0.0)
-                    filter_parts.append(
-                        f"[{video_label}][{next_video}]"
-                        f"xfade=transition=fade:duration={dissolve_s:.3f}:offset={offset:.3f}"
-                        f"[{join_label_video}]"
-                    )
-                    video_duration = max(video_duration + next_duration - dissolve_s, 0.0)
-                else:
-                    filter_parts.append(
-                        f"[{video_label}][{next_video}]concat=n=2:v=1:a=0[{join_label_video}]"
-                    )
-                    video_duration += next_duration
+                video_duration = max(video_duration + next_duration - dissolve_s, 0.0)
             else:
                 filter_parts.append(
                     f"[{video_label}][{next_video}]concat=n=2:v=1:a=0[{join_label_video}]"

@@ -1480,9 +1480,17 @@ def render_timeline_editor(job_id: str, job_dir: Path) -> None:
                 elif review_each:
                     bulk_rules[category_key] = "review_each"
 
+                # When explicit decisions exist, default unspecified fillers to "keep"
+                # so that simply opening the UI does not turn implicit fillers into
+                # explicit "remove" decisions.
+                missing_default = "keep" if decision_map else "remove"
                 for idx in indices[:50]:
                     filler = fillers[idx]
-                    default_action = _normalize_filler_action(decision_map.get(idx, "remove"))
+                    existing_action = decision_map.get(idx, None)
+                    raw_default = (
+                        existing_action if existing_action is not None else missing_default
+                    )
+                    default_action = _normalize_filler_action(raw_default)
                     default_index = 0 if default_action == "remove" else 1
                     col1, col2, col3, col4 = st.columns([1.5, 1.3, 1.8, 2.6])
                     with col1:
@@ -1500,12 +1508,10 @@ def render_timeline_editor(job_id: str, job_dir: Path) -> None:
                         start = filler.get("start_seconds", filler.get("start", ""))
                         st.caption(f"{start}")
                     with col4:
-                        before_text = str(
-                            filler.get("context_before", filler.get("before_text", ""))
-                        ).strip()
-                        after_text = str(
-                            filler.get("context_after", filler.get("after_text", ""))
-                        ).strip()
+                        raw_before = filler.get("context_before", filler.get("before_text", ""))
+                        before_text = ("" if raw_before is None else str(raw_before)).strip()
+                        raw_after = filler.get("context_after", filler.get("after_text", ""))
+                        after_text = ("" if raw_after is None else str(raw_after)).strip()
                         if before_text or after_text:
                             st.caption(
                                 f"{before_text} [{filler.get('word', '')}] {after_text}".strip()

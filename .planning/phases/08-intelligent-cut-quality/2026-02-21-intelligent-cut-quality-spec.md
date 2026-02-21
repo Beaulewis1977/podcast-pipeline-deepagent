@@ -79,7 +79,7 @@ Make every edit point undetectable:
 
 ### 4.1 Layer Map
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────────┐
 │  TRANSCRIBE STAGE                                                    │
 │  ┌──────────────┐    ┌──────────────────────────────────────────┐  │
@@ -264,7 +264,7 @@ filler_cuts.append(FillerCut(
 
 After detection, for every hedge filler that is **not** already `protected`, call the LLM with a compact prompt:
 
-```
+```text
 SYSTEM: You are an audio editor deciding whether a filler word can be safely removed.
 USER:
 Transcript excerpt: "{context_before} [{FILLER}] {context_after}"
@@ -487,7 +487,7 @@ class RifeBridge:
 
 **Render integration:**
 
-```
+```text
 For each content-join point:
 1. Extract last N frames of left segment → frame_L*.png  (ffmpeg -frames:v N)
 2. Extract first N frames of right segment → frame_R*.png
@@ -839,6 +839,6 @@ The following are explicitly **deferred** to a follow-on phase:
 
 ---
 
-_Spec written: 2026-02-21_
-_Author: Antigravity / Engineering_
-_Phase: 08-intelligent-cut-quality_
+*Spec written: 2026-02-21*
+*Author: Antigravity / Engineering*
+*Phase: 08-intelligent-cut-quality*

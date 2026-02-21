@@ -325,9 +325,13 @@ def write_edit_plan(
                     end_seconds=float(filler.get("end_seconds", filler.get("end", 0.0))),
                     word=str(filler.get("word", "")),
                     confidence=filler.get("confidence"),
-                    category=str(filler.get("category", "")),
-                    context_before=str(filler.get("context_before", filler.get("before_text", ""))),
-                    context_after=str(filler.get("context_after", filler.get("after_text", ""))),
+                    category=str(filler.get("category") or ""),
+                    context_before=str(
+                        filler.get("context_before", filler.get("before_text", "")) or ""
+                    ),
+                    context_after=str(
+                        filler.get("context_after", filler.get("after_text", "")) or ""
+                    ),
                     editorial_action=action,
                 )
             )
