@@ -2194,20 +2194,19 @@ class RenderStage(Stage):
             end = min(max(cut.end, 0.0), duration)
             if end <= start:
                 continue
-            if start > cursor:
+            gap = start - cursor
+            if gap > _EPSILON:
                 keep_ranges.append((cursor, min(start, duration)))
-            if keep_ranges and end < duration:
-                join_kinds.append(cut.kind)
+                if end < duration:
+                    join_kinds.append(cut.kind)
             cursor = max(cursor, end)
 
-        if cursor < duration:
+        tail = duration - cursor
+        if tail > _EPSILON:
             keep_ranges.append((cursor, duration))
 
-        filtered_keep_ranges = [
-            (start, end) for start, end in keep_ranges if (end - start) > _EPSILON
-        ]
-        expected_joins = max(len(filtered_keep_ranges) - 1, 0)
-        return filtered_keep_ranges, join_kinds[:expected_joins]
+        expected_joins = max(len(keep_ranges) - 1, 0)
+        return keep_ranges, join_kinds[:expected_joins]
 
     def _load_transcript_words(self, job_dir: Path) -> list[dict[str, Any]]:
         """Load transcript word timestamps for cut-boundary snapping."""
