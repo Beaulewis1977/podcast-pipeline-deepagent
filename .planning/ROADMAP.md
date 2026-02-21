@@ -309,7 +309,7 @@ Plans:
 
 **Goal:** Deliver semantically-aware filler word triage (category-based auto-remove vs. LLM-checked review vs. pause-protected keep) and invisible video cut rendering (de-breathing, noise-floor matching, pose-match frame selection, RIFE AI bridge frames)  without breaking existing Phase 7 smoothing contracts.
 **Depends on:** Phase 7
-**Status:** Planning (spec complete 2026-02-21)
+**Status:** Planned (6 GSD plans created 2026-02-21)
 **Plans:** 6 plans
 
 **Scope / Requirements:**
@@ -345,32 +345,39 @@ Plans:
 Plans:
 
 - [ ] 08-01-PLAN.md — FillerConfig restructure + FillerCut category/pause/context enrichment in transcribe
-- [ ] 08-02-PLAN.md — LLM semantic triage sub-stage (AnalyzeStage) + FillerTriage model + artifact
-- [ ] 08-03-PLAN.md — Review + UI wiring: triage → FillerCutRange default_action + context/badge UI
-- [ ] 08-04-PLAN.md — Render: de-breathing (silero-vad) + noise-floor matching (librosa)
-- [ ] 08-05-PLAN.md — Render: pose-match (opencv) + RIFE AI frame interpolation (practical-RIFE + GPU)
-- [ ] 08-06-PLAN.md — Integration hardening: cross-path regressions, GPU smoke test, README operator docs
+- [ ] 08-02-PLAN.md — LLM semantic triage sub-stage (AnalyzeStage) + FillerTriage model + filler_triage.json artifact
+- [ ] 08-03-PLAN.md — Review + UI wiring: triage -> FillerCutRange editorial_action + context/badge/protection UI
+- [ ] 08-04-PLAN.md — GPU deps + SmoothingConfig Phase 8 fields + de-breathing (silero-vad) + noise-floor matching (librosa)
+- [ ] 08-05-PLAN.md — Pose-match (opencv Farneback) + RIFE AI frame interpolation (practical-RIFE subprocess + --exp flag)
+- [ ] 08-06-PLAN.md — Integration hardening: cross-path regressions, GPU smoke test, legacy compat, operator guide
 
 **Details:**
 
 Plans run in 4 execution waves:
 
-- Wave 1: `08-01` (FillerConfig + FillerCut) and `08-02` (LLM triage) in parallel — both are additive foundation work
-- Wave 2: `08-03` (review/UI wiring) — requires Wave 1 enriched models
-- Wave 3: `08-04` (de-breathing + noise-floor) and `08-05` (pose-match + RIFE) in parallel — both are independent render passes
-- Wave 4: `08-06` (integration hardening + docs) — validates full stack
+- Wave 1: `08-01` (FillerConfig + FillerCut) and `08-02` (LLM triage) in parallel — no file overlap
+- Wave 2: `08-03` (review/UI wiring, depends on 01+02) and `08-04` (audio render passes + gpu deps, depends on 01) in parallel — no file overlap
+- Wave 3: `08-05` (video render passes, depends on 04 for shared settings.py/render.py)
+- Wave 4: `08-06` (integration hardening + docs, depends on 03+05)
 
-**New dependencies:**
+**New dependencies (optional `gpu` extras group):**
 
 | Package | Version | Purpose | GPU required |
 |---|---|---|---|
-| `silero-vad` | >= 5.0 | Breath/VAD detection | No |
+| `silero-vad` | >= 6.1 | Breath/VAD detection | No (CPU) |
 | `librosa` | >= 0.10 | Audio RMS analysis | No |
-| `soundfile` | >= 0.12 | Audio I/O for librosa | No |
-| `opencv-python` | >= 4.9 | Pose-match optical flow | No (CPU) |
-| `torch` | >= 2.3 (CUDA build) | RIFE inference | Yes (RTX 5060 Ti) |
-| `torchvision` | >= 0.18 | RIFE dep | Yes |
-| `practical-RIFE` | git clone | Frame interpolation | Yes |
+| `opencv-python-headless` | >= 4.9 | Pose-match optical flow | No (CPU) |
+| `torch` | >= 2.7 (cu128 index) | RIFE + silero-vad runtime | Yes (RTX 5060 Ti Blackwell sm_120) |
+| `torchaudio` | >= 2.7 (cu128 index) | silero-vad audio I/O | Yes |
+| `practical-RIFE` | git clone (model 4.25) | Frame interpolation subprocess | Yes |
+
+**Spec corrections applied (from 08-RESEARCH.md):**
+- RTX 5060 Ti = Blackwell sm_120 (NOT Ada Lovelace 8.9); requires cu128, NOT cu121
+- silero-vad >= 6.1 (NOT >= 5.0); fixes torchaudio deprecation
+- RIFE uses --exp flag (NOT --n); no --cpu flag exists
+- opencv-python-headless (NOT opencv-python); avoids Qt/display errors
+- torchvision NOT required by RIFE; omitted from deps
+- RIFE model 4.25 (NOT 4.26) as default; 4.26 has artifacts on some content
 
 ---
 
