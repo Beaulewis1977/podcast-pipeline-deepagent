@@ -641,6 +641,71 @@ def test_ui_app_materialize_filler_decisions_sorted_for_review_state() -> None:
     assert [item.action for item in decisions] == ["remove", "keep", "keep"]
 
 
+def test_ui_app_save_review_decisions_wires_explicit_filler_actions_to_edit_plan(
+    tmp_path: Path,
+) -> None:
+    """Persisted UI decisions should map keep/remove actions into edit_plan filler cuts."""
+    from podcast_pipeline.stages.review import FillerDecision, ReviewDecisions
+    from podcast_pipeline.ui.app import save_review_decisions
+
+    _write_json(
+        tmp_path / "analysis" / "analysis.json",
+        {"content_cuts": [], "viral_clips": [], "thumbnail_frames": []},
+    )
+    _write_json(
+        tmp_path / "analysis" / "filler_cuts.json",
+        [
+            {"start_seconds": 1.0, "end_seconds": 1.2, "word": "um"},
+            {"start_seconds": 2.0, "end_seconds": 2.2, "word": "like"},
+            {"start_seconds": 3.0, "end_seconds": 3.3, "word": "uh"},
+        ],
+    )
+    decisions = ReviewDecisions(
+        filler_decisions=[
+            FillerDecision(index=0, action="keep"),
+            FillerDecision(index=1, action="remove"),
+            FillerDecision(index=2, action="remove"),
+        ],
+        approved_filler_cuts=[0],
+    )
+
+    save_review_decisions(tmp_path, decisions)
+
+    review_state = ReviewDecisions.model_validate_json(
+        (tmp_path / "review" / "review_state.json").read_text()
+    )
+    assert [item.action for item in review_state.filler_decisions] == ["keep", "remove", "remove"]
+
+    edit_plan = json.loads((tmp_path / "review" / "edit_plan.json").read_text())
+    assert [cut["word"] for cut in edit_plan["filler_cuts"]] == ["like", "uh"]
+
+
+def test_ui_app_save_review_decisions_legacy_filler_fallback_remains_supported(
+    tmp_path: Path,
+) -> None:
+    """Legacy approved_filler_cuts payloads should still generate valid filler cut output."""
+    from podcast_pipeline.stages.review import ReviewDecisions
+    from podcast_pipeline.ui.app import save_review_decisions
+
+    _write_json(
+        tmp_path / "analysis" / "analysis.json",
+        {"content_cuts": [], "viral_clips": [], "thumbnail_frames": []},
+    )
+    _write_json(
+        tmp_path / "analysis" / "filler_cuts.json",
+        [
+            {"start_seconds": 1.0, "end_seconds": 1.2, "word": "um"},
+            {"start_seconds": 2.0, "end_seconds": 2.2, "word": "like"},
+        ],
+    )
+    decisions = ReviewDecisions(approved_filler_cuts=[1], filler_decisions=[])
+
+    save_review_decisions(tmp_path, decisions)
+
+    edit_plan = json.loads((tmp_path / "review" / "edit_plan.json").read_text())
+    assert [cut["word"] for cut in edit_plan["filler_cuts"]] == ["like"]
+
+
 def test_ui_app_recovery_summary_normalizes_runtime_payload() -> None:
     """Recovery summary helper should normalize runtime diagnostics payloads."""
     from podcast_pipeline.ui.app import _runtime_recovery_summary
