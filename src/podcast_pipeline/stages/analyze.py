@@ -9,6 +9,7 @@ from typing import Any
 from podcast_pipeline.config import Config
 from podcast_pipeline.models.analysis import AnalysisResult
 from podcast_pipeline.models.job import Job
+from podcast_pipeline.models.triage import FillerTriageResult
 from podcast_pipeline.providers.base import ProviderError
 from podcast_pipeline.providers.gemini import GeminiProvider
 from podcast_pipeline.providers.kimi import KimiProvider
@@ -157,6 +158,11 @@ class AnalyzeStage(Stage):
                 viral_output = self._run_viral_signals(result, transcript_data, job_dir)
                 if viral_output:
                     outputs.append(viral_output)
+
+                # LLM triage for hedge fillers
+                triage_output = self._run_triage(job_dir)
+                if triage_output:
+                    outputs.append(triage_output)
 
                 self.logger.info("analysis_outputs_ready", outputs=outputs)
 
@@ -674,3 +680,254 @@ class AnalyzeStage(Stage):
         except Exception as e:
             self.logger.warning("viral_signals_failed", error=str(e))
             return None
+
+    def _run_triage(self, job_dir: Path) -> str | None:
+        """Run LLM triage for hedge fillers and write filler_triage.json."""
+        try:
+            results = self._triage_fillers(job_dir)
+            triage_path = job_dir / "analysis" / "filler_triage.json"
+            triage_path.parent.mkdir(parents=True, exist_ok=True)
+            triage_path.write_text(json.dumps([r.model_dump() for r in results], indent=2))
+            self.logger.info("triage_complete", results=len(results))
+            return str(triage_path.relative_to(job_dir))
+        except Exception as e:
+            self.logger.warning("triage_failed", error=str(e))
+            return None
+
+    def _load_triage_candidates(self, job_dir: Path) -> list[tuple[int, dict[str, Any]]] | None:
+        """Load filler_cuts.json and return hedge-filler candidates, or None on skip/error."""
+        filler_cuts_path = job_dir / "transcribe" / "filler_cuts.json"
+
+        if not filler_cuts_path.exists():
+            self.logger.info("triage_skipped", reason="filler_cuts.json_not_found")
+            return None
+
+        try:
+            raw_cuts = json.loads(filler_cuts_path.read_text())
+        except (OSError, json.JSONDecodeError) as exc:
+            self.logger.warning("triage_load_failed", error=str(exc))
+            return None
+
+        if not isinstance(raw_cuts, list):
+            self.logger.warning("triage_invalid_filler_cuts", type=type(raw_cuts).__name__)
+            return None
+
+        candidates: list[tuple[int, dict[str, Any]]] = [
+            (index, raw_cut)
+            for index, raw_cut in enumerate(raw_cuts)
+            if isinstance(raw_cut, dict)
+            and raw_cut.get("category", "disfluency") == "hedge"
+            and not raw_cut.get("protected", False)
+        ]
+
+        if not candidates:
+            self.logger.info("triage_skipped", reason="no_hedge_fillers")
+            return None
+
+        return candidates
+
+    def _triage_fillers(self, job_dir: Path) -> list[FillerTriageResult]:
+        """Load filler_cuts.json, filter hedge fillers, run LLM triage, return results."""
+        candidates = self._load_triage_candidates(job_dir)
+        if candidates is None:
+            return []
+
+        # Disabled path: return deterministic no-triage results
+        if not self.config.fillers.enable_llm_triage:
+            self.logger.info("triage_disabled", candidates=len(candidates))
+            return [
+                FillerTriageResult(
+                    filler_index=idx,
+                    word=str(raw_cut.get("word", "")),
+                    category="hedge",
+                    safe_to_remove=False,
+                    reason="LLM triage disabled",
+                    llm_model="",
+                )
+                for idx, raw_cut in candidates
+            ]
+
+        # Check OpenAI API key
+        if not self.config.api_keys.openai:
+            self.logger.warning("triage_skipped", reason="no_openai_api_key")
+            return [
+                FillerTriageResult(
+                    filler_index=idx,
+                    word=str(raw_cut.get("word", "")),
+                    category="hedge",
+                    safe_to_remove=False,
+                    reason="No OpenAI API key configured",
+                    llm_model="",
+                )
+                for idx, raw_cut in candidates
+            ]
+
+        model = self.config.fillers.llm_triage_model
+
+        # Build prompts for each candidate
+        prompts: list[str] = []
+        for _idx, raw_cut in candidates:
+            word = str(raw_cut.get("word", ""))
+            context_before = str(raw_cut.get("context_before", ""))
+            context_after = str(raw_cut.get("context_after", ""))
+            pause_before_ms = float(raw_cut.get("pause_before_ms", 0.0))
+            pause_after_ms = float(raw_cut.get("pause_after_ms", 0.0))
+            prompt = self._build_triage_prompt(
+                word=word,
+                context_before=context_before,
+                context_after=context_after,
+                pause_before_ms=pause_before_ms,
+                pause_after_ms=pause_after_ms,
+            )
+            prompts.append(prompt)
+
+        # Batch into groups of 20
+        batch_size = 20
+        results: list[FillerTriageResult] = []
+
+        try:
+            import openai
+
+            client = openai.OpenAI(api_key=self.config.api_keys.openai)
+        except ImportError as exc:
+            self.logger.warning("triage_openai_import_failed", error=str(exc))
+            return [
+                FillerTriageResult(
+                    filler_index=idx,
+                    word=str(raw_cut.get("word", "")),
+                    category="hedge",
+                    safe_to_remove=False,
+                    reason=f"OpenAI package unavailable: {exc}",
+                    llm_model="",
+                )
+                for idx, raw_cut in candidates
+            ]
+
+        for batch_start in range(0, len(candidates), batch_size):
+            batch_candidates = candidates[batch_start : batch_start + batch_size]
+            batch_prompts = prompts[batch_start : batch_start + batch_size]
+
+            combined_user_content = "---\n".join(batch_prompts)
+            system_message = (
+                "You are an audio editor deciding whether filler words can be safely removed."
+            )
+
+            self.logger.info(
+                "triage_batch_start",
+                batch_start=batch_start,
+                batch_size=len(batch_candidates),
+            )
+
+            try:
+                response = client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": system_message},
+                        {"role": "user", "content": combined_user_content},
+                    ],
+                    temperature=0.0,
+                )
+                raw_text = response.choices[0].message.content or ""
+                batch_results = self._parse_triage_batch_response(
+                    raw_text=raw_text,
+                    batch_candidates=batch_candidates,
+                    model=model,
+                )
+            except Exception as exc:
+                self.logger.warning(
+                    "triage_batch_failed",
+                    batch_start=batch_start,
+                    error=str(exc),
+                )
+                batch_results = [
+                    FillerTriageResult(
+                        filler_index=idx,
+                        word=str(raw_cut.get("word", "")),
+                        category="hedge",
+                        safe_to_remove=False,
+                        reason=f"LLM call failed: {exc}",
+                        llm_model=model,
+                    )
+                    for idx, raw_cut in batch_candidates
+                ]
+
+            results.extend(batch_results)
+
+        self.logger.info("triage_fillers_complete", total=len(results))
+        return results
+
+    def _build_triage_prompt(
+        self,
+        word: str,
+        context_before: str,
+        context_after: str,
+        pause_before_ms: float,
+        pause_after_ms: float,
+    ) -> str:
+        """Build per-filler triage prompt."""
+        return (
+            f'Transcript excerpt: "{context_before} [{word.upper()}] {context_after}"\n'
+            f'Filler word: "{word}"\n'
+            f"Pause before: {pause_before_ms:.0f}ms  Pause after: {pause_after_ms:.0f}ms\n"
+            "\n"
+            "Can this filler be SAFELY removed without changing the meaning, tone, or rhetorical\n"
+            "intent of the sentence? Removing it is safe if it is purely a verbal tick with no\n"
+            "expressive or semantic function.\n"
+            "\n"
+            "Reply with exactly:\n"
+            "SAFE or REVIEW\n"
+            "reason: <one sentence>\n"
+        )
+
+    def _parse_triage_batch_response(
+        self,
+        raw_text: str,
+        batch_candidates: list[tuple[int, dict[str, Any]]],
+        model: str,
+    ) -> list[FillerTriageResult]:
+        """Parse LLM batch response into FillerTriageResult objects."""
+        # Split on '---' separator used when sending multi-filler batches
+        blocks = [block.strip() for block in raw_text.split("---") if block.strip()]
+
+        results: list[FillerTriageResult] = []
+        for position, (idx, raw_cut) in enumerate(batch_candidates):
+            word = str(raw_cut.get("word", ""))
+            if position < len(blocks):
+                block = blocks[position]
+                safe_to_remove, reason = self._parse_triage_block(block)
+            else:
+                safe_to_remove = False
+                reason = f"Parse error: no response block for position {position}"
+
+            results.append(
+                FillerTriageResult(
+                    filler_index=idx,
+                    word=word,
+                    category="hedge",
+                    safe_to_remove=safe_to_remove,
+                    reason=reason,
+                    llm_model=model,
+                )
+            )
+        return results
+
+    def _parse_triage_block(self, block: str) -> tuple[bool, str]:
+        """Parse a single triage response block into (safe_to_remove, reason)."""
+        lines = [line.strip() for line in block.splitlines() if line.strip()]
+
+        verdict: bool | None = None
+        reason = ""
+
+        for line in lines:
+            upper = line.upper()
+            if upper.startswith("SAFE") and verdict is None:
+                verdict = True
+            elif upper.startswith("REVIEW") and verdict is None:
+                verdict = False
+            elif line.lower().startswith("reason:"):
+                reason = line[len("reason:") :].strip()
+
+        if verdict is None:
+            return False, "Parse error: could not find SAFE or REVIEW in response block"
+
+        return verdict, reason
