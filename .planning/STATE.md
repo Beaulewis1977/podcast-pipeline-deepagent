@@ -1,28 +1,28 @@
 # Project State: Podcast Pipeline
 
 **Last updated:** 2026-02-21
-**Current phase:** Phase 7 complete (verified 2026-02-21)
-**Overall progress:** 100% (45/45 plans complete)
+**Current phase:** Phase 8 in progress (08-01 complete)
+**Overall progress:** In progress (08-01/6 Phase 8 plans complete)
 
 ## Project Reference
 
 See: `.planning/PROJECT.md`
 
 **Core value:** Turn raw podcast recording into multi-platform content without editing software or manual copywriting.
-**Current focus:** Phase 8 added; pending research + replanning.
+**Current focus:** Phase 8 execution in progress — 08-01 FillerConfig restructure + FillerCut enrichment complete.
 
 ## Current Position
 
 ```text
-Phase:    7 complete (verified 2026-02-21)
-Plan:     4/4 complete in Phase 7; 45 completed overall
-Status:   Phase 7 closed; Phase 8 scaffold in place
-Last activity: 2026-02-21 - Phase 7 verification passed (14/14 must-haves)
+Phase:    8 in progress
+Plan:     1/6 complete in Phase 8; 46 completed overall
+Status:   Phase 8 execution started; 08-01 complete
+Last activity: 2026-02-21 - Completed 08-01-PLAN.md (FillerConfig restructure + FillerCut enrichment)
 
-Progress: [█████████████████████████] 100% (45/45 plans complete)
+Progress: [██████████████████████████] 46/51 plans complete
 ```
 
-**Next Phase:** Plan Phase 8 — Intelligent Cut Quality
+**Current Phase:** Phase 8 — Intelligent Cut Quality (Plan 2 of 6 next)
 
 ## Phase Status
 
@@ -37,7 +37,7 @@ Progress: [███████████████████████
 | 6 | Audio/Video Enhancement & Podcast Video Platform | Complete (verified) | 3/3 | 100% |
 | 6.1 | Video Marketing Copy Parity + Thumbnail Visual Selection MVP | Complete (verified) | 5/5 | 100% |
 | 7 | Smooth Editing & Filler Word Control | Complete (verified 2026-02-21) | 4/4 | 100% |
-| 8 | Intelligent Cut Quality | Added (not planned) | 0/0 | 0% |
+| 8 | Intelligent Cut Quality | In progress | 1/6 | 17% |
 
 ## Performance Metrics
 
@@ -146,6 +146,11 @@ Progress: [███████████████████████
 | Filler review UX is category-grouped with bulk actions plus explicit per-item keep/remove controls | Speeds editorial review while keeping final decisions deterministic | 2026-02-21 |
 | UI persistence writes both filler_decisions and legacy approved_filler_cuts | Preserves backward compatibility for existing review/edit-plan consumers | 2026-02-21 |
 | Review/edit-plan filler wiring is regression-locked for explicit and legacy decision paths | Prevents drift between Streamlit review state and render-time cut behavior | 2026-02-21 |
+| FillerConfig splits word lists into disfluencies/hedge_words/custom_words with legacy words field merging into disfluency set | Backward compat: old config.yaml with only words:[...] continues to work unchanged | 2026-02-21 |
+| protect_pause_threshold_ms=300ms fires pause-gate protection with >= semantics; protected fillers excluded from LLM triage | Prevents removal of meaningful pauses embedded in speech cadence | 2026-02-21 |
+| Pause measurement uses raw word timestamps before padding; cut start/end retain padding_ms for render-safe splices | Keeps cut timing accurate while preserving smooth render boundaries | 2026-02-21 |
+| Category priority hedge > custom > disfluency prevents hedge words in multiple lists from being misclassified | Ensures hedge words always route to LLM triage regardless of other list membership | 2026-02-21 |
+| llm_triage_max_context_words serves double duty as context window N for context_before/context_after extraction | Single config knob controls both context budget and context field population | 2026-02-21 |
 
 ### Roadmap Evolution
 
@@ -260,16 +265,17 @@ Progress: [███████████████████████
 - 2026-02-21: Completed 07-02-PLAN.md (typed smoothing config, transition-aware snapped edit filtergraph, and phase-compatibility transition regressions)
 - 2026-02-21: Completed 07-03-PLAN.md (category-grouped filler review UI, bulk action semantics, and review-state/edit-plan wiring regressions)
 - 2026-02-21: Completed 07-04-PLAN.md (integration regressions for review/edit-plan/render compatibility plus Phase 7 operator docs updates)
+- 2026-02-21: Completed 08-01-PLAN.md (FillerConfig typed category sub-lists, FillerCut Phase 8 enrichment fields, upgraded _detect_fillers with category/pause/context/protection gate)
 
 ## Session Continuity
 
 ### Last session
 
-2026-02-21 05:36 UTC — Completed `07-04-PLAN.md` and generated `07-04-SUMMARY.md`.
+2026-02-21 08:03 UTC — Completed `08-01-PLAN.md` and generated `08-01-SUMMARY.md`.
 
 ### Stopped at
 
-Run phase verification for Phase 7 and route by verification status.
+Completed 08-01-PLAN.md — ready to execute 08-02-PLAN.md (LLM triage for hedge fillers).
 
 ### Resume file
 
