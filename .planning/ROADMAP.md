@@ -3,7 +3,7 @@
 **Created:** 2026-01-29
 **Last Updated:** 2026-02-21
 **Milestone:** v1.0 (Streamlit-first)
-**Phases:** 7 + follow-ups 5.1 and 6.1
+**Phases:** 8 + follow-ups 5.1 and 6.1
 
 ## Overview
 
@@ -302,6 +302,75 @@ Plans:
 - [x] 07-02-PLAN.md — Render smoothing engine: typed policy config, snapped cuts, selective micro-fade/crossfade/xfade with short-segment guardrails.
 - [x] 07-03-PLAN.md — Streamlit/editorial UX: category-grouped filler review, bulk actions, and deterministic decision persistence.
 - [x] 07-04-PLAN.md — Integration hardening: end-to-end regression coverage, legacy artifact compatibility, and operator documentation.
+
+---
+
+### Phase 8: Intelligent Cut Quality — Context-Aware Filler Control & Invisible Edit Rendering
+
+**Goal:** Deliver semantically-aware filler word triage (category-based auto-remove vs. LLM-checked review vs. pause-protected keep) and invisible video cut rendering (de-breathing, noise-floor matching, pose-match frame selection, RIFE AI bridge frames)  without breaking existing Phase 7 smoothing contracts.
+**Depends on:** Phase 7
+**Status:** Planning (spec complete 2026-02-21)
+**Plans:** 6 plans
+
+**Scope / Requirements:**
+
+- Restructure `FillerConfig` into typed `disfluencies`, `hedge_words`, `custom_words` sub-lists with backward-compatible `words` fallback
+- Enrich `FillerCut` transcript model with `category`, `pause_before_ms`, `pause_after_ms`, `context_before`, `context_after`, `protected` fields
+- Add pause-gate protection logic: fillers adjacent to ≥ 300ms pauses are `protected` and default to keep
+- Add LLM semantic triage sub-stage in `AnalyzeStage` for hedge fillers (batched, cheap gpt-4o-mini calls)
+- Write `analysis/filler_triage.json` with per-filler `safe_to_remove` verdicts and LLM reasons
+- Wire triage results into review stage `FillerCutRange.default_action` (disfluency → remove, protected → keep, LLM-safe hedge → remove, LLM-review hedge → review)
+- Update Streamlit filler cards with context snippet, pause badges (ms display), 🔒 protection lock, and LLM reason
+- Add `silero-vad` de-breathing pass extending cut boundaries past trailing breath sounds
+- Add `librosa` RMS noise-floor mismatch detection with FFmpeg gain-ramp correction
+- Add `opencv-python` Farneback optical-flow pose-match scanner for optimal cut-point frame selection
+- Add `practical-RIFE` GPU frame interpolation for content joins where pose distance exceeds threshold
+- Support RTX 5060 Ti 16 GB via PyTorch CUDA 12.x wheels
+- All new render passes independently enable/disable via `SmoothingConfig`
+- Full backward compatibility: legacy artifacts (no new fields) load with safe defaults
+
+**Success Criteria:**
+
+1. `um`/`uh`/`hmm`/`er`/`ah` auto-removed; `like`/`you know` sent to LLM for semantic check
+2. Any filler adjacent to ≥ 300ms pause is protected (`default_action=keep`) in edit plan
+3. LLM hedge triage produces `filler_triage.json` with one verdict per hedge filler; disabled flag respected
+4. Streamlit filler card shows context snippet, pause timing badges, and LLM reason text
+5. De-breathing extends cut boundaries to swallow trailing breath sounds
+6. Noise-floor matching corrects > 3dB RMS mismatch across a join with a gain ramp
+7. Pose-match scan selects frame pair with minimum optical-flow distance as actual cut point
+8. RIFE generates bridge frames when pose score exceeds threshold; falls back to xfade on failure
+9. GPU smoke test passes on RTX 5060 Ti: `scripts/smoke_test_gpu_rife.py` prints "RIFE OK"
+10. Legacy `filler_cuts.json` and `edit_plan.json` without Phase 8 fields load and render correctly
+
+Plans:
+
+- [ ] 08-01-PLAN.md — FillerConfig restructure + FillerCut category/pause/context enrichment in transcribe
+- [ ] 08-02-PLAN.md — LLM semantic triage sub-stage (AnalyzeStage) + FillerTriage model + artifact
+- [ ] 08-03-PLAN.md — Review + UI wiring: triage → FillerCutRange default_action + context/badge UI
+- [ ] 08-04-PLAN.md — Render: de-breathing (silero-vad) + noise-floor matching (librosa)
+- [ ] 08-05-PLAN.md — Render: pose-match (opencv) + RIFE AI frame interpolation (practical-RIFE + GPU)
+- [ ] 08-06-PLAN.md — Integration hardening: cross-path regressions, GPU smoke test, README operator docs
+
+**Details:**
+
+Plans run in 4 execution waves:
+
+- Wave 1: `08-01` (FillerConfig + FillerCut) and `08-02` (LLM triage) in parallel — both are additive foundation work
+- Wave 2: `08-03` (review/UI wiring) — requires Wave 1 enriched models
+- Wave 3: `08-04` (de-breathing + noise-floor) and `08-05` (pose-match + RIFE) in parallel — both are independent render passes
+- Wave 4: `08-06` (integration hardening + docs) — validates full stack
+
+**New dependencies:**
+
+| Package | Version | Purpose | GPU required |
+|---|---|---|---|
+| `silero-vad` | >= 5.0 | Breath/VAD detection | No |
+| `librosa` | >= 0.10 | Audio RMS analysis | No |
+| `soundfile` | >= 0.12 | Audio I/O for librosa | No |
+| `opencv-python` | >= 4.9 | Pose-match optical flow | No (CPU) |
+| `torch` | >= 2.3 (CUDA build) | RIFE inference | Yes (RTX 5060 Ti) |
+| `torchvision` | >= 0.18 | RIFE dep | Yes |
+| `practical-RIFE` | git clone | Frame interpolation | Yes |
 
 ---
 

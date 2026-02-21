@@ -23,7 +23,7 @@ The established libraries/tools for this domain:
 |---------|---------|---------|--------------|
 | FFmpeg / ffprobe | 8.0.1 latest stable source release (local runtime validated on 6.1.1 with required filters) | Segment trims, fades, crossfades, filtergraph execution | Canonical, production-grade edit graph tool with documented filters and constraints |
 | faster-whisper | 1.2.1 | Word-level timestamps and VAD-assisted segmentation | Already used in pipeline; direct `word_timestamps=True` support and stable API |
-| Streamlit | 1.54.0 | Human review UI for filler keep/remove decisions | Already integrated; supports `st.data_editor` + callback-driven state updates |
+| Streamlit | 1.54.0 latest (repo lock currently 1.53.1) | Human review UI for filler keep/remove decisions | Already integrated; supports `st.data_editor` + callback-driven state updates |
 | Pydantic | 2.x | Typed edit-plan/review/config models | Existing schema backbone; safest way to add metadata fields without silent drift |
 
 ### Supporting
@@ -231,10 +231,10 @@ st.data_editor(data, key="filler_editor", on_change=on_editor_change)
    - What's unclear: Corpus-specific false positive rate for hedge words.
    - Recommendation: Start with conservative review defaults for hedge category and tune with fixture set.
 
-3. **Context7 coverage gap in this run**
-   - What we know: Context7 requests failed due quota exhaustion in this environment.
-   - What's unclear: Whether additional Context7 snippets would materially change recommendations.
-   - Recommendation: Re-run Context7 verification when quota is restored; current conclusions are based on official docs/source and local runtime checks.
+3. **FFmpeg feature parity across deployment targets**
+   - What we know: Upstream docs and local runtime validation cover required filters (`trim/atrim`, `setpts/asetpts`, `acrossfade`, `xfade`).
+   - What's unclear: Whether every deployment image/node has identical filter availability and build flags.
+   - Recommendation: Add a startup/runtime capability check (`ffmpeg -filters`) and fail fast with actionable guidance if required filters are missing.
 
 ## Sources
 
@@ -252,7 +252,12 @@ st.data_editor(data, key="filler_editor", on_change=on_editor_change)
 - Streamlit `st.data_editor` API implementation/docstring (1.54.0 tag): https://raw.githubusercontent.com/streamlit/streamlit/1.54.0/lib/streamlit/elements/widgets/data_editor.py
 
 ### Secondary (MEDIUM confidence)
-- Streamlit issue patterns for `st.data_editor` + session state workflows: https://github.com/streamlit/streamlit/issues/7749
+- Context7 via `saas docs` (spot-check corroboration for faster-whisper API options): https://context7.com/systran/faster-whisper/llms.txt
+- FFmpeg consolidated manual index used for additional filter spot checks via `saas docs`: https://ffmpeg.org/ffmpeg-all.html
+- Streamlit button/session-state caveat reference used for UI behavior checks via `saas docs`: https://docs.streamlit.io/develop/concepts/design/buttons
+- Streamlit release-note checks for `st.data_editor` behavior via `saas docs`: https://docs.streamlit.io/develop/quick-reference/release-notes/2024
+- Streamlit issue patterns for `st.data_editor` + session state workflows: https://github.com/streamlit/streamlit/issues/7749 (open, last updated 2025-03-26)
+- Streamlit issue on programmatic `st.data_editor` state mutation: https://github.com/streamlit/streamlit/issues/6540 (open, last updated 2025-03-26)
 
 ### Tertiary (LOW confidence)
 - Perplexity ecosystem discovery output (used for source discovery only; critical claims re-verified against primary docs): internal run logs in this session.
@@ -261,7 +266,7 @@ st.data_editor(data, key="filler_editor", on_change=on_editor_change)
 
 **Confidence breakdown:**
 - Standard stack: HIGH - version/release claims validated from official release/package sources.
-- Architecture: HIGH - FFmpeg constraints and current repo architecture align cleanly.
+- Architecture: HIGH - FFmpeg constraints and current repo architecture align cleanly, including `saas docs`/Context7 corroboration.
 - Pitfalls: MEDIUM - several are validated via local runtime experiments and known integration behavior, but threshold tuning remains project-specific.
 
 **Research date:** 2026-02-21
