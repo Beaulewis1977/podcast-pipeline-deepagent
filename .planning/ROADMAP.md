@@ -309,8 +309,8 @@ Plans:
 
 **Goal:** Deliver semantically-aware filler word triage (category-based auto-remove vs. LLM-checked review vs. pause-protected keep) and invisible video cut rendering (de-breathing, noise-floor matching, pose-match frame selection, RIFE AI bridge frames)  without breaking existing Phase 7 smoothing contracts.
 **Depends on:** Phase 7
-**Status:** Planned (6 GSD plans created 2026-02-21)
-**Plans:** 6 plans
+**Status:** Complete (verified 2026-02-21)
+**Plans:** 6/6 complete
 
 **Scope / Requirements:**
 
@@ -344,12 +344,12 @@ Plans:
 
 Plans:
 
-- [ ] 08-01-PLAN.md — FillerConfig restructure + FillerCut category/pause/context enrichment in transcribe
-- [ ] 08-02-PLAN.md — LLM semantic triage sub-stage (AnalyzeStage) + FillerTriage model + filler_triage.json artifact
-- [ ] 08-03-PLAN.md — Review + UI wiring: triage -> FillerCutRange editorial_action + context/badge/protection UI
-- [ ] 08-04-PLAN.md — GPU deps + SmoothingConfig Phase 8 fields + de-breathing (silero-vad) + noise-floor matching (librosa)
-- [ ] 08-05-PLAN.md — Pose-match (opencv Farneback) + RIFE AI frame interpolation (practical-RIFE subprocess + --exp flag)
-- [ ] 08-06-PLAN.md — Integration hardening: cross-path regressions, GPU smoke test, legacy compat, operator guide
+- [x] 08-01-PLAN.md — FillerConfig restructure + FillerCut category/pause/context enrichment in transcribe
+- [x] 08-02-PLAN.md — LLM semantic triage sub-stage (AnalyzeStage) + FillerTriage model + filler_triage.json artifact
+- [x] 08-03-PLAN.md — Review + UI wiring: triage -> FillerCutRange editorial_action + context/badge/protection UI
+- [x] 08-04-PLAN.md — GPU deps + SmoothingConfig Phase 8 fields + de-breathing (silero-vad) + noise-floor matching (librosa)
+- [x] 08-05-PLAN.md — Pose-match (opencv Farneback) + RIFE AI frame interpolation (practical-RIFE subprocess + --exp flag)
+- [x] 08-06-PLAN.md — Integration hardening: cross-path regressions, GPU smoke test, legacy compat, operator guide
 
 **Details:**
 
