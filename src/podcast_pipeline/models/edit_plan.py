@@ -35,6 +35,13 @@ class FillerCutRange(BaseModel):
     smoothing_audio_ms: float | None = Field(default=None, ge=0.0)
     smoothing_video_ms: float | None = Field(default=None, ge=0.0)
 
+    # Phase 8: enriched triage fields — all optional/defaulted for backward compat
+    protected: bool = False
+    pause_before_ms: float = 0.0
+    pause_after_ms: float = 0.0
+    llm_safe_to_remove: bool | None = None  # None = not triaged
+    llm_reason: str = ""
+
     @model_validator(mode="after")
     def validate_range(self) -> Self:
         """Ensure filler cuts are non-empty forward ranges."""

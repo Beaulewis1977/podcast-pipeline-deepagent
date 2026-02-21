@@ -297,6 +297,50 @@ def approve_review(job_dir: Path, platforms: list[str] | None = None) -> ReviewD
     return decisions
 
 
+def _load_filler_triage_map(job_dir: Path) -> dict[int, dict[str, Any]]:
+    """Load filler_triage.json and return a dict keyed by filler_index."""
+    triage_path = job_dir / "analysis" / "filler_triage.json"
+    if not triage_path.exists():
+        return {}
+    try:
+        raw = json.loads(triage_path.read_text())
+        if not isinstance(raw, list):
+            return {}
+        return {
+            int(entry["filler_index"]): entry
+            for entry in raw
+            if isinstance(entry, dict) and "filler_index" in entry
+        }
+    except Exception:
+        return {}
+
+
+def _derive_editorial_action(
+    filler: dict[str, Any],
+    triage: dict[str, Any] | None,
+    explicit_action: Literal["remove", "keep"] | None,
+) -> Literal["remove", "keep"]:
+    """Derive default editorial_action from category, protection flag, and LLM verdict.
+
+    Priority:
+    1. Explicit user decision overrides everything.
+    2. protected=True -> keep
+    3. category == "disfluency" -> remove
+    4. triage.safe_to_remove == True -> remove
+    5. Default -> keep (review/no-triage hedge)
+    """
+    if explicit_action is not None:
+        return explicit_action
+    if filler.get("protected"):
+        return "keep"
+    category = str(filler.get("category") or "").strip().lower()
+    if category == "disfluency":
+        return "remove"
+    if triage is not None and triage.get("safe_to_remove") is True:
+        return "remove"
+    return "keep"
+
+
 def write_edit_plan(
     job_dir: Path,
     decisions: ReviewDecisions,
@@ -310,15 +354,41 @@ def write_edit_plan(
     review_dir = job_dir / "review"
     review_dir.mkdir(parents=True, exist_ok=True)
 
+    # Load LLM triage results keyed by filler index
+    triage_map = _load_filler_triage_map(job_dir)
+
     # Determine approved filler cuts
     # Support both start_seconds/end_seconds and start/end key variants
     approved_filler: list[FillerCutRange] = []
     if not decisions.reject_all_fillers:
         normalized_decisions = _materialize_filler_decisions(decisions, filler_cuts)
-        for idx, action in normalized_decisions:
-            if action != "remove" or idx >= len(filler_cuts):
+
+        for idx, legacy_action in normalized_decisions:
+            if idx >= len(filler_cuts):
                 continue
             filler = filler_cuts[idx]
+            triage = triage_map.get(idx)
+
+            # _materialize_filler_decisions already resolved the correct action by
+            # applying explicit filler_decisions, bulk rules, and legacy fallbacks
+            # in the correct priority order.  Use that as the authoritative action.
+            # Phase 8 adds one additional gate: protected fillers must never be
+            # removed, even if a bulk rule or legacy path would remove them.
+            action: Literal["remove", "keep"] = legacy_action
+            if action == "remove" and bool(filler.get("protected", False)):
+                action = "keep"
+
+            if action != "remove":
+                continue
+
+            # Populate Phase 8 enrichment fields from the filler cut dict
+            llm_safe: bool | None = None
+            llm_reason = ""
+            if triage is not None:
+                raw_safe = triage.get("safe_to_remove")
+                llm_safe = bool(raw_safe) if raw_safe is not None else None
+                llm_reason = str(triage.get("reason") or "")
+
             approved_filler.append(
                 FillerCutRange(
                     start_seconds=float(filler.get("start_seconds", filler.get("start", 0.0))),
@@ -333,6 +403,11 @@ def write_edit_plan(
                         filler.get("context_after", filler.get("after_text", "")) or ""
                     ),
                     editorial_action=action,
+                    protected=bool(filler.get("protected", False)),
+                    pause_before_ms=float(filler.get("pause_before_ms", 0.0)),
+                    pause_after_ms=float(filler.get("pause_after_ms", 0.0)),
+                    llm_safe_to_remove=llm_safe,
+                    llm_reason=llm_reason,
                 )
             )
 
