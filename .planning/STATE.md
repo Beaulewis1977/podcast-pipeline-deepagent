@@ -150,6 +150,7 @@ Progress: [███████████████████████
 - Phase 4 execution continued: completed 04-08 output quality backbone hardening (render enhancement + thumbnail artifacts + transcript-grounded research query/cache hardening)
 - Phase 4 execution continued: completed 04-09 operator UX hardening (desktop full lifecycle controls, Streamlit timeline range editing, cross-surface recovery diagnostics + reconcile controls)
 - Phase 4 execution completed: finished 04-10 confidence gates and docs alignment (provider reliability regressions, stronger coverage policy, runtime contract documentation)
+- Phase 7 added: Smooth Editing & Filler Word Control
 - Phase 5 added: Video Podcast Platforms
 - Phase 5 execution started: completed 05-01 platform defaults and fail-fast schema validation for spotify/apple video targets
 - Phase 5 execution continued: completed 05-02 render compliance wiring and truthful failure contracts

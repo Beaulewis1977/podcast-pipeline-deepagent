@@ -290,6 +290,15 @@ Plans run in 4 waves:
 - Wave 3: `06.1-04` implements analyze-time frame extraction and visual ranked selection UX.
 - Wave 4: `06.1-05` enforces per-target thumbnail compliance and fail-fast render semantics.
 
+### Phase 7: Smooth Editing & Filler Word Control
+
+**Goal:** [To be planned]
+**Depends on:** Phase 6
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd:plan-phase 7 to break down)
+
 ---
 
 ## Notes
