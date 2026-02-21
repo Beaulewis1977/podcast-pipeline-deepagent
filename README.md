@@ -263,6 +263,61 @@ For each job, artifacts are written under `jobs/<job_id>/`:
 - `review/review_state.json` — persisted review decisions and marketing edits
 - `review/edit_plan.json` — validated timeline cuts/clips used by render
 
+## ✂️ Phase 7 Editing Controls
+
+### Filler decision semantics (review stage)
+
+- `review/review_state.json` supports both:
+- `filler_decisions` (explicit per-item `keep`/`remove`) and
+- legacy `approved_filler_cuts` (index list).
+- Render/edit-plan generation is explicit-first:
+- if `filler_decisions` exists, it is authoritative.
+- if absent, legacy `approved_filler_cuts` fallback is used.
+- `reject_all_fillers: true` still hard-disables filler removals.
+- Streamlit timeline editor also persists `filler_bulk_rules` for category-level intent (`remove_all`, `keep_all`, `review_each`).
+
+### Smoothing controls (render stage)
+
+Use `config.yaml` `smoothing` to tune splice behavior:
+
+```yaml
+smoothing:
+  enabled: true
+  micro_fade_ms: 30
+  content_audio_crossfade_ms: 150
+  content_video_dissolve_ms: 300
+  max_snap_shift_ms: 250
+  join_clamp_ratio: 0.35
+  require_transition_filters: false
+```
+
+Runtime behavior:
+
+- All kept segments receive short audio micro-fades when enabled.
+- Content-cut joins may use `acrossfade` (audio) and `xfade` (video) when available.
+- Filler-only joins stay on concat joins (no heavy transitions).
+- Cut boundaries can snap to transcript word-gap boundaries when `analysis/transcript.json` provides word timings.
+- Transition durations are clamped by `join_clamp_ratio` to avoid over-consuming short neighboring segments.
+
+### Troubleshooting
+
+- `xfade` mismatch errors:
+- Cause: FFmpeg transition inputs must match key stream properties.
+- Current render path normalizes transition branches (`fps`, format, timebase) before `xfade`, but custom edits can still break assumptions.
+- If your FFmpeg build lacks transition filters, keep `smoothing.require_transition_filters: false` to auto-fallback to concat joins.
+- Harsh artifacts around short cuts:
+- Lower `content_audio_crossfade_ms` / `content_video_dissolve_ms`, or lower `join_clamp_ratio` for more conservative transitions.
+- Snapping feels too aggressive:
+- Lower `max_snap_shift_ms` or disable smoothing for exact cut boundaries.
+- Streamlit state surprises after clicking:
+- Button-like widgets are ephemeral across reruns; rely on persisted artifacts (`review_state.json`, `review/edit_plan.json`) and use **Save Timeline Changes** to commit edits before switching tabs/reloading.
+
+### Backward compatibility expectations
+
+- Existing legacy `review_state.json` and `edit_plan.json` artifacts remain executable.
+- Mixed new+legacy review payloads are deterministic: explicit `filler_decisions` win over legacy index lists.
+- `review/edit_plan.json` remains the render source of truth.
+
 ## 🔧 Configuration
 
 ### config.yaml
