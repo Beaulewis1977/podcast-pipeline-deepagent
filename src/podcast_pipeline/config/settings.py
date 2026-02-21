@@ -245,6 +245,18 @@ class EnhancementsConfig(BaseModel):
     color_correction: ColorCorrectionConfig = Field(default_factory=ColorCorrectionConfig)
 
 
+class SmoothingConfig(BaseModel):
+    """Phase 7 transition smoothing and cut-boundary snapping policy."""
+
+    enabled: bool = True
+    micro_fade_ms: float = Field(default=30.0, ge=0.0, le=250.0)
+    content_audio_crossfade_ms: float = Field(default=150.0, ge=0.0, le=1200.0)
+    content_video_dissolve_ms: float = Field(default=300.0, ge=0.0, le=2000.0)
+    max_snap_shift_ms: float = Field(default=250.0, ge=0.0, le=1000.0)
+    join_clamp_ratio: float = Field(default=0.35, gt=0.0, le=0.5)
+    require_transition_filters: bool = False
+
+
 class HLSConfig(BaseModel):
     """Typed HLS muxer configuration for provider hand-off artifacts."""
 
@@ -790,6 +802,7 @@ class Config(BaseModel):
     fillers: FillerConfig = Field(default_factory=FillerConfig)
     audio: AudioConfig = Field(default_factory=AudioConfig)
     enhancements: EnhancementsConfig = Field(default_factory=EnhancementsConfig)
+    smoothing: SmoothingConfig = Field(default_factory=SmoothingConfig)
     thumbnails: ThumbnailSpecs = Field(default_factory=ThumbnailSpecs)
     platforms: PlatformSpecs = Field(default_factory=PlatformSpecs)
     api_keys: APIKeysConfig = Field(default_factory=APIKeysConfig)

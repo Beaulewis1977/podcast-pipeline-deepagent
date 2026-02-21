@@ -448,6 +448,79 @@ class TestEnhancementConfig:
             load_config(config_path)
 
 
+class TestSmoothingConfig:
+    """Tests for typed Phase 7 smoothing configuration defaults and validation."""
+
+    def test_smoothing_config_defaults_are_conservative(self) -> None:
+        """Default smoothing policy should be enabled with mild transition values."""
+        config = load_config()
+
+        assert config.smoothing.enabled is True
+        assert config.smoothing.micro_fade_ms == pytest.approx(30.0)
+        assert config.smoothing.content_audio_crossfade_ms == pytest.approx(150.0)
+        assert config.smoothing.content_video_dissolve_ms == pytest.approx(300.0)
+        assert config.smoothing.max_snap_shift_ms == pytest.approx(250.0)
+        assert config.smoothing.join_clamp_ratio == pytest.approx(0.35)
+        assert config.smoothing.require_transition_filters is False
+
+    def test_smoothing_config_accepts_yaml_overrides(self, tmp_path: Path) -> None:
+        """Smoothing overrides should parse as typed runtime settings."""
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "\n".join(
+                [
+                    "smoothing:",
+                    "  enabled: true",
+                    "  micro_fade_ms: 18",
+                    "  content_audio_crossfade_ms: 120",
+                    "  content_video_dissolve_ms: 220",
+                    "  max_snap_shift_ms: 180",
+                    "  join_clamp_ratio: 0.25",
+                    "  require_transition_filters: true",
+                ]
+            )
+        )
+
+        config = load_config(config_path)
+
+        assert config.smoothing.micro_fade_ms == pytest.approx(18.0)
+        assert config.smoothing.content_audio_crossfade_ms == pytest.approx(120.0)
+        assert config.smoothing.content_video_dissolve_ms == pytest.approx(220.0)
+        assert config.smoothing.max_snap_shift_ms == pytest.approx(180.0)
+        assert config.smoothing.join_clamp_ratio == pytest.approx(0.25)
+        assert config.smoothing.require_transition_filters is True
+
+    def test_smoothing_config_rejects_invalid_join_clamp_ratio(self, tmp_path: Path) -> None:
+        """Clamp ratio above 0.5 should fail fast during config load."""
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "\n".join(
+                [
+                    "smoothing:",
+                    "  join_clamp_ratio: 0.75",
+                ]
+            )
+        )
+
+        with pytest.raises(ValueError, match=r"smoothing|join_clamp_ratio"):
+            load_config(config_path)
+
+    def test_smoothing_config_rejects_negative_micro_fade(self, tmp_path: Path) -> None:
+        """Negative smoothing durations should be rejected."""
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "\n".join(
+                [
+                    "smoothing:",
+                    "  micro_fade_ms: -5",
+                ]
+            )
+        )
+
+        with pytest.raises(ValueError, match=r"smoothing|micro_fade_ms"):
+            load_config(config_path)
+
+
 class TestRenderStage:
     """Tests for RenderStage class."""
 
@@ -1294,8 +1367,250 @@ class TestRenderColorCorrection:
         assert color_filter is not None
         assert base_filter[0].count("trim=start=") == color_filter[0].count("trim=start=")
         assert base_filter[0].count("atrim=start=") == color_filter[0].count("atrim=start=")
-        assert "concat=n=2:v=1:a=1" in base_filter[0]
-        assert "concat=n=2:v=1:a=1" in color_filter[0]
+        assert "concat=n=2:v=1:a=0" in base_filter[0]
+        assert "concat=n=2:v=0:a=1" in base_filter[0]
+        assert "concat=n=2:v=1:a=0" in color_filter[0]
+        assert "concat=n=2:v=0:a=1" in color_filter[0]
+
+
+class TestRenderEditPlanSmoothing:
+    """Tests for snapped cuts and transition-aware edit-plan filter construction."""
+
+    def test_edit_plan_filter_micro_fade_applies_to_trimmed_segments(self, monkeypatch) -> None:
+        """All keep segments should receive edge micro fades."""
+        stage = RenderStage(load_config())
+        monkeypatch.setattr(
+            stage,
+            "_resolve_transition_filter_availability",
+            lambda *, needs_content_transitions: {"acrossfade": False, "xfade": False},
+        )
+        edit_plan = EditPlan(
+            filler_cuts=[FillerCutRange(start_seconds=1.0, end_seconds=2.0, word="um")]
+        )
+
+        rendered = stage._build_edit_plan_filter(edit_plan, 10.0, [], [])
+
+        assert rendered is not None
+        filter_complex = rendered[0]
+        assert "afade=t=in" in filter_complex
+        assert "afade=t=out" in filter_complex
+
+    def test_edit_plan_filter_acrossfade_applies_for_content_join(self, monkeypatch) -> None:
+        """Content joins should use acrossfade when filter support is available."""
+        stage = RenderStage(load_config())
+        monkeypatch.setattr(
+            stage,
+            "_resolve_transition_filter_availability",
+            lambda *, needs_content_transitions: {"acrossfade": True, "xfade": False},
+        )
+        edit_plan = EditPlan(
+            content_cuts=[{"start_seconds": 2.0, "end_seconds": 3.0, "reason": "tangent"}]
+        )
+
+        rendered = stage._build_edit_plan_filter(edit_plan, 8.0, [], [])
+
+        assert rendered is not None
+        assert "acrossfade=" in rendered[0]
+
+    def test_edit_plan_filter_xfade_applies_with_normalization_for_content_join(
+        self,
+        monkeypatch,
+    ) -> None:
+        """Content joins should use normalized xfade path when available."""
+        stage = RenderStage(load_config())
+        monkeypatch.setattr(
+            stage,
+            "_resolve_transition_filter_availability",
+            lambda *, needs_content_transitions: {"acrossfade": False, "xfade": True},
+        )
+        edit_plan = EditPlan(
+            content_cuts=[{"start_seconds": 2.0, "end_seconds": 3.0, "reason": "tangent"}]
+        )
+
+        rendered = stage._build_edit_plan_filter(edit_plan, 8.0, [], [])
+
+        assert rendered is not None
+        assert "xfade=transition=fade" in rendered[0]
+        assert "fps=30" in rendered[0]
+        assert "settb=AVTB" in rendered[0]
+
+    def test_edit_plan_filter_clamp_limits_short_segment_transition_duration(
+        self,
+        monkeypatch,
+    ) -> None:
+        """Short adjacent keep segments should clamp heavy transition durations."""
+        config = load_config()
+        config.smoothing.content_audio_crossfade_ms = 300.0
+        config.smoothing.join_clamp_ratio = 0.35
+        stage = RenderStage(config)
+        monkeypatch.setattr(
+            stage,
+            "_resolve_transition_filter_availability",
+            lambda *, needs_content_transitions: {"acrossfade": True, "xfade": False},
+        )
+        edit_plan = EditPlan(
+            content_cuts=[{"start_seconds": 0.2, "end_seconds": 0.4, "reason": "pause"}]
+        )
+
+        rendered = stage._build_edit_plan_filter(edit_plan, 1.0, [], [])
+
+        assert rendered is not None
+        assert "acrossfade=d=0.070" in rendered[0]
+
+    def test_edit_plan_filter_transition_filler_only_skips_heavy_transitions(
+        self,
+        monkeypatch,
+    ) -> None:
+        """Filler-only joins should not apply content-grade acrossfade/xfade transitions."""
+        stage = RenderStage(load_config())
+        monkeypatch.setattr(
+            stage,
+            "_resolve_transition_filter_availability",
+            lambda *, needs_content_transitions: {"acrossfade": True, "xfade": True},
+        )
+        edit_plan = EditPlan(filler_cuts=[{"start_seconds": 1.0, "end_seconds": 1.4, "word": "um"}])
+
+        rendered = stage._build_edit_plan_filter(edit_plan, 5.0, [], [])
+
+        assert rendered is not None
+        assert "acrossfade=" not in rendered[0]
+        assert "xfade=" not in rendered[0]
+
+    def test_edit_plan_filter_timestamp_reset_applied_for_each_segment(self, monkeypatch) -> None:
+        """Trimmed segments should always reset timestamps before join logic."""
+        stage = RenderStage(load_config())
+        monkeypatch.setattr(
+            stage,
+            "_resolve_transition_filter_availability",
+            lambda *, needs_content_transitions: {"acrossfade": False, "xfade": False},
+        )
+        edit_plan = EditPlan(
+            content_cuts=[{"start_seconds": 2.0, "end_seconds": 3.0, "reason": "tangent"}]
+        )
+
+        rendered = stage._build_edit_plan_filter(edit_plan, 8.0, [], [])
+
+        assert rendered is not None
+        assert rendered[0].count("setpts=PTS-STARTPTS") >= 2
+        assert rendered[0].count("asetpts=PTS-STARTPTS") >= 2
+
+    def test_phase6_transition_enhancement_order_remains_additive(self, monkeypatch) -> None:
+        """Phase 6 enhancement filters should run after transition/join operations."""
+        stage = RenderStage(load_config())
+        monkeypatch.setattr(
+            stage,
+            "_resolve_transition_filter_availability",
+            lambda *, needs_content_transitions: {"acrossfade": True, "xfade": False},
+        )
+        edit_plan = EditPlan(
+            content_cuts=[{"start_seconds": 2.0, "end_seconds": 3.0, "reason": "tangent"}]
+        )
+        af_filters = stage._build_audio_enhancement_filters()
+
+        rendered = stage._build_edit_plan_filter(edit_plan, 8.0, [], af_filters)
+
+        assert rendered is not None
+        transition_index = rendered[0].find("acrossfade=")
+        enhancement_index = rendered[0].find("highpass=f=70")
+        assert transition_index >= 0
+        assert enhancement_index > transition_index
+
+    def test_edit_plan_filter_snap_uses_transcript_word_boundaries(self, monkeypatch) -> None:
+        """Cut boundaries should snap to nearby transcript gaps before building trims."""
+        stage = RenderStage(load_config())
+        monkeypatch.setattr(
+            stage,
+            "_resolve_transition_filter_availability",
+            lambda *, needs_content_transitions: {"acrossfade": False, "xfade": False},
+        )
+        edit_plan = EditPlan(
+            filler_cuts=[{"start_seconds": 1.15, "end_seconds": 1.85, "word": "um"}]
+        )
+        transcript_words = [
+            {"word": "we", "start": 0.8, "end": 1.0},
+            {"word": "should", "start": 1.2, "end": 1.4},
+            {"word": "ship", "start": 1.8, "end": 2.0},
+            {"word": "today", "start": 2.2, "end": 2.4},
+        ]
+
+        rendered = stage._build_edit_plan_filter(
+            edit_plan,
+            4.0,
+            [],
+            [],
+            transcript_words=transcript_words,
+        )
+
+        assert rendered is not None
+        filter_complex = rendered[0]
+        assert "trim=start=0.000:end=1.100" in filter_complex
+        assert "trim=start=2.100:end=4.000" in filter_complex
+
+    def test_render_legacy_edit_plan_payload_remains_executable(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """Legacy edit_plan.json payloads should still build smoothing-aware render filters."""
+        stage = RenderStage(load_config())
+        review_dir = tmp_path / "review"
+        review_dir.mkdir(parents=True, exist_ok=True)
+        (review_dir / "edit_plan.json").write_text(
+            json.dumps(
+                {
+                    "filler_cuts": [
+                        {
+                            "start_seconds": 1.15,
+                            "end_seconds": 1.85,
+                            "word": "um",
+                        }
+                    ],
+                    "content_cuts": [
+                        {
+                            "start_seconds": 3.15,
+                            "end_seconds": 3.85,
+                            "reason": "off-topic tangent",
+                        }
+                    ],
+                    "clip_ranges": [],
+                }
+            )
+        )
+
+        edit_plan = stage._load_edit_plan(tmp_path)
+        assert edit_plan is not None
+
+        monkeypatch.setattr(
+            stage,
+            "_resolve_transition_filter_availability",
+            lambda *, needs_content_transitions: {"acrossfade": True, "xfade": False},
+        )
+        transcript_words = [
+            {"word": "we", "start": 0.8, "end": 1.0},
+            {"word": "should", "start": 1.2, "end": 1.4},
+            {"word": "ship", "start": 1.8, "end": 2.0},
+            {"word": "today", "start": 2.2, "end": 2.4},
+            {"word": "cut", "start": 2.8, "end": 3.0},
+            {"word": "this", "start": 3.2, "end": 3.4},
+            {"word": "part", "start": 3.8, "end": 4.0},
+        ]
+
+        rendered = stage._build_edit_plan_filter(
+            edit_plan,
+            7.0,
+            [],
+            stage._build_audio_enhancement_filters(),
+            transcript_words=transcript_words,
+        )
+
+        assert rendered is not None
+        filter_complex = rendered[0]
+        assert "trim=start=0.000:end=1.100" in filter_complex
+        assert "trim=start=2.100:end=3.100" in filter_complex
+        assert "trim=start=3.850:end=7.000" in filter_complex
+        assert "acrossfade=" in filter_complex
+        transition_index = filter_complex.find("acrossfade=")
+        enhancement_index = filter_complex.find("highpass=f=70")
+        assert transition_index >= 0
+        assert enhancement_index > transition_index
 
 
 class TestRenderStatusSemantics:

@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from itertools import pairwise
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, cast
 
 import httpx
 import streamlit as st
@@ -31,6 +31,7 @@ from podcast_pipeline.export_targets import (
     normalize_export_platforms,
 )
 from podcast_pipeline.stages.review import (
+    FillerDecision,
     ReviewDecisions,
     approve_review,
     write_edit_plan,
@@ -1025,6 +1026,80 @@ def _clone_timeline_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [{**row} for row in rows]
 
 
+def _normalize_filler_action(action: Any) -> str:
+    """Normalize filler action tokens to keep/remove."""
+    normalized = str(action).strip().lower()
+    return "keep" if normalized == "keep" else "remove"
+
+
+def _normalize_filler_category(category: Any) -> str:
+    """Normalize filler category values for deterministic grouping keys."""
+    text = str(category or "").strip().lower()
+    return text if text else "uncategorized"
+
+
+def _filler_category_label(category_key: str) -> str:
+    """Render a compact category heading from normalized keys."""
+    if category_key == "uncategorized":
+        return "Uncategorized"
+    return category_key.replace("_", " ").replace("-", " ").title()
+
+
+def _group_fillers_by_category(fillers: list[dict[str, Any]]) -> dict[str, list[int]]:
+    """Group filler indices by normalized category while preserving index order."""
+    grouped: dict[str, list[int]] = {}
+    for idx, filler in enumerate(fillers):
+        category_key = _normalize_filler_category(filler.get("category"))
+        grouped.setdefault(category_key, []).append(idx)
+    return grouped
+
+
+def _filler_decision_map(
+    decisions: ReviewDecisions, fillers: list[dict[str, Any]]
+) -> dict[int, str]:
+    """Build index->action map from explicit decisions with legacy fallback semantics."""
+    filler_count = len(fillers)
+    if filler_count == 0:
+        return {}
+
+    decision_map: dict[int, str] = {}
+    if decisions.filler_decisions:
+        for decision in decisions.filler_decisions:
+            if 0 <= decision.index < filler_count:
+                decision_map[decision.index] = _normalize_filler_action(decision.action)
+    else:
+        approved_indices = set(decisions.approved_filler_cuts or list(range(filler_count)))
+        for idx in range(filler_count):
+            decision_map[idx] = "remove" if idx in approved_indices else "keep"
+
+    return decision_map
+
+
+def _apply_filler_bulk_action(
+    decision_map: dict[int, str],
+    filler_indices: list[int],
+    *,
+    action: str | None,
+) -> dict[int, str]:
+    """Apply a category-level action to all filler indices in that group."""
+    if action not in {"remove", "keep"}:
+        return decision_map
+    updated = dict(decision_map)
+    for idx in filler_indices:
+        updated[idx] = action
+    return updated
+
+
+def _materialize_filler_decisions(
+    decision_map: dict[int, str],
+) -> list[FillerDecision]:
+    """Convert action map into deterministic sorted filler decision payload."""
+    return [
+        FillerDecision(index=idx, action=_normalize_filler_action(action))
+        for idx, action in sorted(decision_map.items(), key=lambda item: item[0])
+    ]
+
+
 def _timeline_rows_from_artifacts(
     job_dir: Path,
     analysis: dict[str, Any],
@@ -1353,42 +1428,115 @@ def render_timeline_editor(job_id: str, job_dir: Path) -> None:
         st.success("No filler words detected!")
     else:
         st.info(f"Found {len(fillers)} filler words")
+        filler_groups = _group_fillers_by_category(fillers)
+        decision_map = _filler_decision_map(decisions, fillers)
+        bulk_rules: dict[str, str] = dict(decisions.filler_bulk_rules)
+        # Compute once: when explicit decisions exist, unspecified fillers default
+        # to "keep" so opening the UI does not silently convert them to "remove".
+        missing_default = "keep" if decision_map else "remove"
 
-        with st.expander(f"View {len(fillers)} filler words"):
-            approved_fillers = list(decisions.approved_filler_cuts or list(range(len(fillers))))
-
-            select_all = st.checkbox(
-                "Select All Fillers",
-                value=len(approved_fillers) == len(fillers),
-                key=f"select_all_fillers_{job_id}",
+        for category_key in sorted(filler_groups.keys()):
+            indices = filler_groups[category_key]
+            remove_count = sum(
+                1
+                for idx in indices
+                if _normalize_filler_action(decision_map.get(idx, missing_default)) == "remove"
             )
-
-            if select_all:
-                approved_fillers = list(range(len(fillers)))
-
-            for j, filler in enumerate(fillers[:50]):  # Show first 50
-                col1, col2, col3 = st.columns([1, 2, 2])
-                with col1:
-                    selected = st.checkbox(
-                        "✓",
-                        value=j in approved_fillers,
-                        key=f"filler_{job_id}_{j}",
-                        label_visibility="collapsed",
+            with st.expander(
+                f"{_filler_category_label(category_key)} ({len(indices)} found · {remove_count} remove)"
+            ):
+                bulk_cols = st.columns(3)
+                with bulk_cols[0]:
+                    remove_all = st.button(
+                        "Remove All",
+                        key=f"filler_bulk_remove_{job_id}_{category_key}",
                     )
-                    if selected and j not in approved_fillers:
-                        approved_fillers.append(j)
-                    elif not selected and j in approved_fillers:
-                        approved_fillers.remove(j)
-                with col2:
-                    st.caption(f'"{filler.get("word", "")}"')
-                with col3:
-                    start = filler.get("start_seconds", filler.get("start", ""))
-                    st.caption(f"{start}")
+                with bulk_cols[1]:
+                    keep_all = st.button(
+                        "Keep All",
+                        key=f"filler_bulk_keep_{job_id}_{category_key}",
+                    )
+                with bulk_cols[2]:
+                    review_each = st.button(
+                        "Review Each",
+                        key=f"filler_bulk_review_{job_id}_{category_key}",
+                    )
 
-            if len(fillers) > 50:
-                st.caption(f"... and {len(fillers) - 50} more")
+                if remove_all:
+                    decision_map = _apply_filler_bulk_action(
+                        decision_map,
+                        indices,
+                        action="remove",
+                    )
+                    bulk_rules[category_key] = "remove_all"
+                    for idx in indices:
+                        st.session_state.pop(f"filler_action_{job_id}_{idx}", None)
+                elif keep_all:
+                    decision_map = _apply_filler_bulk_action(
+                        decision_map,
+                        indices,
+                        action="keep",
+                    )
+                    bulk_rules[category_key] = "keep_all"
+                    for idx in indices:
+                        st.session_state.pop(f"filler_action_{job_id}_{idx}", None)
+                elif review_each:
+                    bulk_rules[category_key] = "review_each"
 
-            decisions.approved_filler_cuts = sorted(set(approved_fillers))
+                for idx in indices[:50]:
+                    filler = fillers[idx]
+                    existing_action = decision_map.get(idx, None)
+                    raw_default = (
+                        existing_action if existing_action is not None else missing_default
+                    )
+                    default_action = _normalize_filler_action(raw_default)
+                    default_index = 0 if default_action == "remove" else 1
+                    col1, col2, col3, col4 = st.columns([1.5, 1.3, 1.8, 2.6])
+                    with col1:
+                        selection = st.radio(
+                            "Action",
+                            options=["Remove", "Keep"],
+                            index=default_index,
+                            horizontal=True,
+                            key=f"filler_action_{job_id}_{idx}",
+                            label_visibility="collapsed",
+                        )
+                    with col2:
+                        st.caption(f'"{filler.get("word", "")}"')
+                    with col3:
+                        start = filler.get("start_seconds", filler.get("start", ""))
+                        st.caption(f"{start}")
+                    with col4:
+                        raw_before = filler.get("context_before", filler.get("before_text", ""))
+                        before_text = ("" if raw_before is None else str(raw_before)).strip()
+                        raw_after = filler.get("context_after", filler.get("after_text", ""))
+                        after_text = ("" if raw_after is None else str(raw_after)).strip()
+                        if before_text or after_text:
+                            st.caption(
+                                f"{before_text} [{filler.get('word', '')}] {after_text}".strip()
+                            )
+
+                    selected_action = "remove" if selection == "Remove" else "keep"
+                    decision_map[idx] = selected_action
+                    if selected_action != default_action:
+                        bulk_rules[category_key] = "review_each"
+
+                if len(indices) > 50:
+                    st.caption(f"... and {len(indices) - 50} more in this category")
+
+        materialized = _materialize_filler_decisions(decision_map)
+        decisions.filler_decisions = materialized
+        decisions.approved_filler_cuts = [
+            decision.index for decision in materialized if decision.action == "remove"
+        ]
+        normalized_bulk_rules: dict[str, Literal["remove_all", "keep_all", "review_each"]] = {}
+        for key, value in bulk_rules.items():
+            if value in {"remove_all", "keep_all", "review_each"}:
+                normalized_bulk_rules[key] = cast(
+                    Literal["remove_all", "keep_all", "review_each"],
+                    value,
+                )
+        decisions.filler_bulk_rules = normalized_bulk_rules
 
     # Save changes button
     if st.button("💾 Save Timeline Changes", key="save_timeline"):

@@ -144,6 +144,34 @@ class TestReviewDecisionsUpdate:
         assert invalid == ["invalid"]
         assert updated.export_platforms == ["youtube", "tiktok", "instagram"]
 
+    def test_save_review_decisions_review_state_preserves_filler_decisions(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Saving review state should persist explicit per-filler actions."""
+        from podcast_pipeline.stages.review import FillerDecision, ReviewDecisions
+        from podcast_pipeline.ui.app import save_review_decisions
+
+        analysis_dir = tmp_path / "analysis"
+        analysis_dir.mkdir(parents=True, exist_ok=True)
+        (analysis_dir / "analysis.json").write_text('{"content_cuts": [], "viral_clips": []}')
+        (analysis_dir / "filler_cuts.json").write_text(
+            '[{"start_seconds":1.0,"end_seconds":1.2,"word":"um"}]'
+        )
+
+        decisions = ReviewDecisions(
+            filler_decisions=[FillerDecision(index=0, action="keep")],
+            approved_filler_cuts=[],
+        )
+        save_review_decisions(tmp_path, decisions)
+
+        saved = ReviewDecisions.model_validate_json(
+            (tmp_path / "review" / "review_state.json").read_text()
+        )
+        assert len(saved.filler_decisions) == 1
+        assert saved.filler_decisions[0].index == 0
+        assert saved.filler_decisions[0].action == "keep"
+
 
 class TestMarketingEditorPlatformSpecs:
     """Tests for marketing editor platform coverage and limits."""

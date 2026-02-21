@@ -2,7 +2,7 @@
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -21,11 +21,24 @@ from podcast_pipeline.utils.logging import get_logger
 logger = get_logger(__name__)
 
 
+class FillerDecision(BaseModel):
+    """Explicit keep/remove decision for one detected filler item."""
+
+    index: int = Field(ge=0)
+    action: Literal["remove", "keep"] = "remove"
+    reason: str = ""
+    category: str = ""
+
+
 class ReviewDecisions(BaseModel):
     """Human review decisions."""
 
     # Filler cuts - list of indices to approve (empty = approve all)
     approved_filler_cuts: list[int] = Field(default_factory=list)
+    filler_decisions: list[FillerDecision] = Field(default_factory=list)
+    filler_bulk_rules: dict[str, Literal["remove_all", "keep_all", "review_each"]] = Field(
+        default_factory=dict
+    )
     reject_all_fillers: bool = False
 
     # Content cuts - list of indices to approve
@@ -82,6 +95,17 @@ class ReviewDecisions(BaseModel):
             raise ValueError("selected_thumbnails must contain unique indices")
         if any(index < 0 for index in value):
             raise ValueError("selected_thumbnails indices must be >= 0")
+        return value
+
+    @field_validator("filler_decisions")
+    @classmethod
+    def validate_filler_decisions(cls, value: list[FillerDecision]) -> list[FillerDecision]:
+        """Require deterministic uniqueness by filler index."""
+        seen_indices: set[int] = set()
+        for decision in value:
+            if decision.index in seen_indices:
+                raise ValueError("filler_decisions must not contain duplicate indices")
+            seen_indices.add(decision.index)
         return value
 
     @model_validator(mode="before")
@@ -195,6 +219,9 @@ class ReviewStage(Stage):
         if filler_path.exists():
             fillers = json.loads(filler_path.read_text())
             decisions.approved_filler_cuts = list(range(len(fillers)))
+            decisions.filler_decisions = [
+                FillerDecision(index=i, action="remove") for i in range(len(fillers))
+            ]
 
         # Default: no content cuts approved (require explicit approval)
         # Default: no clips selected (require explicit selection)
@@ -236,6 +263,9 @@ def approve_review(job_dir: Path, platforms: list[str] | None = None) -> ReviewD
     if filler_path.exists():
         fillers = json.loads(filler_path.read_text())
         decisions.approved_filler_cuts = list(range(len(fillers)))
+        decisions.filler_decisions = [
+            FillerDecision(index=i, action="remove") for i in range(len(fillers))
+        ]
 
     # Approve all content cuts
     if analysis_path.exists():
@@ -284,18 +314,27 @@ def write_edit_plan(
     # Support both start_seconds/end_seconds and start/end key variants
     approved_filler: list[FillerCutRange] = []
     if not decisions.reject_all_fillers:
-        filler_indices = decisions.approved_filler_cuts or list(range(len(filler_cuts)))
-        for idx in filler_indices:
-            if idx < len(filler_cuts):
-                filler = filler_cuts[idx]
-                approved_filler.append(
-                    FillerCutRange(
-                        start_seconds=float(filler.get("start_seconds", filler.get("start", 0.0))),
-                        end_seconds=float(filler.get("end_seconds", filler.get("end", 0.0))),
-                        word=str(filler.get("word", "")),
-                        confidence=filler.get("confidence"),
-                    )
+        normalized_decisions = _materialize_filler_decisions(decisions, filler_cuts)
+        for idx, action in normalized_decisions:
+            if action != "remove" or idx >= len(filler_cuts):
+                continue
+            filler = filler_cuts[idx]
+            approved_filler.append(
+                FillerCutRange(
+                    start_seconds=float(filler.get("start_seconds", filler.get("start", 0.0))),
+                    end_seconds=float(filler.get("end_seconds", filler.get("end", 0.0))),
+                    word=str(filler.get("word", "")),
+                    confidence=filler.get("confidence"),
+                    category=str(filler.get("category") or ""),
+                    context_before=str(
+                        filler.get("context_before", filler.get("before_text", "")) or ""
+                    ),
+                    context_after=str(
+                        filler.get("context_after", filler.get("after_text", "")) or ""
+                    ),
+                    editorial_action=action,
                 )
+            )
 
     # Determine approved content cuts
     # Support both start_seconds/end_seconds and start/end key variants
@@ -346,6 +385,71 @@ def write_edit_plan(
     )
 
     return edit_path
+
+
+def _resolve_filler_cut_indices(decisions: ReviewDecisions, filler_count: int) -> list[int]:
+    """Resolve filler cuts using explicit decisions first, then legacy fallbacks."""
+    if filler_count <= 0:
+        return []
+
+    if decisions.filler_decisions:
+        explicit_remove = [
+            item.index for item in decisions.filler_decisions if item.action == "remove"
+        ]
+        deduped: list[int] = []
+        seen: set[int] = set()
+        for idx in explicit_remove:
+            if idx < 0 or idx >= filler_count:
+                continue
+            if idx in seen:
+                continue
+            seen.add(idx)
+            deduped.append(idx)
+        return sorted(deduped)
+
+    fallback = decisions.approved_filler_cuts or list(range(filler_count))
+    deduped_fallback: list[int] = []
+    seen_fallback: set[int] = set()
+    for idx in fallback:
+        if idx < 0 or idx >= filler_count:
+            continue
+        if idx in seen_fallback:
+            continue
+        seen_fallback.add(idx)
+        deduped_fallback.append(idx)
+    return sorted(deduped_fallback)
+
+
+def _materialize_filler_decisions(
+    decisions: ReviewDecisions,
+    filler_cuts: list[dict[str, Any]],
+) -> list[tuple[int, Literal["remove", "keep"]]]:
+    """Resolve deterministic per-filler actions with explicit/legacy fallback semantics."""
+    filler_count = len(filler_cuts)
+    if filler_count <= 0:
+        return []
+
+    decision_map: dict[int, Literal["remove", "keep"]] = {}
+    if decisions.filler_decisions:
+        for decision in decisions.filler_decisions:
+            if 0 <= decision.index < filler_count:
+                decision_map[decision.index] = decision.action
+    else:
+        fallback_indices = _resolve_filler_cut_indices(decisions, filler_count)
+        fallback_set = set(fallback_indices)
+        for idx in range(filler_count):
+            decision_map[idx] = "remove" if idx in fallback_set else "keep"
+
+    if decisions.filler_bulk_rules:
+        for idx, filler in enumerate(filler_cuts):
+            category = str(filler.get("category", "")).strip().lower() or "uncategorized"
+            rule = decisions.filler_bulk_rules.get(category)
+            if rule == "remove_all":
+                decision_map[idx] = "remove"
+            elif rule == "keep_all":
+                decision_map[idx] = "keep"
+
+    return sorted(decision_map.items(), key=lambda item: item[0])
 
 
 def get_review_summary(job_dir: Path) -> dict[str, Any]:

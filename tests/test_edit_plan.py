@@ -117,3 +117,110 @@ class TestEditPlanRangeValidation:
         )
 
         assert [clip.description for clip in plan.clip_ranges] == ["teaser", "deep dive"]
+
+    def test_filler_cut_supports_phase7_editorial_metadata_round_trip(self):
+        """Additive metadata fields should serialize/deserialize without contract breakage."""
+        cut = FillerCutRange(
+            start_seconds=10.0,
+            end_seconds=10.3,
+            word="um",
+            confidence=0.92,
+            category="disfluency",
+            context_before="so we were",
+            context_after="thinking about",
+            editorial_action="remove",
+            editorial_note="remove repeated hesitation",
+            snapped=True,
+            original_start=9.95,
+            original_end=10.34,
+            smoothing="micro_fade",
+            smoothing_audio_ms=30.0,
+        )
+
+        payload = cut.model_dump()
+        hydrated = FillerCutRange.model_validate(payload)
+
+        assert hydrated.category == "disfluency"
+        assert hydrated.context_before == "so we were"
+        assert hydrated.context_after == "thinking about"
+        assert hydrated.editorial_action == "remove"
+        assert hydrated.snapped is True
+        assert hydrated.original_start == pytest.approx(9.95)
+        assert hydrated.original_end == pytest.approx(10.34)
+        assert hydrated.smoothing == "micro_fade"
+        assert hydrated.smoothing_audio_ms == pytest.approx(30.0)
+
+    def test_content_cut_supports_smoothing_metadata_round_trip(self):
+        """Content cuts should keep optional smoothing overrides and snap metadata."""
+        cut = ContentCutRange(
+            start_seconds=40.0,
+            end_seconds=48.0,
+            reason="off-topic tangent",
+            editorial_action="remove",
+            snapped=True,
+            original_start=39.84,
+            original_end=48.16,
+            smoothing="dissolve",
+            smoothing_audio_ms=150.0,
+            smoothing_video_ms=300.0,
+        )
+
+        payload = cut.model_dump()
+        hydrated = ContentCutRange.model_validate(payload)
+
+        assert hydrated.reason == "off-topic tangent"
+        assert hydrated.editorial_action == "remove"
+        assert hydrated.snapped is True
+        assert hydrated.original_start == pytest.approx(39.84)
+        assert hydrated.original_end == pytest.approx(48.16)
+        assert hydrated.smoothing == "dissolve"
+        assert hydrated.smoothing_audio_ms == pytest.approx(150.0)
+        assert hydrated.smoothing_video_ms == pytest.approx(300.0)
+
+    def test_legacy_edit_plan_payload_still_validates_without_new_fields(self):
+        """Legacy payloads without Phase 7 metadata should remain valid."""
+        payload = {
+            "filler_cuts": [
+                {
+                    "start_seconds": 1.0,
+                    "end_seconds": 1.3,
+                    "word": "uh",
+                    "confidence": 0.8,
+                }
+            ],
+            "content_cuts": [
+                {
+                    "start_seconds": 12.0,
+                    "end_seconds": 13.1,
+                    "reason": "repeat",
+                }
+            ],
+            "clip_ranges": [{"start_seconds": 22.0, "end_seconds": 27.0, "description": "clip"}],
+        }
+
+        plan = EditPlan.model_validate(payload)
+
+        assert len(plan.filler_cuts) == 1
+        assert len(plan.content_cuts) == 1
+        assert plan.filler_cuts[0].category == ""
+        assert plan.filler_cuts[0].editorial_action == "remove"
+        assert plan.content_cuts[0].smoothing == "crossfade"
+        assert plan.content_cuts[0].original_start is None
+
+    def test_original_range_metadata_requires_both_start_and_end(self):
+        """Partial original range metadata should fail fast for both cut types."""
+        with pytest.raises(ValidationError):
+            FillerCutRange(
+                start_seconds=2.0,
+                end_seconds=2.2,
+                word="um",
+                original_start=1.9,
+            )
+
+        with pytest.raises(ValidationError):
+            ContentCutRange(
+                start_seconds=6.0,
+                end_seconds=6.8,
+                reason="pause",
+                original_end=6.9,
+            )
