@@ -9,9 +9,11 @@ import pytest
 from podcast_pipeline.config import Config
 from podcast_pipeline.models.analysis import AnalysisResult
 from podcast_pipeline.models.job import Job, StageStatus
+from podcast_pipeline.models.transcript import Segment, Word
 from podcast_pipeline.pipeline import Pipeline
 from podcast_pipeline.stages.analyze import AnalyzeStage
 from podcast_pipeline.stages.base import StageResult
+from podcast_pipeline.stages.transcribe import TranscribeStage
 from podcast_pipeline.utils.locks import JobLockAcquisitionError
 
 
@@ -284,3 +286,49 @@ class TestAnalyzeStageThumbnailMaterialization:
         assert first_image_path != second_image_path
         assert (job_dir / first_image_path).exists()
         assert (job_dir / second_image_path).exists()
+
+
+class TestTranscribeFillerDetection:
+    """Tests for filler-word extraction behavior."""
+
+    def test_detect_fillers_handles_punctuation_tokens(self, config: Config) -> None:
+        """Words like 'um,' and 'basically,' should still match configured fillers."""
+        stage = TranscribeStage(config)
+        segments = [
+            Segment(
+                start=0.0,
+                end=1.2,
+                text="Um, uh, like, basically,",
+                words=[
+                    Word(word="Um,", start=0.0, end=0.2, confidence=0.90),
+                    Word(word="uh,", start=0.2, end=0.4, confidence=0.92),
+                    Word(word="like,", start=0.4, end=0.7, confidence=0.95),
+                    Word(word="basically,", start=0.7, end=1.2, confidence=0.97),
+                ],
+            )
+        ]
+
+        cuts = stage._detect_fillers(segments)
+        detected_words = [cut.word.lower().strip(",") for cut in cuts]
+        assert "uh" in detected_words
+        assert "like" in detected_words
+        assert "basically" in detected_words
+
+    def test_detect_fillers_supports_two_word_phrase(self, config: Config) -> None:
+        """Configured phrase fillers like 'you know' should be detected as one cut."""
+        stage = TranscribeStage(config)
+        segments = [
+            Segment(
+                start=0.0,
+                end=1.0,
+                text="you know this",
+                words=[
+                    Word(word="you", start=0.0, end=0.2, confidence=0.95),
+                    Word(word="know", start=0.2, end=0.4, confidence=0.93),
+                    Word(word="this", start=0.4, end=0.8, confidence=0.99),
+                ],
+            )
+        ]
+
+        cuts = stage._detect_fillers(segments)
+        assert any(cut.word == "you know" for cut in cuts)

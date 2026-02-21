@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -238,6 +239,8 @@ class TranscribeStage(Stage):
     def _detect_fillers(self, segments: list[Segment]) -> list[FillerCut]:
         """Detect filler words in transcript."""
         filler_words = {w.lower() for w in self.config.fillers.words}
+        single_word_fillers = {w for w in filler_words if " " not in w}
+        multi_word_fillers = {tuple(w.split()) for w in filler_words if " " in w}
         min_confidence = self.config.fillers.min_confidence
         min_duration_ms = self.config.fillers.min_duration_ms
         padding_ms = self.config.fillers.padding_ms
@@ -245,15 +248,41 @@ class TranscribeStage(Stage):
         filler_cuts: list[FillerCut] = []
 
         for segment in segments:
-            for word in segment.words:
-                word_text = word.word.lower().strip()
+            words = segment.words
+            i = 0
+            while i < len(words):
+                word = words[i]
+                word_text = self._normalize_filler_token(word.word)
                 duration_ms = (word.end - word.start) * 1000
 
                 # Check if it's a filler word
-                is_filler = word_text in filler_words
+                is_filler = word_text in single_word_fillers
 
                 # Also check two-word fillers like "you know"
-                # (simplified - would need context for proper detection)
+                if i + 1 < len(words):
+                    next_word = words[i + 1]
+                    next_text = self._normalize_filler_token(next_word.word)
+                    phrase = (word_text, next_text)
+                    phrase_duration_ms = (next_word.end - word.start) * 1000
+                    phrase_confidence = min(word.confidence, next_word.confidence)
+
+                    if (
+                        phrase in multi_word_fillers
+                        and phrase_confidence >= min_confidence
+                        and phrase_duration_ms >= min_duration_ms
+                    ):
+                        start = max(0, word.start - padding_ms / 1000)
+                        end = next_word.end + padding_ms / 1000
+                        filler_cuts.append(
+                            FillerCut(
+                                start=start,
+                                end=end,
+                                word=f"{word_text} {next_text}",
+                                confidence=phrase_confidence,
+                            )
+                        )
+                        i += 2
+                        continue
 
                 if is_filler and word.confidence >= min_confidence:
                     if duration_ms >= min_duration_ms:
@@ -269,8 +298,16 @@ class TranscribeStage(Stage):
                                 confidence=word.confidence,
                             )
                         )
+                i += 1
 
         return filler_cuts
+
+    @staticmethod
+    def _normalize_filler_token(word: str) -> str:
+        """Normalize transcript token text for filler matching."""
+        token = word.lower().strip()
+        token = re.sub(r"^[^\w']+|[^\w']+$", "", token)
+        return token
 
     def _generate_srt(self, segments: list[Segment]) -> str:
         """Generate SRT subtitle content."""

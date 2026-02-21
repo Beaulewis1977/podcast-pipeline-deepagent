@@ -679,3 +679,42 @@ The only behavioral change from defaults is that **hedge words now require revie
 ---
 
 *This spec is implementation-ready. All algorithms, filter chains, data structures, and test cases are defined. Phase A of the parent plan implements this spec.*
+
+---
+
+## 9. Implementation Notes (Gaps Identified in Review)
+
+### 9.1 xfade Chaining — Highest Risk Area
+
+The cumulative offset formula in `_build_crossfade_chain`:
+
+```python
+cumulative_offset = sum(s.duration for s in segments[:i]) - dissolve_s * (i)
+```
+
+FFmpeg's `xfade` requires the first input stream to have content *past* the offset point. With trim-based segments the timing must be exact — an off-by-one in the cumulative sum causes garbled video. Add dedicated integration tests for 3+ content cuts (the two-segment case is easy; 3+ is where the chain breaks).
+
+### 9.2 acrossfade Minimum Duration Guard
+
+If a kept segment is shorter than `crossfade_ms` (e.g. a 100ms segment between two content cuts with 150ms crossfade configured), FFmpeg will error. Add a guard at the point where crossfade duration is applied:
+
+```python
+crossfade_ms = min(crossfade_ms, segment.duration * 0.4)
+```
+
+Apply this to both `acrossfade` and `xfade` durations before building filters.
+
+### 9.3 Phase 6 Filter Chain Interaction
+
+Phase 6 already added `adeclick`, `deesser`, and optional `dereverb` to the audio filter chain in `render.py`. This spec mentions an `adeclick` safety net but does not explicitly address ordering. When implementing:
+
+- The smooth cut micro-fades and crossfades must be built **before** the Phase 6 enhancement filters in the filter graph — i.e., cut → crossfade → then feed into the adeclick/deesser chain
+- Do **not** replace or remove the existing Phase 6 adeclick call; the spec's adeclick mention is the same filter already present
+- Verify the combined filter graph with `ffmpeg -filter_complex` dry-run before full integration
+
+### 9.4 Streamlit Audio Preview Latency
+
+The per-filler "preview audio" button (Section 5.6) requires extracting a 3s clip around each filler on demand via FFmpeg. For an episode with 50 fillers this is fine (lazy extraction per click), but the first click will have ~1–2s latency. Consider:
+
+- Pre-extracting all filler audio clips during the review stage startup as a background task
+- Or accept the latency and show a spinner — simpler and avoids disk bloat for fillers the user never previews
