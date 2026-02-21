@@ -1,8 +1,8 @@
 # Project State: Podcast Pipeline
 
 **Last updated:** 2026-02-21
-**Current phase:** Phase 7 in progress (plan 02 complete)
-**Overall progress:** 95.6% (43/45 plans complete)
+**Current phase:** Phase 7 in progress (plan 03 complete)
+**Overall progress:** 97.8% (44/45 plans complete)
 
 ## Project Reference
 
@@ -15,14 +15,14 @@ See: `.planning/PROJECT.md`
 
 ```text
 Phase:    7 in progress
-Plan:     2/4 complete in Phase 7; 43 completed overall
+Plan:     3/4 complete in Phase 7; 44 completed overall
 Status:   Phase execution in progress
-Last activity: 2026-02-21 - Completed `07-02-PLAN.md` render smoothing integration (`07-02-SUMMARY.md`)
+Last activity: 2026-02-21 - Completed `07-03-PLAN.md` editorial UI wiring (`07-03-SUMMARY.md`)
 
-Progress: [████████████████████████░] 95.6% (43/45 plans complete)
+Progress: [█████████████████████████] 97.8% (44/45 plans complete)
 ```
 
-**Next Phase:** Continue Phase 7 wave 2 (`07-03`), then wave 3 (`07-04`)
+**Next Phase:** Execute final Phase 7 plan `07-04` (integration hardening + docs)
 
 ## Phase Status
 
@@ -36,13 +36,13 @@ Progress: [███████████████████████
 | 5.1 | Streamlit Video Platform UI | Complete (verified) | 3/3 | 100% |
 | 6 | Audio/Video Enhancement & Podcast Video Platform | Complete (verified) | 3/3 | 100% |
 | 6.1 | Video Marketing Copy Parity + Thumbnail Visual Selection MVP | Complete (verified) | 5/5 | 100% |
-| 7 | Smooth Editing & Filler Word Control | In progress | 1/4 | 25% |
+| 7 | Smooth Editing & Filler Word Control | In progress | 3/4 | 75% |
 
 ## Performance Metrics
 
 | Metric | Value |
 |--------|-------|
-| Plans completed | 43/45 |
+| Plans completed | 44/45 |
 | Requirements done | 35/83 (21 partial) |
 | Phases complete | 7/8 |
 | Estimated completion | In progress |
@@ -142,6 +142,9 @@ Progress: [███████████████████████
 | Smoothing policy defaults remain conservative but enabled for additive rollout | Improves splice quality without destabilizing existing render behavior | 2026-02-21 |
 | Content transitions degrade to concat fallback when optional FFmpeg filters are unavailable | Prevents hard render failures on environments lacking acrossfade/xfade | 2026-02-21 |
 | Transition durations are clamped by adjacent keep-segment ratio | Prevents short-segment transition overrun artifacts and filter failures | 2026-02-21 |
+| Filler review UX is category-grouped with bulk actions plus explicit per-item keep/remove controls | Speeds editorial review while keeping final decisions deterministic | 2026-02-21 |
+| UI persistence writes both filler_decisions and legacy approved_filler_cuts | Preserves backward compatibility for existing review/edit-plan consumers | 2026-02-21 |
+| Review/edit-plan filler wiring is regression-locked for explicit and legacy decision paths | Prevents drift between Streamlit review state and render-time cut behavior | 2026-02-21 |
 
 ### Roadmap Evolution
 
@@ -183,6 +186,7 @@ Progress: [███████████████████████
 - Phase 6.1 verified: 7/7 must-haves passed with no structural gaps
 - Phase 7 execution started: completed 07-01 foundation contracts (word-boundary snapping utils, additive edit-plan metadata, and per-filler decision fallback wiring)
 - Phase 7 execution continued: completed 07-02 render smoothing integration (typed smoothing policy config, snapped cut handling, selective content transitions, and guardrail regressions)
+- Phase 7 execution continued: completed 07-03 Streamlit editorial UX wiring (category-grouped filler controls, bulk actions, and review→edit-plan persistence regressions)
 
 ### Technical Notes
 
@@ -251,16 +255,17 @@ Progress: [███████████████████████
 - 2026-02-20: Verified 06.1 phase goal (`06.1-video-marketing-copy-thumbnail-visual-selection-VERIFICATION.md`, status: passed)
 - 2026-02-21: Completed 07-01-PLAN.md (boundary snapping helpers, additive edit-plan metadata, and explicit per-filler decision fallback wiring)
 - 2026-02-21: Completed 07-02-PLAN.md (typed smoothing config, transition-aware snapped edit filtergraph, and phase-compatibility transition regressions)
+- 2026-02-21: Completed 07-03-PLAN.md (category-grouped filler review UI, bulk action semantics, and review-state/edit-plan wiring regressions)
 
 ## Session Continuity
 
 ### Last session
 
-2026-02-21 05:24 UTC — Completed `07-02-PLAN.md` and generated `07-02-SUMMARY.md`.
+2026-02-21 05:29 UTC — Completed `07-03-PLAN.md` and generated `07-03-SUMMARY.md`.
 
 ### Stopped at
 
-Continue Phase 7 execution at `07-03-PLAN.md` (wave 2 Streamlit/editorial UX wiring).
+Continue Phase 7 execution at `07-04-PLAN.md` (integration hardening + docs alignment).
 
 ### Resume file
 
