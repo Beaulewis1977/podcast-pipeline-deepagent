@@ -15,14 +15,14 @@ See: `.planning/PROJECT.md`
 
 ```text
 Phase:    8 in progress
-Plan:     1/6 complete in Phase 8; 46 completed overall
-Status:   Phase 8 execution started; 08-01 complete
-Last activity: 2026-02-21 - Completed 08-01-PLAN.md (FillerConfig restructure + FillerCut enrichment)
+Plan:     2/6 complete in Phase 8; 47 completed overall
+Status:   Phase 8 execution in progress; 08-01, 08-02 complete
+Last activity: 2026-02-21 - Completed 08-02-PLAN.md (LLM semantic triage for hedge fillers)
 
-Progress: [██████████████████████████] 46/51 plans complete
+Progress: [██████████████████████████] 47/51 plans complete
 ```
 
-**Current Phase:** Phase 8 — Intelligent Cut Quality (Plan 2 of 6 next)
+**Current Phase:** Phase 8 — Intelligent Cut Quality (Plan 3 of 6 next)
 
 ## Phase Status
 
@@ -151,6 +151,9 @@ Progress: [███████████████████████
 | Pause measurement uses raw word timestamps before padding; cut start/end retain padding_ms for render-safe splices | Keeps cut timing accurate while preserving smooth render boundaries | 2026-02-21 |
 | Category priority hedge > custom > disfluency prevents hedge words in multiple lists from being misclassified | Ensures hedge words always route to LLM triage regardless of other list membership | 2026-02-21 |
 | llm_triage_max_context_words serves double duty as context window N for context_before/context_after extraction | Single config knob controls both context budget and context field population | 2026-02-21 |
+| LLM triage batch size is 20 with '---' separator for multi-filler prompts per call | Balances latency and token cost for gpt-4o-mini; parse splits on same separator | 2026-02-21 |
+| Parse errors and disabled-flag path both produce safe_to_remove=False (never auto-remove when uncertain) | Conservative default prevents accidental removal of semantically important hedge fillers | 2026-02-21 |
+| _load_triage_candidates extracted as helper returning None-or-list to keep _triage_fillers within PLR0911 return-statement limit | Keeps stage code compliant with ruff rules without noqa suppressions | 2026-02-21 |
 
 ### Roadmap Evolution
 
@@ -266,16 +269,17 @@ Progress: [███████████████████████
 - 2026-02-21: Completed 07-03-PLAN.md (category-grouped filler review UI, bulk action semantics, and review-state/edit-plan wiring regressions)
 - 2026-02-21: Completed 07-04-PLAN.md (integration regressions for review/edit-plan/render compatibility plus Phase 7 operator docs updates)
 - 2026-02-21: Completed 08-01-PLAN.md (FillerConfig typed category sub-lists, FillerCut Phase 8 enrichment fields, upgraded _detect_fillers with category/pause/context/protection gate)
+- 2026-02-21: Completed 08-02-PLAN.md (FillerTriageResult model, _triage_fillers batched LLM triage helper, filler_triage.json artifact, 25 passing tests)
 
 ## Session Continuity
 
 ### Last session
 
-2026-02-21 08:03 UTC — Completed `08-01-PLAN.md` and generated `08-01-SUMMARY.md`.
+2026-02-21 08:07 UTC — Completed `08-02-PLAN.md` and generated `08-02-SUMMARY.md`.
 
 ### Stopped at
 
-Completed 08-01-PLAN.md — ready to execute 08-02-PLAN.md (LLM triage for hedge fillers).
+Completed 08-02-PLAN.md — ready to execute 08-03-PLAN.md (review stage triage display).
 
 ### Resume file
 
