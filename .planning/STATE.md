@@ -9,7 +9,7 @@
 See: `.planning/PROJECT.md`
 
 **Core value:** Turn raw podcast recording into multi-platform content without editing software or manual copywriting.
-**Current focus:** Phase 8 planning — Intelligent Cut Quality.
+**Current focus:** Phase 8 added; pending research + replanning.
 
 ## Current Position
 
@@ -22,7 +22,7 @@ Last activity: 2026-02-21 - Phase 7 verification passed (14/14 must-haves)
 Progress: [█████████████████████████] 100% (45/45 plans complete)
 ```
 
-**Next Phase:** Execute Phase 8 — Intelligent Cut Quality
+**Next Phase:** Plan Phase 8 — Intelligent Cut Quality
 
 ## Phase Status
 
@@ -37,6 +37,7 @@ Progress: [███████████████████████
 | 6 | Audio/Video Enhancement & Podcast Video Platform | Complete (verified) | 3/3 | 100% |
 | 6.1 | Video Marketing Copy Parity + Thumbnail Visual Selection MVP | Complete (verified) | 5/5 | 100% |
 | 7 | Smooth Editing & Filler Word Control | Complete (verified 2026-02-21) | 4/4 | 100% |
+| 8 | Intelligent Cut Quality | Added (not planned) | 0/0 | 0% |
 
 ## Performance Metrics
 
@@ -188,6 +189,7 @@ Progress: [███████████████████████
 - Phase 7 execution continued: completed 07-02 render smoothing integration (typed smoothing policy config, snapped cut handling, selective content transitions, and guardrail regressions)
 - Phase 7 execution continued: completed 07-03 Streamlit editorial UX wiring (category-grouped filler controls, bulk actions, and review→edit-plan persistence regressions)
 - Phase 7 execution completed: finished 07-04 integration hardening (cross-path compatibility regressions and Phase 7 operator runbook documentation)
+- Phase 8 added: Intelligent Cut Quality
 
 ### Technical Notes
 
