@@ -1,8 +1,8 @@
 # Project State: Podcast Pipeline
 
 **Last updated:** 2026-02-21
-**Current phase:** Phase 7 in progress (plan 01 complete)
-**Overall progress:** 93.3% (42/45 plans complete)
+**Current phase:** Phase 7 in progress (plan 02 complete)
+**Overall progress:** 95.6% (43/45 plans complete)
 
 ## Project Reference
 
@@ -15,14 +15,14 @@ See: `.planning/PROJECT.md`
 
 ```text
 Phase:    7 in progress
-Plan:     1/4 complete in Phase 7; 42 completed overall
+Plan:     2/4 complete in Phase 7; 43 completed overall
 Status:   Phase execution in progress
-Last activity: 2026-02-21 - Completed `07-01-PLAN.md` foundation contracts (`07-01-SUMMARY.md`)
+Last activity: 2026-02-21 - Completed `07-02-PLAN.md` render smoothing integration (`07-02-SUMMARY.md`)
 
-Progress: [████████████████████████░░] 93.3% (42/45 plans complete)
+Progress: [████████████████████████░] 95.6% (43/45 plans complete)
 ```
 
-**Next Phase:** Continue Phase 7 wave 2 (`07-02` then `07-03`)
+**Next Phase:** Continue Phase 7 wave 2 (`07-03`), then wave 3 (`07-04`)
 
 ## Phase Status
 
@@ -42,7 +42,7 @@ Progress: [███████████████████████
 
 | Metric | Value |
 |--------|-------|
-| Plans completed | 42/45 |
+| Plans completed | 43/45 |
 | Requirements done | 35/83 (21 partial) |
 | Phases complete | 7/8 |
 | Estimated completion | In progress |
@@ -139,6 +139,9 @@ Progress: [███████████████████████
 | Snapping uses directional semantics with max-shift bounds for deterministic cut safety | Avoids over-trimming spoken words while keeping behavior predictable | 2026-02-21 |
 | Phase 7 edit-plan schema evolved via additive optional fields only | Preserves compatibility for existing review/edit_plan payloads | 2026-02-21 |
 | Explicit filler decisions take precedence over legacy index lists with deterministic fallback | Enables richer editorial control while keeping old jobs executable | 2026-02-21 |
+| Smoothing policy defaults remain conservative but enabled for additive rollout | Improves splice quality without destabilizing existing render behavior | 2026-02-21 |
+| Content transitions degrade to concat fallback when optional FFmpeg filters are unavailable | Prevents hard render failures on environments lacking acrossfade/xfade | 2026-02-21 |
+| Transition durations are clamped by adjacent keep-segment ratio | Prevents short-segment transition overrun artifacts and filter failures | 2026-02-21 |
 
 ### Roadmap Evolution
 
@@ -179,6 +182,7 @@ Progress: [███████████████████████
 - Phase 6.1 execution completed: finished 06.1-05 per-target thumbnail compliance enforcement + MVP/deferred assignment docs
 - Phase 6.1 verified: 7/7 must-haves passed with no structural gaps
 - Phase 7 execution started: completed 07-01 foundation contracts (word-boundary snapping utils, additive edit-plan metadata, and per-filler decision fallback wiring)
+- Phase 7 execution continued: completed 07-02 render smoothing integration (typed smoothing policy config, snapped cut handling, selective content transitions, and guardrail regressions)
 
 ### Technical Notes
 
@@ -246,16 +250,17 @@ Progress: [███████████████████████
 - 2026-02-20: Completed 06.1-05-PLAN.md (typed per-target thumbnail specs, render compliance fail-fast validation, and explicit deferred per-platform thumbnail assignment docs)
 - 2026-02-20: Verified 06.1 phase goal (`06.1-video-marketing-copy-thumbnail-visual-selection-VERIFICATION.md`, status: passed)
 - 2026-02-21: Completed 07-01-PLAN.md (boundary snapping helpers, additive edit-plan metadata, and explicit per-filler decision fallback wiring)
+- 2026-02-21: Completed 07-02-PLAN.md (typed smoothing config, transition-aware snapped edit filtergraph, and phase-compatibility transition regressions)
 
 ## Session Continuity
 
 ### Last session
 
-2026-02-21 05:18 UTC — Completed `07-01-PLAN.md` and generated `07-01-SUMMARY.md`.
+2026-02-21 05:24 UTC — Completed `07-02-PLAN.md` and generated `07-02-SUMMARY.md`.
 
 ### Stopped at
 
-Continue Phase 7 execution at `07-02-PLAN.md` (wave 2 render smoothing integration).
+Continue Phase 7 execution at `07-03-PLAN.md` (wave 2 Streamlit/editorial UX wiring).
 
 ### Resume file
 
