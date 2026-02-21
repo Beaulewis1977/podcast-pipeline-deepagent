@@ -261,6 +261,27 @@ class SmoothingConfig(BaseModel):
     join_clamp_ratio: float = Field(default=0.35, gt=0.0, le=0.5)
     require_transition_filters: bool = False
 
+    # Phase 8: De-breathing at cut boundaries
+    de_breathing_enabled: bool = True
+    de_breathing_window_ms: float = Field(default=200.0, ge=0.0, le=500.0)
+    de_breathing_max_extend_ms: float = Field(default=150.0, ge=0.0, le=300.0)
+
+    # Phase 8: Noise-floor matching across joins
+    noise_floor_match_enabled: bool = True
+    noise_floor_match_threshold_db: float = Field(default=3.0, ge=0.0, le=20.0)
+    noise_floor_match_ramp_ms: float = Field(default=50.0, ge=0.0, le=200.0)
+
+    # Phase 8: Pose matching for optimal cut-point frame selection
+    pose_match_enabled: bool = True
+    pose_match_search_window_ms: float = Field(default=200.0, ge=0.0, le=500.0)
+    pose_match_rife_threshold: float = Field(default=2.5, gt=0.0)
+
+    # Phase 8: RIFE AI frame interpolation (disabled by default — requires manual RIFE setup)
+    rife_enabled: bool = False
+    rife_num_bridge_frames: int = Field(default=4, ge=1, le=16)
+    rife_script_path: str = ""
+    rife_fallback_to_xfade: bool = True
+
 
 class HLSConfig(BaseModel):
     """Typed HLS muxer configuration for provider hand-off artifacts."""
