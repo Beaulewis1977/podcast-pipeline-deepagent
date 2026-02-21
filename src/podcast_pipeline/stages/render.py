@@ -18,6 +18,8 @@ from podcast_pipeline.stages.review import ReviewDecisions
 from podcast_pipeline.utils.editing import find_word_boundaries, snap_cut_range
 from podcast_pipeline.utils.ffmpeg import FFmpegError, get_video_info, run_ffmpeg, run_ffprobe
 from podcast_pipeline.utils.logging import get_logger
+from podcast_pipeline.utils.noise_match import compute_noise_floor_correction, measure_rms_db
+from podcast_pipeline.utils.vad import detect_breath_extension
 
 logger = get_logger(__name__)
 
@@ -1432,6 +1434,7 @@ class RenderStage(Stage):
             vf_filters,
             af_filters,
             transcript_words=transcript_words,
+            input_video=input_video,
         )
 
         duration_args: list[str] = []
@@ -1621,6 +1624,7 @@ class RenderStage(Stage):
             vf_filters,
             af_filters,
             transcript_words=transcript_words,
+            input_video=input_video,
         )
 
         # Handle duration limits
@@ -1936,6 +1940,7 @@ class RenderStage(Stage):
         af_filters: list[str],
         *,
         transcript_words: list[dict[str, Any]] | None = None,
+        input_video: Path | None = None,
     ) -> tuple[str, str, str] | None:
         """Build transition-aware filter_complex for edit-plan cuts."""
         if not edit_plan or duration <= 0:
@@ -1946,6 +1951,8 @@ class RenderStage(Stage):
             return None
 
         cut_ranges = self._apply_word_boundary_snapping(cut_ranges, transcript_words)
+        # Phase 8: De-breathing — extend cut boundaries to swallow trailing breaths.
+        cut_ranges = self._apply_de_breathing_pass(cut_ranges, input_video)
         cut_ranges = self._merge_ranges(cut_ranges)
         keep_ranges, join_kinds = self._invert_cut_ranges(cut_ranges, duration)
         if not keep_ranges:
@@ -1964,6 +1971,9 @@ class RenderStage(Stage):
         keep_durations = [max(end - start, 0.0) for start, end in keep_ranges]
         if not any(segment > _EPSILON for segment in keep_durations):
             return None
+
+        # Phase 8: Noise-floor matching — compute per-join volume corrections.
+        noise_corrections = self._compute_noise_floor_corrections(keep_ranges, input_video)
 
         smoothing = self.config.smoothing
         micro_fade_s = (smoothing.micro_fade_ms / 1000.0) if smoothing.enabled else 0.0
@@ -1995,6 +2005,14 @@ class RenderStage(Stage):
                         f"{audio_chain},afade=t=in:st=0:d={fade_duration:.3f},"
                         f"afade=t=out:st={fade_out_start:.3f}:d={fade_duration:.3f}"
                     )
+            # Phase 8: Apply noise-floor gain correction to the right segment at
+            # each join.  noise_corrections[idx-1] is the correction for the join
+            # that immediately precedes segment idx (i.e., it corrects segment idx
+            # to match the noise floor of segment idx-1).
+            if idx > 0:
+                correction = noise_corrections.get(idx - 1)
+                if correction is not None:
+                    audio_chain = f"{audio_chain},{correction}"
             filter_parts.append(f"[0:a]{audio_chain}[a{idx}]")
 
         video_label = "v0"
@@ -2152,6 +2170,105 @@ class RenderStage(Stage):
                 snapped_start, snapped_end = cut.start, cut.end
             snapped.append(_CutRange(start=snapped_start, end=snapped_end, kind=cut.kind))
         return snapped
+
+    def _apply_de_breathing_pass(
+        self,
+        ranges: list[_CutRange],
+        audio_path: Path | None,
+    ) -> list[_CutRange]:
+        """Extend cut-out boundaries to swallow trailing breath sounds via silero-vad.
+
+        Skips gracefully when de_breathing_enabled is False, audio_path is None,
+        or silero-vad is not installed (detect_breath_extension returns 0.0).
+        """
+        smoothing = self.config.smoothing
+        if not smoothing.de_breathing_enabled or not ranges or audio_path is None:
+            return ranges
+
+        extended: list[_CutRange] = []
+        for cut in ranges:
+            extension_s = detect_breath_extension(
+                audio_path,
+                cut.end,
+                window_ms=smoothing.de_breathing_window_ms,
+                max_extend_ms=smoothing.de_breathing_max_extend_ms,
+            )
+            if extension_s > _EPSILON:
+                new_end = cut.end + extension_s
+                self.logger.debug(
+                    "de_breathing_extended",
+                    cut_start=round(cut.start, 3),
+                    original_end=round(cut.end, 3),
+                    extended_end=round(new_end, 3),
+                    extension_ms=round(extension_s * 1000, 1),
+                )
+                extended.append(_CutRange(start=cut.start, end=new_end, kind=cut.kind))
+            else:
+                extended.append(cut)
+        return extended
+
+    def _compute_noise_floor_corrections(
+        self,
+        keep_ranges: list[tuple[float, float]],
+        audio_path: Path | None,
+    ) -> dict[int, str]:
+        """Compute FFmpeg volume-filter corrections for noise-floor mismatches at joins.
+
+        Returns a dict mapping join_index -> FFmpeg filter string for joins where
+        the RMS delta exceeds noise_floor_match_threshold_db.  Returns empty dict
+        when noise_floor_match_enabled is False, audio_path is None, or librosa
+        is not installed.
+
+        join_index is 0-based: join 0 is between keep_ranges[0] and keep_ranges[1].
+        """
+        smoothing = self.config.smoothing
+        if not smoothing.noise_floor_match_enabled or audio_path is None:
+            return {}
+        if len(keep_ranges) < 2:
+            return {}
+
+        corrections: dict[int, str] = {}
+        window_ms = 100.0  # 100ms analysis window per boundary
+        for join_idx in range(len(keep_ranges) - 1):
+            left_end = keep_ranges[join_idx][1]
+            right_start = keep_ranges[join_idx + 1][0]
+
+            # Analyse audio at boundary: tail of left segment and head of right segment.
+            left_offset_s = max(left_end - window_ms / 1000.0, 0.0)
+            right_offset_s = right_start
+
+            left_rms = measure_rms_db(
+                audio_path,
+                window_ms=window_ms,
+                tail=True,
+                offset_s=left_offset_s,
+            )
+            right_rms = measure_rms_db(
+                audio_path,
+                window_ms=window_ms,
+                tail=False,
+                offset_s=right_offset_s,
+            )
+
+            correction = compute_noise_floor_correction(
+                left_rms_db=left_rms,
+                right_rms_db=right_rms,
+                threshold_db=smoothing.noise_floor_match_threshold_db,
+                ramp_ms=smoothing.noise_floor_match_ramp_ms,
+            )
+            if correction is not None:
+                corrections[join_idx] = correction
+                self.logger.debug(
+                    "noise_floor_correction_applied",
+                    join_idx=join_idx,
+                    left_end=round(left_end, 3),
+                    right_start=round(right_start, 3),
+                    left_rms_db=round(left_rms, 2),
+                    right_rms_db=round(right_rms, 2),
+                    filter=correction,
+                )
+
+        return corrections
 
     def _merge_ranges(self, ranges: list[_CutRange]) -> list[_CutRange]:
         """Merge overlapping cut ranges while preserving content-cut priority."""
