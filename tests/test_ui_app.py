@@ -564,6 +564,83 @@ def test_ui_app_review_state_timeline_save_writes_custom_edit_plan(tmp_path: Pat
     assert edit_plan["content_cuts"][0]["end_seconds"] == 18.5
 
 
+def test_ui_app_filler_decision_map_prefers_explicit_actions(tmp_path: Path) -> None:
+    """Explicit filler_decisions should override legacy approved_filler_cuts state."""
+    from podcast_pipeline.stages.review import FillerDecision, ReviewDecisions
+    from podcast_pipeline.ui.app import _filler_decision_map
+
+    fillers = [
+        {"word": "um"},
+        {"word": "like"},
+        {"word": "uh"},
+    ]
+    decisions = ReviewDecisions(
+        approved_filler_cuts=[0, 1, 2],
+        filler_decisions=[
+            FillerDecision(index=0, action="keep"),
+            FillerDecision(index=1, action="remove"),
+            FillerDecision(index=2, action="keep"),
+        ],
+    )
+
+    decision_map = _filler_decision_map(decisions, fillers)
+
+    assert decision_map == {0: "keep", 1: "remove", 2: "keep"}
+
+
+def test_ui_app_filler_decision_map_legacy_fallback_when_explicit_absent() -> None:
+    """Legacy approved_filler_cuts should map into remove/keep actions."""
+    from podcast_pipeline.stages.review import ReviewDecisions
+    from podcast_pipeline.ui.app import _filler_decision_map
+
+    fillers = [{"word": "um"}, {"word": "like"}, {"word": "uh"}]
+    decisions = ReviewDecisions(approved_filler_cuts=[1])
+
+    decision_map = _filler_decision_map(decisions, fillers)
+
+    assert decision_map == {0: "keep", 1: "remove", 2: "keep"}
+
+
+def test_ui_app_group_fillers_by_category_preserves_order() -> None:
+    """Category grouping should keep deterministic index ordering."""
+    from podcast_pipeline.ui.app import _group_fillers_by_category
+
+    fillers = [
+        {"word": "um", "category": "disfluency"},
+        {"word": "like", "category": "hedge"},
+        {"word": "uh", "category": "disfluency"},
+        {"word": "well"},
+    ]
+
+    grouped = _group_fillers_by_category(fillers)
+
+    assert grouped["disfluency"] == [0, 2]
+    assert grouped["hedge"] == [1]
+    assert grouped["uncategorized"] == [3]
+
+
+def test_ui_app_apply_filler_bulk_action_updates_selected_indices() -> None:
+    """Bulk actions should update every filler in the selected category group."""
+    from podcast_pipeline.ui.app import _apply_filler_bulk_action
+
+    decision_map = {0: "remove", 1: "keep", 2: "keep", 3: "remove"}
+
+    updated = _apply_filler_bulk_action(decision_map, [1, 2], action="remove")
+
+    assert updated == {0: "remove", 1: "remove", 2: "remove", 3: "remove"}
+
+
+def test_ui_app_materialize_filler_decisions_sorted_for_review_state() -> None:
+    """Materialized filler decisions should be sorted by index before save."""
+    from podcast_pipeline.ui.app import _materialize_filler_decisions
+
+    decision_map = {3: "keep", 1: "remove", 2: "keep"}
+    decisions = _materialize_filler_decisions(decision_map)
+
+    assert [item.index for item in decisions] == [1, 2, 3]
+    assert [item.action for item in decisions] == ["remove", "keep", "keep"]
+
+
 def test_ui_app_recovery_summary_normalizes_runtime_payload() -> None:
     """Recovery summary helper should normalize runtime diagnostics payloads."""
     from podcast_pipeline.ui.app import _runtime_recovery_summary
