@@ -1,9 +1,9 @@
 # Roadmap: Podcast Pipeline
 
 **Created:** 2026-01-29
-**Last Updated:** 2026-02-20
+**Last Updated:** 2026-02-21
 **Milestone:** v1.0 (Streamlit-first)
-**Phases:** 6 + follow-ups 5.1 and 6.1
+**Phases:** 7 + follow-ups 5.1 and 6.1
 
 ## Overview
 
@@ -292,12 +292,16 @@ Plans run in 4 waves:
 
 ### Phase 7: Smooth Editing & Filler Word Control
 
-**Goal:** [To be planned]
+**Goal:** Deliver smoother spoken-word edits by snapping cuts to word boundaries, applying selective transition smoothing, and enabling explicit per-filler editorial control in review without breaking legacy workflows.
 **Depends on:** Phase 6
-**Plans:** 0 plans
+**Status:** Complete (verified 2026-02-21)
+**Plans:** 4 plans
 
 Plans:
-- [ ] TBD (run /gsd:plan-phase 7 to break down)
+- [x] 07-01-PLAN.md — Foundation contracts: boundary snapping utilities, additive edit-plan metadata, and per-filler decision compatibility.
+- [x] 07-02-PLAN.md — Render smoothing engine: typed policy config, snapped cuts, selective micro-fade/crossfade/xfade with short-segment guardrails.
+- [x] 07-03-PLAN.md — Streamlit/editorial UX: category-grouped filler review, bulk actions, and deterministic decision persistence.
+- [x] 07-04-PLAN.md — Integration hardening: end-to-end regression coverage, legacy artifact compatibility, and operator documentation.
 
 ---
 
