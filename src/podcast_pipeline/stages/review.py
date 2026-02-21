@@ -2,7 +2,7 @@
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -21,11 +21,21 @@ from podcast_pipeline.utils.logging import get_logger
 logger = get_logger(__name__)
 
 
+class FillerDecision(BaseModel):
+    """Explicit keep/remove decision for one detected filler item."""
+
+    index: int = Field(ge=0)
+    action: Literal["remove", "keep"] = "remove"
+    reason: str = ""
+    category: str = ""
+
+
 class ReviewDecisions(BaseModel):
     """Human review decisions."""
 
     # Filler cuts - list of indices to approve (empty = approve all)
     approved_filler_cuts: list[int] = Field(default_factory=list)
+    filler_decisions: list[FillerDecision] = Field(default_factory=list)
     reject_all_fillers: bool = False
 
     # Content cuts - list of indices to approve
@@ -82,6 +92,17 @@ class ReviewDecisions(BaseModel):
             raise ValueError("selected_thumbnails must contain unique indices")
         if any(index < 0 for index in value):
             raise ValueError("selected_thumbnails indices must be >= 0")
+        return value
+
+    @field_validator("filler_decisions")
+    @classmethod
+    def validate_filler_decisions(cls, value: list[FillerDecision]) -> list[FillerDecision]:
+        """Require deterministic uniqueness by filler index."""
+        seen_indices: set[int] = set()
+        for decision in value:
+            if decision.index in seen_indices:
+                raise ValueError("filler_decisions must not contain duplicate indices")
+            seen_indices.add(decision.index)
         return value
 
     @model_validator(mode="before")
@@ -195,6 +216,9 @@ class ReviewStage(Stage):
         if filler_path.exists():
             fillers = json.loads(filler_path.read_text())
             decisions.approved_filler_cuts = list(range(len(fillers)))
+            decisions.filler_decisions = [
+                FillerDecision(index=i, action="remove") for i in range(len(fillers))
+            ]
 
         # Default: no content cuts approved (require explicit approval)
         # Default: no clips selected (require explicit selection)
@@ -236,6 +260,9 @@ def approve_review(job_dir: Path, platforms: list[str] | None = None) -> ReviewD
     if filler_path.exists():
         fillers = json.loads(filler_path.read_text())
         decisions.approved_filler_cuts = list(range(len(fillers)))
+        decisions.filler_decisions = [
+            FillerDecision(index=i, action="remove") for i in range(len(fillers))
+        ]
 
     # Approve all content cuts
     if analysis_path.exists():
@@ -284,7 +311,7 @@ def write_edit_plan(
     # Support both start_seconds/end_seconds and start/end key variants
     approved_filler: list[FillerCutRange] = []
     if not decisions.reject_all_fillers:
-        filler_indices = decisions.approved_filler_cuts or list(range(len(filler_cuts)))
+        filler_indices = _resolve_filler_cut_indices(decisions, len(filler_cuts))
         for idx in filler_indices:
             if idx < len(filler_cuts):
                 filler = filler_cuts[idx]
@@ -346,6 +373,39 @@ def write_edit_plan(
     )
 
     return edit_path
+
+
+def _resolve_filler_cut_indices(decisions: ReviewDecisions, filler_count: int) -> list[int]:
+    """Resolve filler cuts using explicit decisions first, then legacy fallbacks."""
+    if filler_count <= 0:
+        return []
+
+    if decisions.filler_decisions:
+        explicit_remove = [
+            item.index for item in decisions.filler_decisions if item.action == "remove"
+        ]
+        deduped: list[int] = []
+        seen: set[int] = set()
+        for idx in explicit_remove:
+            if idx < 0 or idx >= filler_count:
+                continue
+            if idx in seen:
+                continue
+            seen.add(idx)
+            deduped.append(idx)
+        return sorted(deduped)
+
+    fallback = decisions.approved_filler_cuts or list(range(filler_count))
+    deduped_fallback: list[int] = []
+    seen_fallback: set[int] = set()
+    for idx in fallback:
+        if idx < 0 or idx >= filler_count:
+            continue
+        if idx in seen_fallback:
+            continue
+        seen_fallback.add(idx)
+        deduped_fallback.append(idx)
+    return sorted(deduped_fallback)
 
 
 def get_review_summary(job_dir: Path) -> dict[str, Any]:

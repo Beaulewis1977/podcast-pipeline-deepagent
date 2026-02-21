@@ -11,7 +11,12 @@ from podcast_pipeline.export_targets import (
     SUPPORTED_EXPORT_PLATFORMS,
     normalize_export_platforms,
 )
-from podcast_pipeline.stages.review import ReviewDecisions, approve_review
+from podcast_pipeline.stages.review import (
+    FillerDecision,
+    ReviewDecisions,
+    approve_review,
+    write_edit_plan,
+)
 
 
 def test_supported_export_platforms_include_video_targets() -> None:
@@ -162,3 +167,73 @@ def test_review_decisions_selected_thumbnails_reject_more_than_three() -> None:
     """selected_thumbnails should cap ranked selections to 3 entries."""
     with pytest.raises(ValidationError):
         ReviewDecisions.model_validate({"selected_thumbnails": [0, 1, 2, 3]})
+
+
+def test_review_decisions_reject_duplicate_filler_decision_indices() -> None:
+    """Per-filler decisions should remain deterministic by unique filler index."""
+    with pytest.raises(ValidationError):
+        ReviewDecisions.model_validate(
+            {
+                "filler_decisions": [
+                    {"index": 1, "action": "remove"},
+                    {"index": 1, "action": "keep"},
+                ]
+            }
+        )
+
+
+def test_write_edit_plan_prefers_filler_decisions_over_legacy_indices(tmp_path: Path) -> None:
+    """Explicit filler decisions should drive edit-plan filler cuts when provided."""
+    review_dir = tmp_path / "review"
+    review_dir.mkdir(parents=True, exist_ok=True)
+
+    filler_cuts = [
+        {"start_seconds": 1.0, "end_seconds": 1.2, "word": "um", "confidence": 0.9},
+        {"start_seconds": 2.0, "end_seconds": 2.3, "word": "like", "confidence": 0.8},
+        {"start_seconds": 3.0, "end_seconds": 3.4, "word": "uh", "confidence": 0.85},
+    ]
+    decisions = ReviewDecisions(
+        approved_filler_cuts=[0, 1, 2],
+        filler_decisions=[
+            FillerDecision(index=0, action="keep"),
+            FillerDecision(index=1, action="remove"),
+            FillerDecision(index=2, action="remove"),
+        ],
+    )
+
+    edit_path = write_edit_plan(tmp_path, decisions, analysis={}, filler_cuts=filler_cuts)
+    payload = json.loads(edit_path.read_text())
+    exported_words = [item["word"] for item in payload["filler_cuts"]]
+
+    assert exported_words == ["like", "uh"]
+
+
+def test_write_edit_plan_falls_back_to_approved_filler_cuts_when_new_field_absent(
+    tmp_path: Path,
+) -> None:
+    """Legacy approved_filler_cuts should still drive edit-plan generation."""
+    filler_cuts = [
+        {"start_seconds": 0.5, "end_seconds": 0.8, "word": "um"},
+        {"start_seconds": 1.0, "end_seconds": 1.3, "word": "so"},
+    ]
+    decisions = ReviewDecisions(approved_filler_cuts=[1])
+
+    edit_path = write_edit_plan(tmp_path, decisions, analysis={}, filler_cuts=filler_cuts)
+    payload = json.loads(edit_path.read_text())
+
+    assert len(payload["filler_cuts"]) == 1
+    assert payload["filler_cuts"][0]["word"] == "so"
+
+
+def test_write_edit_plan_defaults_to_all_fillers_when_no_decisions_present(tmp_path: Path) -> None:
+    """Behavior should remain backward-compatible when review state has no filler selections."""
+    filler_cuts = [
+        {"start_seconds": 0.5, "end_seconds": 0.8, "word": "um"},
+        {"start_seconds": 1.0, "end_seconds": 1.3, "word": "so"},
+    ]
+    decisions = ReviewDecisions()
+
+    edit_path = write_edit_plan(tmp_path, decisions, analysis={}, filler_cuts=filler_cuts)
+    payload = json.loads(edit_path.read_text())
+
+    assert [cut["word"] for cut in payload["filler_cuts"]] == ["um", "so"]
