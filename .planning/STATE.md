@@ -15,14 +15,14 @@ See: `.planning/PROJECT.md`
 
 ```text
 Phase:    8 in progress
-Plan:     2/6 complete in Phase 8; 47 completed overall
-Status:   Phase 8 execution in progress; 08-01, 08-02 complete
-Last activity: 2026-02-21 - Completed 08-02-PLAN.md (LLM semantic triage for hedge fillers)
+Plan:     3/6 complete in Phase 8; 48 completed overall
+Status:   Phase 8 execution in progress; 08-01, 08-02, 08-03 complete
+Last activity: 2026-02-21 - Completed 08-03-PLAN.md (review stage triage display + Streamlit filler card Phase 8 enrichment)
 
-Progress: [██████████████████████████] 47/51 plans complete
+Progress: [███████████████████████████] 48/51 plans complete
 ```
 
-**Current Phase:** Phase 8 — Intelligent Cut Quality (Plan 3 of 6 next)
+**Current Phase:** Phase 8 — Intelligent Cut Quality (Plan 4 of 6 next)
 
 ## Phase Status
 
@@ -37,13 +37,13 @@ Progress: [███████████████████████
 | 6 | Audio/Video Enhancement & Podcast Video Platform | Complete (verified) | 3/3 | 100% |
 | 6.1 | Video Marketing Copy Parity + Thumbnail Visual Selection MVP | Complete (verified) | 5/5 | 100% |
 | 7 | Smooth Editing & Filler Word Control | Complete (verified 2026-02-21) | 4/4 | 100% |
-| 8 | Intelligent Cut Quality | In progress | 1/6 | 17% |
+| 8 | Intelligent Cut Quality | In progress | 3/6 | 50% |
 
 ## Performance Metrics
 
 | Metric | Value |
 |--------|-------|
-| Plans completed | 45/45 |
+| Plans completed | 48/48 |
 | Requirements done | 35/83 (21 partial) |
 | Phases complete | 7/8 |
 | Estimated completion | In progress |
@@ -154,6 +154,9 @@ Progress: [███████████████████████
 | LLM triage batch size is 20 with '---' separator for multi-filler prompts per call | Balances latency and token cost for gpt-4o-mini; parse splits on same separator | 2026-02-21 |
 | Parse errors and disabled-flag path both produce safe_to_remove=False (never auto-remove when uncertain) | Conservative default prevents accidental removal of semantically important hedge fillers | 2026-02-21 |
 | _load_triage_candidates extracted as helper returning None-or-list to keep _triage_fillers within PLR0911 return-statement limit | Keeps stage code compliant with ruff rules without noqa suppressions | 2026-02-21 |
+| write_edit_plan action comes from _materialize_filler_decisions directly — no secondary protected override needed | _derive_editorial_action already handles protection; duplicate gate removed for clarity | 2026-02-21 |
+| _create_initial_review_state uses _derive_editorial_action for triage-aware defaults | Protected fillers default to keep; disfluencies remove; LLM-safe hedges remove; uncleared hedges keep for editor review | 2026-02-21 |
+| _filler_card_data helper centralizes Phase 8 display field extraction | Makes UI rendering and tests independent of field-access code; returns typed display dict | 2026-02-21 |
 
 ### Roadmap Evolution
 
@@ -270,16 +273,17 @@ Progress: [███████████████████████
 - 2026-02-21: Completed 07-04-PLAN.md (integration regressions for review/edit-plan/render compatibility plus Phase 7 operator docs updates)
 - 2026-02-21: Completed 08-01-PLAN.md (FillerConfig typed category sub-lists, FillerCut Phase 8 enrichment fields, upgraded _detect_fillers with category/pause/context/protection gate)
 - 2026-02-21: Completed 08-02-PLAN.md (FillerTriageResult model, _triage_fillers batched LLM triage helper, filler_triage.json artifact, 25 passing tests)
+- 2026-02-21: Completed 08-03-PLAN.md (triage-aware editorial_action in review stage, _filler_card_data UI helper, Streamlit filler card Phase 8 display)
 
 ## Session Continuity
 
 ### Last session
 
-2026-02-21 08:07 UTC — Completed `08-02-PLAN.md` and generated `08-02-SUMMARY.md`.
+2026-02-21 08:35 UTC — Completed `08-03-PLAN.md` and generated `08-03-SUMMARY.md`.
 
 ### Stopped at
 
-Completed 08-02-PLAN.md — ready to execute 08-03-PLAN.md (review stage triage display).
+Completed 08-03-PLAN.md — ready to execute 08-04-PLAN.md (render stage protected/pause-aware cut integration).
 
 ### Resume file
 
