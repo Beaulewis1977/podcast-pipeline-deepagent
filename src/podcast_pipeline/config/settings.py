@@ -134,25 +134,30 @@ class TranscriptionConfig(BaseModel):
 
 
 class FillerConfig(BaseModel):
-    """Filler word detection configuration."""
+    """Filler word detection and triage configuration."""
 
-    words: list[str] = Field(
-        default_factory=lambda: [
-            "um",
-            "uh",
-            "hmm",
-            "er",
-            "ah",
-            "like",
-            "you know",
-            "basically",
-            "actually",
-            "so",
-        ]
+    # Categorised word lists (Phase 8)
+    disfluencies: list[str] = Field(default_factory=lambda: ["um", "uh", "hmm", "er", "ah"])
+    hedge_words: list[str] = Field(
+        default_factory=lambda: ["like", "you know", "basically", "actually", "so"]
     )
+    custom_words: list[str] = Field(default_factory=list)
+
+    # Backward-compat flat list — treated as extra disfluencies when present
+    words: list[str] = Field(default_factory=list)
+
+    # Existing detection thresholds (unchanged)
     min_confidence: float = 0.5
     min_duration_ms: int = 150
     padding_ms: int = 50
+
+    # Phase 8: Pause-based protection gate
+    protect_pause_threshold_ms: float = Field(default=300.0, ge=0.0)
+
+    # Phase 8: LLM semantic triage (hedge words only)
+    enable_llm_triage: bool = True
+    llm_triage_model: str = "gpt-4o-mini"
+    llm_triage_max_context_words: int = 5
 
 
 class AudioConfig(BaseModel):
