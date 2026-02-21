@@ -2306,3 +2306,211 @@ class TestVideoWorkflowDocs:
         assert "hosted vs non-hosted" in readme
         assert "subscriptions remain audio-only" in readme
         assert "does not perform direct platform upload automation" in readme
+
+
+# ---------------------------------------------------------------------------
+# Phase 8 Regression Tests: disabled passes = Phase 7 baseline
+# ---------------------------------------------------------------------------
+
+
+class TestPhase8PassesDisabledRegression:
+    """Regression tests verifying that disabled Phase 8 passes don't affect behavior."""
+
+    def test_render_skips_debreathing_when_disabled(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """detect_breath_extension must never be called when de_breathing_enabled=False."""
+        from podcast_pipeline.config.settings import SmoothingConfig
+        from podcast_pipeline.utils import vad as vad_module
+
+        vad_called = {"count": 0}
+
+        def _spy_detect_breath(*args: Any, **kwargs: Any) -> float:
+            vad_called["count"] += 1
+            return 0.05  # Would return a non-zero value if called
+
+        monkeypatch.setattr(
+            "podcast_pipeline.stages.render.detect_breath_extension",
+            _spy_detect_breath,
+        )
+        monkeypatch.setattr(vad_module, "_vad_model", None)
+
+        config = load_config()
+        config.smoothing = SmoothingConfig(de_breathing_enabled=False)
+        stage = RenderStage(config)
+
+        # Build a simple filler-cut filter with de-breathing disabled.
+        # The _apply_de_breathing_pass is called by _build_edit_plan_filter.
+        # With de_breathing_enabled=False it should not call detect_breath_extension.
+        edit_plan = EditPlan(
+            filler_cuts=[
+                FillerCutRange(start_seconds=1.0, end_seconds=1.5, word="um"),
+            ],
+            content_cuts=[],
+            clip_ranges=[],
+        )
+
+        monkeypatch.setattr(
+            stage,
+            "_resolve_transition_filter_availability",
+            lambda *, needs_content_transitions: {"acrossfade": False, "xfade": False},
+        )
+
+        stage._build_edit_plan_filter(
+            edit_plan,
+            5.0,
+            [],
+            [],
+            transcript_words=[],
+        )
+
+        assert vad_called["count"] == 0, (
+            "detect_breath_extension should not be called when de_breathing_enabled=False"
+        )
+
+    def test_render_skips_noise_floor_when_disabled(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """measure_rms_db must never be called when noise_floor_match_enabled=False."""
+        from podcast_pipeline.config.settings import SmoothingConfig
+
+        rms_called = {"count": 0}
+
+        def _spy_measure_rms(*args: Any, **kwargs: Any) -> float:
+            rms_called["count"] += 1
+            return -20.0  # Would return a value if called
+
+        monkeypatch.setattr(
+            "podcast_pipeline.stages.render.measure_rms_db",
+            _spy_measure_rms,
+        )
+
+        config = load_config()
+        config.smoothing = SmoothingConfig(noise_floor_match_enabled=False)
+        stage = RenderStage(config)
+
+        edit_plan = EditPlan(
+            filler_cuts=[
+                FillerCutRange(start_seconds=1.0, end_seconds=1.5, word="um"),
+            ],
+            content_cuts=[],
+            clip_ranges=[],
+        )
+
+        monkeypatch.setattr(
+            stage,
+            "_resolve_transition_filter_availability",
+            lambda *, needs_content_transitions: {"acrossfade": False, "xfade": False},
+        )
+
+        stage._build_edit_plan_filter(
+            edit_plan,
+            5.0,
+            [],
+            [],
+            transcript_words=[],
+        )
+
+        assert rms_called["count"] == 0, (
+            "measure_rms_db should not be called when noise_floor_match_enabled=False"
+        )
+
+    def test_render_skips_pose_match_when_disabled(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """scan_best_frame_pair must never be called when pose_match_enabled=False."""
+        from podcast_pipeline.config.settings import SmoothingConfig
+
+        pose_called = {"count": 0}
+
+        def _spy_scan_best_frame_pair(*args: Any, **kwargs: Any) -> tuple[int, int, float]:
+            pose_called["count"] += 1
+            return 0, 0, float("inf")
+
+        monkeypatch.setattr(
+            "podcast_pipeline.stages.render.scan_best_frame_pair",
+            _spy_scan_best_frame_pair,
+        )
+
+        config = load_config()
+        config.smoothing = SmoothingConfig(pose_match_enabled=False)
+        stage = RenderStage(config)
+
+        # _apply_pose_match_pass(keep_ranges, join_kinds, video_path) returns early
+        # when pose_match_enabled=False, never calling scan_best_frame_pair.
+        input_video = tmp_path / "input.mp4"
+        input_video.write_bytes(b"fake-video")
+
+        keep_ranges: list[tuple[float, float]] = [(0.0, 1.0), (2.0, 5.0)]
+        join_kinds: list[Any] = ["content"]
+
+        result_ranges, result_kinds, bridge_clips = stage._apply_pose_match_pass(
+            keep_ranges,
+            join_kinds,
+            input_video,
+        )
+
+        assert pose_called["count"] == 0, (
+            "scan_best_frame_pair should not be called when pose_match_enabled=False"
+        )
+        # Unchanged output when disabled
+        assert result_ranges == keep_ranges
+        assert result_kinds == join_kinds
+        assert bridge_clips == {}
+
+    def test_smoothing_config_all_phase8_disabled_preserves_phase7_fields(
+        self,
+    ) -> None:
+        """Disabling all Phase 8 features must not alter Phase 7 smoothing fields."""
+        from podcast_pipeline.config.settings import SmoothingConfig
+
+        phase7_defaults = SmoothingConfig()
+        phase8_disabled = SmoothingConfig(
+            de_breathing_enabled=False,
+            noise_floor_match_enabled=False,
+            pose_match_enabled=False,
+            rife_enabled=False,
+        )
+
+        # Phase 7 fields must be identical
+        assert phase8_disabled.enabled == phase7_defaults.enabled
+        assert phase8_disabled.micro_fade_ms == phase7_defaults.micro_fade_ms
+        assert (
+            phase8_disabled.content_audio_crossfade_ms == phase7_defaults.content_audio_crossfade_ms
+        )
+        assert (
+            phase8_disabled.content_video_dissolve_ms == phase7_defaults.content_video_dissolve_ms
+        )
+        assert phase8_disabled.max_snap_shift_ms == phase7_defaults.max_snap_shift_ms
+        assert phase8_disabled.join_clamp_ratio == phase7_defaults.join_clamp_ratio
+        assert (
+            phase8_disabled.require_transition_filters == phase7_defaults.require_transition_filters
+        )
+
+    def test_noise_floor_no_correction_below_threshold(self) -> None:
+        """compute_noise_floor_correction returns None when delta < threshold."""
+        from podcast_pipeline.utils.noise_match import compute_noise_floor_correction
+
+        # delta_db = 2.0 < threshold_db = 3.0 -> no correction
+        result = compute_noise_floor_correction(-20.0, -22.0, threshold_db=3.0)
+        assert result is None
+
+    def test_noise_floor_correction_applied_above_threshold(self) -> None:
+        """compute_noise_floor_correction returns a volume filter when delta >= threshold."""
+        from podcast_pipeline.utils.noise_match import compute_noise_floor_correction
+
+        # delta_db = 5.0 > threshold_db = 3.0 -> correction applied
+        result = compute_noise_floor_correction(-20.0, -25.0, threshold_db=3.0)
+        assert result is not None
+        assert result.startswith("volume=")
+        assert "eval=frame" in result
+
+    def test_noise_floor_exact_threshold_applies_correction(self) -> None:
+        """compute_noise_floor_correction uses strict less-than: exactly at threshold = correction applied.
+
+        The guard is `if delta_db < threshold_db: return None`.
+        At delta_db == threshold_db, the condition is False so correction IS applied.
+        """
+        from podcast_pipeline.utils.noise_match import compute_noise_floor_correction
+
+        # delta_db = 3.0 == threshold_db = 3.0 -> NOT less-than -> correction applied
+        result = compute_noise_floor_correction(-20.0, -23.0, threshold_db=3.0)
+        assert result is not None
+        assert result.startswith("volume=")
+        assert "eval=frame" in result
