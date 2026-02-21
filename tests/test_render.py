@@ -1367,8 +1367,126 @@ class TestRenderColorCorrection:
         assert color_filter is not None
         assert base_filter[0].count("trim=start=") == color_filter[0].count("trim=start=")
         assert base_filter[0].count("atrim=start=") == color_filter[0].count("atrim=start=")
-        assert "concat=n=2:v=1:a=1" in base_filter[0]
-        assert "concat=n=2:v=1:a=1" in color_filter[0]
+        assert "concat=n=2:v=1:a=0" in base_filter[0]
+        assert "concat=n=2:v=0:a=1" in base_filter[0]
+        assert "concat=n=2:v=1:a=0" in color_filter[0]
+        assert "concat=n=2:v=0:a=1" in color_filter[0]
+
+
+class TestRenderEditPlanSmoothing:
+    """Tests for snapped cuts and transition-aware edit-plan filter construction."""
+
+    def test_edit_plan_filter_micro_fade_applies_to_trimmed_segments(self, monkeypatch) -> None:
+        """All keep segments should receive edge micro fades."""
+        stage = RenderStage(load_config())
+        monkeypatch.setattr(
+            stage,
+            "_resolve_transition_filter_availability",
+            lambda *, needs_content_transitions: {"acrossfade": False, "xfade": False},
+        )
+        edit_plan = EditPlan(
+            filler_cuts=[FillerCutRange(start_seconds=1.0, end_seconds=2.0, word="um")]
+        )
+
+        rendered = stage._build_edit_plan_filter(edit_plan, 10.0, [], [])
+
+        assert rendered is not None
+        filter_complex = rendered[0]
+        assert "afade=t=in" in filter_complex
+        assert "afade=t=out" in filter_complex
+
+    def test_edit_plan_filter_acrossfade_applies_for_content_join(self, monkeypatch) -> None:
+        """Content joins should use acrossfade when filter support is available."""
+        stage = RenderStage(load_config())
+        monkeypatch.setattr(
+            stage,
+            "_resolve_transition_filter_availability",
+            lambda *, needs_content_transitions: {"acrossfade": True, "xfade": False},
+        )
+        edit_plan = EditPlan(
+            content_cuts=[{"start_seconds": 2.0, "end_seconds": 3.0, "reason": "tangent"}]
+        )
+
+        rendered = stage._build_edit_plan_filter(edit_plan, 8.0, [], [])
+
+        assert rendered is not None
+        assert "acrossfade=" in rendered[0]
+
+    def test_edit_plan_filter_xfade_applies_with_normalization_for_content_join(
+        self,
+        monkeypatch,
+    ) -> None:
+        """Content joins should use normalized xfade path when available."""
+        stage = RenderStage(load_config())
+        monkeypatch.setattr(
+            stage,
+            "_resolve_transition_filter_availability",
+            lambda *, needs_content_transitions: {"acrossfade": False, "xfade": True},
+        )
+        edit_plan = EditPlan(
+            content_cuts=[{"start_seconds": 2.0, "end_seconds": 3.0, "reason": "tangent"}]
+        )
+
+        rendered = stage._build_edit_plan_filter(edit_plan, 8.0, [], [])
+
+        assert rendered is not None
+        assert "xfade=transition=fade" in rendered[0]
+        assert "fps=30" in rendered[0]
+        assert "settb=AVTB" in rendered[0]
+
+    def test_edit_plan_filter_clamp_limits_short_segment_transition_duration(
+        self,
+        monkeypatch,
+    ) -> None:
+        """Short adjacent keep segments should clamp heavy transition durations."""
+        config = load_config()
+        config.smoothing.content_audio_crossfade_ms = 300.0
+        config.smoothing.join_clamp_ratio = 0.35
+        stage = RenderStage(config)
+        monkeypatch.setattr(
+            stage,
+            "_resolve_transition_filter_availability",
+            lambda *, needs_content_transitions: {"acrossfade": True, "xfade": False},
+        )
+        edit_plan = EditPlan(
+            content_cuts=[{"start_seconds": 0.2, "end_seconds": 0.4, "reason": "pause"}]
+        )
+
+        rendered = stage._build_edit_plan_filter(edit_plan, 1.0, [], [])
+
+        assert rendered is not None
+        assert "acrossfade=d=0.070" in rendered[0]
+
+    def test_edit_plan_filter_snap_uses_transcript_word_boundaries(self, monkeypatch) -> None:
+        """Cut boundaries should snap to nearby transcript gaps before building trims."""
+        stage = RenderStage(load_config())
+        monkeypatch.setattr(
+            stage,
+            "_resolve_transition_filter_availability",
+            lambda *, needs_content_transitions: {"acrossfade": False, "xfade": False},
+        )
+        edit_plan = EditPlan(
+            filler_cuts=[{"start_seconds": 1.15, "end_seconds": 1.85, "word": "um"}]
+        )
+        transcript_words = [
+            {"word": "we", "start": 0.8, "end": 1.0},
+            {"word": "should", "start": 1.2, "end": 1.4},
+            {"word": "ship", "start": 1.8, "end": 2.0},
+            {"word": "today", "start": 2.2, "end": 2.4},
+        ]
+
+        rendered = stage._build_edit_plan_filter(
+            edit_plan,
+            4.0,
+            [],
+            [],
+            transcript_words=transcript_words,
+        )
+
+        assert rendered is not None
+        filter_complex = rendered[0]
+        assert "trim=start=0.000:end=1.100" in filter_complex
+        assert "trim=start=2.100:end=4.000" in filter_complex
 
 
 class TestRenderStatusSemantics:

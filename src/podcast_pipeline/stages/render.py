@@ -6,14 +6,16 @@ import re
 import shutil
 import subprocess
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from typing import Any
+from typing import Any, Literal
 
 from podcast_pipeline.config import Config, PlatformSpec, ThumbnailTargetSpec
 from podcast_pipeline.models.edit_plan import EditPlan
 from podcast_pipeline.models.job import Job
 from podcast_pipeline.stages.base import Stage, StageResult
 from podcast_pipeline.stages.review import ReviewDecisions
+from podcast_pipeline.utils.editing import find_word_boundaries, snap_cut_range
 from podcast_pipeline.utils.ffmpeg import FFmpegError, get_video_info, run_ffmpeg, run_ffprobe
 from podcast_pipeline.utils.logging import get_logger
 
@@ -34,6 +36,16 @@ MAX_THUMBNAIL_EXPORTS = 4
 MIN_THUMBNAIL_OFFSET_SECONDS = 0.5
 PROFILE_LEVEL_CODECS = {"h264", "libx264", "h265", "hevc", "libx265"}
 THUMBNAIL_COMPLIANCE_PLATFORMS = ("youtube", "spotify_video", "apple_video")
+_EPSILON = 1e-6
+
+
+@dataclass(frozen=True, slots=True)
+class _CutRange:
+    """Typed cut metadata used to derive transition policy per join."""
+
+    start: float
+    end: float
+    kind: Literal["filler", "content"]
 
 
 class PlatformComplianceError(RuntimeError):
@@ -379,6 +391,13 @@ class RenderStage(Stage):
                 required.add("grayworld")
             if color.eq_enabled:
                 required.add("eq")
+
+        smoothing = self.config.smoothing
+        if smoothing.enabled and smoothing.require_transition_filters:
+            if smoothing.content_audio_crossfade_ms > 0:
+                required.add("acrossfade")
+            if smoothing.content_video_dissolve_ms > 0:
+                required.add("xfade")
 
         return required
 
@@ -1406,11 +1425,13 @@ class RenderStage(Stage):
             src_width, src_height, target_width, target_height, spec
         )
         af_filters = self._build_audio_enhancement_filters()
+        transcript_words = self._load_transcript_words(output_dir.parent.parent)
         edit_filter = self._build_edit_plan_filter(
             edit_plan,
             src_duration,
             vf_filters,
             af_filters,
+            transcript_words=transcript_words,
         )
 
         duration_args: list[str] = []
@@ -1592,12 +1613,14 @@ class RenderStage(Stage):
 
         # Build audio filters
         af_filters = self._build_audio_enhancement_filters()
+        transcript_words = self._load_transcript_words(output_dir.parent.parent)
 
         edit_filter = self._build_edit_plan_filter(
             edit_plan,
             src_duration,
             vf_filters,
             af_filters,
+            transcript_words=transcript_words,
         )
 
         # Handle duration limits
@@ -1911,8 +1934,10 @@ class RenderStage(Stage):
         duration: float,
         vf_filters: list[str],
         af_filters: list[str],
+        *,
+        transcript_words: list[dict[str, Any]] | None = None,
     ) -> tuple[str, str, str] | None:
-        """Build filter_complex for edit plan cuts and optional scaling."""
+        """Build transition-aware filter_complex for edit-plan cuts."""
         if not edit_plan or duration <= 0:
             return None
 
@@ -1920,7 +1945,9 @@ class RenderStage(Stage):
         if not cut_ranges:
             return None
 
-        keep_ranges = self._invert_cut_ranges(cut_ranges, duration)
+        cut_ranges = self._apply_word_boundary_snapping(cut_ranges, transcript_words)
+        cut_ranges = self._merge_ranges(cut_ranges)
+        keep_ranges, join_kinds = self._invert_cut_ranges(cut_ranges, duration)
         if not keep_ranges:
             # Cuts cover the entire duration - this would result in empty output
             raise ValueError(
@@ -1934,83 +1961,313 @@ class RenderStage(Stage):
             if start <= 0.001 and end >= duration - 0.001:
                 return None
 
+        keep_durations = [max(end - start, 0.0) for start, end in keep_ranges]
+        if not any(segment > _EPSILON for segment in keep_durations):
+            return None
+
+        smoothing = self.config.smoothing
+        micro_fade_s = (smoothing.micro_fade_ms / 1000.0) if smoothing.enabled else 0.0
+        base_crossfade_s = (
+            smoothing.content_audio_crossfade_ms / 1000.0 if smoothing.enabled else 0.0
+        )
+        base_dissolve_s = smoothing.content_video_dissolve_ms / 1000.0 if smoothing.enabled else 0.0
+        has_content_join = any(kind == "content" for kind in join_kinds)
+        transition_available = self._resolve_transition_filter_availability(
+            needs_content_transitions=has_content_join
+        )
+        normalize_for_xfade = has_content_join and transition_available["xfade"]
+
         filter_parts: list[str] = []
         for idx, (start, end) in enumerate(keep_ranges):
-            filter_parts.append(
-                f"[0:v]trim=start={start:.3f}:end={end:.3f},setpts=PTS-STARTPTS[v{idx}]"
-            )
-            filter_parts.append(
-                f"[0:a]atrim=start={start:.3f}:end={end:.3f},asetpts=PTS-STARTPTS[a{idx}]"
-            )
+            segment_duration = keep_durations[idx]
+            video_chain = f"trim=start={start:.3f}:end={end:.3f},setpts=PTS-STARTPTS"
+            if normalize_for_xfade:
+                video_chain = f"{video_chain},fps=30,format=yuv420p,settb=AVTB"
+            filter_parts.append(f"[0:v]{video_chain}[v{idx}]")
+            audio_chain = f"atrim=start={start:.3f}:end={end:.3f},asetpts=PTS-STARTPTS"
+            if micro_fade_s > 0 and segment_duration > _EPSILON:
+                fade_duration = min(micro_fade_s, max((segment_duration / 2.0) - _EPSILON, 0.0))
+                if fade_duration > _EPSILON:
+                    fade_out_start = max(segment_duration - fade_duration, 0.0)
+                    audio_chain = (
+                        f"{audio_chain},afade=t=in:st=0:d={fade_duration:.3f},"
+                        f"afade=t=out:st={fade_out_start:.3f}:d={fade_duration:.3f}"
+                    )
+            filter_parts.append(f"[0:a]{audio_chain}[a{idx}]")
 
-        concat_inputs = "".join([f"[v{i}][a{i}]" for i in range(len(keep_ranges))])
-        filter_parts.append(f"{concat_inputs}concat=n={len(keep_ranges)}:v=1:a=1[outv][outa]")
+        video_label = "v0"
+        audio_label = "a0"
+        video_duration = keep_durations[0]
+        audio_duration = keep_durations[0]
+        for idx in range(1, len(keep_ranges)):
+            next_video = f"v{idx}"
+            next_audio = f"a{idx}"
+            next_duration = keep_durations[idx]
+            join_kind = join_kinds[idx - 1] if idx - 1 < len(join_kinds) else "filler"
+            join_label_audio = f"a_join{idx}"
+            join_label_video = f"v_join{idx}"
 
-        video_label = "outv"
-        audio_label = "outa"
+            apply_content_audio = (
+                join_kind == "content"
+                and base_crossfade_s > 0
+                and transition_available["acrossfade"]
+            )
+            if apply_content_audio:
+                crossfade_s = self._clamp_transition_duration(
+                    base_duration_s=base_crossfade_s,
+                    left_duration_s=audio_duration,
+                    right_duration_s=next_duration,
+                    clamp_ratio=smoothing.join_clamp_ratio,
+                )
+                if crossfade_s > _EPSILON:
+                    filter_parts.append(
+                        f"[{audio_label}][{next_audio}]"
+                        f"acrossfade=d={crossfade_s:.3f}:c1=tri:c2=tri[{join_label_audio}]"
+                    )
+                    audio_duration = max(audio_duration + next_duration - crossfade_s, 0.0)
+                else:
+                    filter_parts.append(
+                        f"[{audio_label}][{next_audio}]concat=n=2:v=0:a=1[{join_label_audio}]"
+                    )
+                    audio_duration += next_duration
+            else:
+                filter_parts.append(
+                    f"[{audio_label}][{next_audio}]concat=n=2:v=0:a=1[{join_label_audio}]"
+                )
+                audio_duration += next_duration
+            audio_label = join_label_audio
+
+            apply_content_video = (
+                join_kind == "content" and base_dissolve_s > 0 and transition_available["xfade"]
+            )
+            if apply_content_video:
+                dissolve_s = self._clamp_transition_duration(
+                    base_duration_s=base_dissolve_s,
+                    left_duration_s=video_duration,
+                    right_duration_s=next_duration,
+                    clamp_ratio=smoothing.join_clamp_ratio,
+                )
+                if dissolve_s > _EPSILON:
+                    offset = max(video_duration - dissolve_s, 0.0)
+                    filter_parts.append(
+                        f"[{video_label}][{next_video}]"
+                        f"xfade=transition=fade:duration={dissolve_s:.3f}:offset={offset:.3f}"
+                        f"[{join_label_video}]"
+                    )
+                    video_duration = max(video_duration + next_duration - dissolve_s, 0.0)
+                else:
+                    filter_parts.append(
+                        f"[{video_label}][{next_video}]concat=n=2:v=1:a=0[{join_label_video}]"
+                    )
+                    video_duration += next_duration
+            else:
+                filter_parts.append(
+                    f"[{video_label}][{next_video}]concat=n=2:v=1:a=0[{join_label_video}]"
+                )
+                video_duration += next_duration
+            video_label = join_label_video
 
         if vf_filters:
-            filter_parts.append(f"[outv]{','.join(vf_filters)}[vfinal]")
+            filter_parts.append(f"[{video_label}]{','.join(vf_filters)}[vfinal]")
             video_label = "vfinal"
         if af_filters:
-            filter_parts.append(f"[outa]{','.join(af_filters)}[afinal]")
+            filter_parts.append(f"[{audio_label}]{','.join(af_filters)}[afinal]")
             audio_label = "afinal"
 
         return ";".join(filter_parts), f"[{video_label}]", f"[{audio_label}]"
 
-    def _collect_cut_ranges(self, edit_plan: EditPlan) -> list[tuple[float, float]]:
-        """Collect cut ranges from edit plan in seconds."""
-        ranges: list[tuple[float, float]] = []
+    def _collect_cut_ranges(self, edit_plan: EditPlan) -> list[_CutRange]:
+        """Collect typed cut ranges from edit plan in seconds."""
+        ranges: list[_CutRange] = []
 
         for cut in edit_plan.filler_cuts:
             start = max(0.0, float(cut.start_seconds))
             end = max(0.0, float(cut.end_seconds))
             if end > start:
-                ranges.append((start, end))
+                ranges.append(_CutRange(start=start, end=end, kind="filler"))
 
         for content_cut in edit_plan.content_cuts:
             start = max(0.0, float(content_cut.start_seconds))
             end = max(0.0, float(content_cut.end_seconds))
             if end > start:
-                ranges.append((start, end))
+                ranges.append(_CutRange(start=start, end=end, kind="content"))
+        return ranges
 
-        return self._merge_ranges(ranges)
+    def _apply_word_boundary_snapping(
+        self,
+        ranges: list[_CutRange],
+        transcript_words: list[dict[str, Any]] | None,
+    ) -> list[_CutRange]:
+        """Snap cut boundaries to transcript word gaps when timing metadata exists."""
+        if not ranges or not transcript_words or not self.config.smoothing.enabled:
+            return ranges
 
-    def _merge_ranges(self, ranges: list[tuple[float, float]]) -> list[tuple[float, float]]:
-        """Merge overlapping ranges."""
+        boundaries = find_word_boundaries(transcript_words)
+        if not boundaries:
+            return ranges
+
+        max_shift_s = max(self.config.smoothing.max_snap_shift_ms / 1000.0, 0.0)
+        snapped: list[_CutRange] = []
+        for cut in ranges:
+            snapped_start, snapped_end = snap_cut_range(
+                cut.start,
+                cut.end,
+                boundaries,
+                max_shift_seconds=max_shift_s,
+            )
+            if snapped_end <= snapped_start:
+                snapped_start, snapped_end = cut.start, cut.end
+            snapped.append(_CutRange(start=snapped_start, end=snapped_end, kind=cut.kind))
+        return snapped
+
+    def _merge_ranges(self, ranges: list[_CutRange]) -> list[_CutRange]:
+        """Merge overlapping cut ranges while preserving content-cut priority."""
         if not ranges:
             return []
 
-        sorted_ranges = sorted(ranges, key=lambda x: x[0])
+        sorted_ranges = sorted(ranges, key=lambda item: item.start)
         merged = [sorted_ranges[0]]
-        for start, end in sorted_ranges[1:]:
-            last_start, last_end = merged[-1]
-            if start <= last_end:
-                merged[-1] = (last_start, max(last_end, end))
+        for current in sorted_ranges[1:]:
+            previous = merged[-1]
+            if current.start <= (previous.end + _EPSILON):
+                merged_kind: Literal["filler", "content"] = (
+                    "content"
+                    if previous.kind == "content" or current.kind == "content"
+                    else "filler"
+                )
+                merged[-1] = _CutRange(
+                    start=previous.start,
+                    end=max(previous.end, current.end),
+                    kind=merged_kind,
+                )
             else:
-                merged.append((start, end))
+                merged.append(current)
         return merged
 
     def _invert_cut_ranges(
         self,
-        ranges: list[tuple[float, float]],
+        ranges: list[_CutRange],
         duration: float,
-    ) -> list[tuple[float, float]]:
-        """Convert cut ranges to keep ranges."""
+    ) -> tuple[list[tuple[float, float]], list[Literal["filler", "content"]]]:
+        """Convert typed cut ranges into keep segments and join transition kinds."""
         if duration <= 0:
-            return []
+            return [], []
 
         keep_ranges: list[tuple[float, float]] = []
+        join_kinds: list[Literal["filler", "content"]] = []
         cursor = 0.0
-        for start, end in ranges:
+        for cut in ranges:
+            start = min(max(cut.start, 0.0), duration)
+            end = min(max(cut.end, 0.0), duration)
+            if end <= start:
+                continue
             if start > cursor:
                 keep_ranges.append((cursor, min(start, duration)))
+            if keep_ranges and end < duration:
+                join_kinds.append(cut.kind)
             cursor = max(cursor, end)
 
         if cursor < duration:
             keep_ranges.append((cursor, duration))
 
-        return keep_ranges
+        filtered_keep_ranges = [
+            (start, end) for start, end in keep_ranges if (end - start) > _EPSILON
+        ]
+        expected_joins = max(len(filtered_keep_ranges) - 1, 0)
+        return filtered_keep_ranges, join_kinds[:expected_joins]
+
+    def _load_transcript_words(self, job_dir: Path) -> list[dict[str, Any]]:
+        """Load transcript word timestamps for cut-boundary snapping."""
+        transcript_path = job_dir / "analysis" / "transcript.json"
+        if not transcript_path.exists():
+            return []
+        try:
+            payload = json.loads(transcript_path.read_text())
+        except (OSError, json.JSONDecodeError) as exc:
+            self.logger.warning(
+                "render_transcript_load_failed", path=str(transcript_path), error=str(exc)
+            )
+            return []
+
+        words: list[dict[str, Any]] = []
+        raw_words = payload.get("words") if isinstance(payload, dict) else None
+        if isinstance(raw_words, list):
+            words.extend(item for item in raw_words if isinstance(item, dict))
+
+        raw_segments = payload.get("segments") if isinstance(payload, dict) else None
+        if isinstance(raw_segments, list):
+            for segment in raw_segments:
+                if not isinstance(segment, dict):
+                    continue
+                segment_words = segment.get("words")
+                if not isinstance(segment_words, list):
+                    continue
+                words.extend(item for item in segment_words if isinstance(item, dict))
+        return words
+
+    def _resolve_transition_filter_availability(
+        self,
+        *,
+        needs_content_transitions: bool,
+    ) -> dict[str, bool]:
+        """Resolve optional transition filter support and fallback policy."""
+        default_result = {"acrossfade": False, "xfade": False}
+        smoothing = self.config.smoothing
+        if not smoothing.enabled or not needs_content_transitions:
+            return default_result
+
+        requested: set[str] = set()
+        if smoothing.content_audio_crossfade_ms > 0:
+            requested.add("acrossfade")
+        if smoothing.content_video_dissolve_ms > 0:
+            requested.add("xfade")
+        if not requested:
+            return default_result
+
+        try:
+            available = self._probe_available_ffmpeg_filters()
+        except RuntimeError as exc:
+            if smoothing.require_transition_filters:
+                raise
+            self.logger.warning(
+                "render_transition_filter_probe_failed",
+                error=str(exc),
+            )
+            return default_result
+
+        missing = sorted(requested - available)
+        if missing:
+            message = (
+                "Render transition filters unavailable; falling back to concat joins for "
+                f"{', '.join(missing)}."
+            )
+            if smoothing.require_transition_filters:
+                raise RuntimeError(
+                    "Render preflight failed: missing required transition filter(s): "
+                    f"{', '.join(missing)}."
+                )
+            self.logger.warning(
+                "render_transition_filters_missing",
+                missing=missing,
+                fallback="concat",
+                message=message,
+            )
+
+        return {name: (name in available) for name in default_result}
+
+    def _clamp_transition_duration(
+        self,
+        *,
+        base_duration_s: float,
+        left_duration_s: float,
+        right_duration_s: float,
+        clamp_ratio: float,
+    ) -> float:
+        """Clamp transition durations to avoid over-consuming short segments."""
+        if base_duration_s <= 0 or left_duration_s <= 0 or right_duration_s <= 0:
+            return 0.0
+        max_allowed = min(left_duration_s, right_duration_s) * clamp_ratio
+        return max(min(base_duration_s, max_allowed), 0.0)
 
     def _export_clips(
         self,
