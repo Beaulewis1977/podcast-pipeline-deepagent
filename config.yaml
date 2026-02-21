@@ -85,6 +85,16 @@ enhancements:
     eq_brightness: 0.0
     eq_gamma: 1.0
 
+# Phase 7 smoothing controls (conservative defaults; additive to existing render flow)
+smoothing:
+  enabled: true
+  micro_fade_ms: 30
+  content_audio_crossfade_ms: 150
+  content_video_dissolve_ms: 300
+  max_snap_shift_ms: 250
+  join_clamp_ratio: 0.35
+  require_transition_filters: false
+
 # Thumbnail compliance constraints by selected export target
 # YouTube values reflect official custom thumbnail guidance.
 # Spotify video values are project policy aligned to YouTube-safe 16:9 assets.

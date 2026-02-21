@@ -448,6 +448,79 @@ class TestEnhancementConfig:
             load_config(config_path)
 
 
+class TestSmoothingConfig:
+    """Tests for typed Phase 7 smoothing configuration defaults and validation."""
+
+    def test_smoothing_config_defaults_are_conservative(self) -> None:
+        """Default smoothing policy should be enabled with mild transition values."""
+        config = load_config()
+
+        assert config.smoothing.enabled is True
+        assert config.smoothing.micro_fade_ms == pytest.approx(30.0)
+        assert config.smoothing.content_audio_crossfade_ms == pytest.approx(150.0)
+        assert config.smoothing.content_video_dissolve_ms == pytest.approx(300.0)
+        assert config.smoothing.max_snap_shift_ms == pytest.approx(250.0)
+        assert config.smoothing.join_clamp_ratio == pytest.approx(0.35)
+        assert config.smoothing.require_transition_filters is False
+
+    def test_smoothing_config_accepts_yaml_overrides(self, tmp_path: Path) -> None:
+        """Smoothing overrides should parse as typed runtime settings."""
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "\n".join(
+                [
+                    "smoothing:",
+                    "  enabled: true",
+                    "  micro_fade_ms: 18",
+                    "  content_audio_crossfade_ms: 120",
+                    "  content_video_dissolve_ms: 220",
+                    "  max_snap_shift_ms: 180",
+                    "  join_clamp_ratio: 0.25",
+                    "  require_transition_filters: true",
+                ]
+            )
+        )
+
+        config = load_config(config_path)
+
+        assert config.smoothing.micro_fade_ms == pytest.approx(18.0)
+        assert config.smoothing.content_audio_crossfade_ms == pytest.approx(120.0)
+        assert config.smoothing.content_video_dissolve_ms == pytest.approx(220.0)
+        assert config.smoothing.max_snap_shift_ms == pytest.approx(180.0)
+        assert config.smoothing.join_clamp_ratio == pytest.approx(0.25)
+        assert config.smoothing.require_transition_filters is True
+
+    def test_smoothing_config_rejects_invalid_join_clamp_ratio(self, tmp_path: Path) -> None:
+        """Clamp ratio above 0.5 should fail fast during config load."""
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "\n".join(
+                [
+                    "smoothing:",
+                    "  join_clamp_ratio: 0.75",
+                ]
+            )
+        )
+
+        with pytest.raises(ValueError, match=r"smoothing|join_clamp_ratio"):
+            load_config(config_path)
+
+    def test_smoothing_config_rejects_negative_micro_fade(self, tmp_path: Path) -> None:
+        """Negative smoothing durations should be rejected."""
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "\n".join(
+                [
+                    "smoothing:",
+                    "  micro_fade_ms: -5",
+                ]
+            )
+        )
+
+        with pytest.raises(ValueError, match=r"smoothing|micro_fade_ms"):
+            load_config(config_path)
+
+
 class TestRenderStage:
     """Tests for RenderStage class."""
 
