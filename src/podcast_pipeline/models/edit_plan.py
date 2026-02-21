@@ -2,7 +2,7 @@
 
 from collections.abc import Sequence
 from datetime import UTC, datetime
-from typing import Self
+from typing import Literal, Self
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -23,11 +23,30 @@ class FillerCutRange(BaseModel):
     end_seconds: float = Field(ge=0.0)
     word: str = ""
     confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    category: str = ""
+    context_before: str = ""
+    context_after: str = ""
+    editorial_action: Literal["remove", "keep"] = "remove"
+    editorial_note: str = ""
+    snapped: bool = False
+    original_start: float | None = Field(default=None, ge=0.0)
+    original_end: float | None = Field(default=None, ge=0.0)
+    smoothing: Literal["micro_fade", "crossfade"] = "micro_fade"
+    smoothing_audio_ms: float | None = Field(default=None, ge=0.0)
+    smoothing_video_ms: float | None = Field(default=None, ge=0.0)
 
     @model_validator(mode="after")
     def validate_range(self) -> Self:
         """Ensure filler cuts are non-empty forward ranges."""
         _validate_forward_range(self.start_seconds, self.end_seconds, "FillerCutRange")
+        if (self.original_start is None) != (self.original_end is None):
+            raise ValueError(
+                "FillerCutRange original_start/original_end must both be set or both be null"
+            )
+        if self.original_start is not None and self.original_end is not None:
+            _validate_forward_range(
+                self.original_start, self.original_end, "FillerCutRange original"
+            )
         return self
 
 
@@ -37,11 +56,26 @@ class ContentCutRange(BaseModel):
     start_seconds: float = Field(ge=0.0)
     end_seconds: float = Field(ge=0.0)
     reason: str = ""
+    editorial_action: Literal["remove", "keep"] = "remove"
+    snapped: bool = False
+    original_start: float | None = Field(default=None, ge=0.0)
+    original_end: float | None = Field(default=None, ge=0.0)
+    smoothing: Literal["micro_fade", "crossfade", "dissolve"] = "crossfade"
+    smoothing_audio_ms: float | None = Field(default=None, ge=0.0)
+    smoothing_video_ms: float | None = Field(default=None, ge=0.0)
 
     @model_validator(mode="after")
     def validate_range(self) -> Self:
         """Ensure content cuts are non-empty forward ranges."""
         _validate_forward_range(self.start_seconds, self.end_seconds, "ContentCutRange")
+        if (self.original_start is None) != (self.original_end is None):
+            raise ValueError(
+                "ContentCutRange original_start/original_end must both be set or both be null"
+            )
+        if self.original_start is not None and self.original_end is not None:
+            _validate_forward_range(
+                self.original_start, self.original_end, "ContentCutRange original"
+            )
         return self
 
 
