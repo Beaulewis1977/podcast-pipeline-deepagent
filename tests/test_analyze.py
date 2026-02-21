@@ -30,10 +30,10 @@ def _make_stage(
 
 
 def _write_filler_cuts(job_dir: Path, cuts: list[dict[str, Any]]) -> None:
-    """Write a filler_cuts.json fixture under transcribe/."""
-    transcribe_dir = job_dir / "transcribe"
-    transcribe_dir.mkdir(parents=True, exist_ok=True)
-    (transcribe_dir / "filler_cuts.json").write_text(json.dumps(cuts))
+    """Write a filler_cuts.json fixture under analysis/."""
+    analysis_dir = job_dir / "analysis"
+    analysis_dir.mkdir(parents=True, exist_ok=True)
+    (analysis_dir / "filler_cuts.json").write_text(json.dumps(cuts))
 
 
 _HEDGE_CUT_DEFAULTS: dict[str, Any] = {

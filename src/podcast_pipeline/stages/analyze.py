@@ -696,7 +696,7 @@ class AnalyzeStage(Stage):
 
     def _load_triage_candidates(self, job_dir: Path) -> list[tuple[int, dict[str, Any]]] | None:
         """Load filler_cuts.json and return hedge-filler candidates, or None on skip/error."""
-        filler_cuts_path = job_dir / "transcribe" / "filler_cuts.json"
+        filler_cuts_path = job_dir / "analysis" / "filler_cuts.json"
 
         if not filler_cuts_path.exists():
             self.logger.info("triage_skipped", reason="filler_cuts.json_not_found")
