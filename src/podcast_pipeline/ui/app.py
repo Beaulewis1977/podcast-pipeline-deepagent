@@ -1433,6 +1433,7 @@ def render_thumbnail_selector(job_dir: Path) -> None:
     selected_thumbnails = _normalize_ranked_thumbnail_selection(
         decisions.selected_thumbnails,
         decisions.selected_thumbnail,
+        max_index=len(thumbnails) - 1,
     )
     rank_by_index = {index: rank for rank, index in enumerate(selected_thumbnails, start=1)}
 
@@ -1933,13 +1934,9 @@ def update_thumbnail_selection(job_dir: Path, thumbnail_idx: int) -> None:
 
     review_dir = job_dir / "review"
     review_dir.mkdir(parents=True, exist_ok=True)
-
     review_path = review_dir / "review_state.json"
 
-    if review_path.exists():
-        decisions = ReviewDecisions.model_validate_json(review_path.read_text())
-    else:
-        decisions = ReviewDecisions()
+    decisions = _load_review_decisions(job_dir)
 
     current_ranked = _normalize_ranked_thumbnail_selection(
         decisions.selected_thumbnails,
@@ -1954,14 +1951,22 @@ def update_thumbnail_selection(job_dir: Path, thumbnail_idx: int) -> None:
 def _normalize_ranked_thumbnail_selection(
     selected_thumbnails: list[int] | None,
     primary_thumbnail: int | None,
+    max_index: int | None = None,
 ) -> list[int]:
-    """Normalize ranked thumbnail selections to unique 0-based indices capped at 3."""
+    """Normalize ranked thumbnail selections to unique 0-based indices capped at 3.
+
+    ``max_index`` bounds selections to the current thumbnail count so stale
+    indices from a previous analysis run cannot lock the UI.
+    """
     normalized: list[int] = []
     if isinstance(primary_thumbnail, int) and primary_thumbnail >= 0:
-        normalized.append(primary_thumbnail)
+        if max_index is None or primary_thumbnail <= max_index:
+            normalized.append(primary_thumbnail)
 
     for index in selected_thumbnails or []:
         if not isinstance(index, int) or index < 0 or index in normalized:
+            continue
+        if max_index is not None and index > max_index:
             continue
         normalized.append(index)
         if len(normalized) >= 3:
@@ -1985,7 +1990,21 @@ def _thumbnail_image_path(job_dir: Path, thumbnail: dict[str, Any]) -> Path | No
     raw_path = thumbnail.get("image_path")
     if not isinstance(raw_path, str) or not raw_path.strip():
         return None
-    return job_dir / raw_path
+
+    candidate = Path(raw_path)
+    if candidate.is_absolute():
+        logger.warning("rejected_absolute_thumbnail_path", path=raw_path)
+        return None
+
+    job_root = job_dir.resolve()
+    resolved = (job_root / candidate).resolve()
+    try:
+        resolved.relative_to(job_root)
+    except ValueError:
+        logger.warning("rejected_thumbnail_path_outside_job_dir", path=raw_path)
+        return None
+
+    return resolved
 
 
 def update_export_platforms(job_dir: Path, platforms: list[str]) -> tuple[list[str], list[str]]:

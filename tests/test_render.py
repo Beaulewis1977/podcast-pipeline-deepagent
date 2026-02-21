@@ -634,6 +634,7 @@ class TestMarketingDocGeneration:
         stage._generate_marketing_doc(tmp_path)
 
         content = (tmp_path / "output" / "marketing" / "copy.md").read_text()
+        lines = [line.strip() for line in content.splitlines()]
         expected_sections = [
             "## YouTube",
             "## Spotify",
@@ -649,9 +650,9 @@ class TestMarketingDocGeneration:
 
         previous_index = -1
         for section in expected_sections:
-            assert section in content
-            current_index = content.index(section)
-            assert current_index > previous_index
+            assert section in lines, f"Missing section: {section}"
+            current_index = lines.index(section)
+            assert current_index > previous_index, f"Section out of order: {section}"
             previous_index = current_index
 
     def test_marketing_doc_full_platform_headers_present_with_partial_payload(
@@ -684,6 +685,7 @@ class TestMarketingDocGeneration:
         stage._generate_marketing_doc(tmp_path)
 
         content = (tmp_path / "output" / "marketing" / "copy.md").read_text()
+        lines = [line.strip() for line in content.splitlines()]
         for section in (
             "## YouTube",
             "## Spotify",
@@ -696,7 +698,7 @@ class TestMarketingDocGeneration:
             "## Twitter/X",
             "## Facebook",
         ):
-            assert section in content
+            assert section in lines, f"Missing section: {section}"
 
 
 class TestRenderEnhancementAndThumbnailOutputs:

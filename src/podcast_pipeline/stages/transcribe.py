@@ -238,9 +238,13 @@ class TranscribeStage(Stage):
 
     def _detect_fillers(self, segments: list[Segment]) -> list[FillerCut]:
         """Detect filler words in transcript."""
-        filler_words = {w.lower() for w in self.config.fillers.words}
+        filler_words = {self._normalize_filler_token(w) for w in self.config.fillers.words}
         single_word_fillers = {w for w in filler_words if " " not in w}
-        multi_word_fillers = {tuple(w.split()) for w in filler_words if " " in w}
+        multi_word_fillers = {
+            tuple(self._normalize_filler_token(token) for token in w.split())
+            for w in filler_words
+            if " " in w
+        }
         min_confidence = self.config.fillers.min_confidence
         min_duration_ms = self.config.fillers.min_duration_ms
         padding_ms = self.config.fillers.padding_ms

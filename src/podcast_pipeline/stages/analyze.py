@@ -293,7 +293,7 @@ class AnalyzeStage(Stage):
                     if numeric and all(part >= 0 for part in numeric):
                         if len(numeric) == 2:
                             minutes, seconds = numeric
-                            if seconds < 60:
+                            if minutes < 60 and seconds < 60:
                                 parsed_seconds = (minutes * 60.0) + seconds
                         else:
                             hours, minutes, seconds = numeric
