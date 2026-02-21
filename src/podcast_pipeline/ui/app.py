@@ -1100,6 +1100,59 @@ def _materialize_filler_decisions(
     ]
 
 
+def _filler_card_data(filler: dict[str, Any]) -> dict[str, Any]:
+    """Extract Phase 8 display fields from a filler dict for card rendering.
+
+    Returns a dict with:
+      - word: filler word string
+      - context_before / context_after: surrounding transcript text (may be "")
+      - pause_before_ms / pause_after_ms: pause durations in milliseconds (float, 0.0 if absent)
+      - protected: bool — whether the filler has pause-gate protection
+      - llm_safe_to_remove: bool | None — LLM verdict (None = not triaged)
+      - llm_reason: str — LLM rationale (may be "")
+      - default_action: "keep" if protected else derived from llm_safe_to_remove,
+                        falls back to filler's editorial_action or "remove"
+    """
+    word = str(filler.get("word", ""))
+
+    raw_before = filler.get("context_before", filler.get("before_text", ""))
+    context_before = ("" if raw_before is None else str(raw_before)).strip()
+    raw_after = filler.get("context_after", filler.get("after_text", ""))
+    context_after = ("" if raw_after is None else str(raw_after)).strip()
+
+    pause_before_ms = float(filler.get("pause_before_ms", 0.0) or 0.0)
+    pause_after_ms = float(filler.get("pause_after_ms", 0.0) or 0.0)
+
+    protected = bool(filler.get("protected", False))
+
+    raw_llm = filler.get("llm_safe_to_remove")
+    llm_safe_to_remove: bool | None = bool(raw_llm) if raw_llm is not None else None
+
+    llm_reason = str(filler.get("llm_reason", "") or "").strip()
+
+    # Derive display default action from Phase 8 fields (mirrors _derive_editorial_action logic)
+    if protected:
+        default_action = "keep"
+    elif filler.get("editorial_action") is not None:
+        default_action = _normalize_filler_action(filler["editorial_action"])
+    elif llm_safe_to_remove is True:
+        default_action = "remove"
+    else:
+        default_action = "keep"
+
+    return {
+        "word": word,
+        "context_before": context_before,
+        "context_after": context_after,
+        "pause_before_ms": pause_before_ms,
+        "pause_after_ms": pause_after_ms,
+        "protected": protected,
+        "llm_safe_to_remove": llm_safe_to_remove,
+        "llm_reason": llm_reason,
+        "default_action": default_action,
+    }
+
+
 def _timeline_rows_from_artifacts(
     job_dir: Path,
     analysis: dict[str, Any],
@@ -1485,6 +1538,7 @@ def render_timeline_editor(job_id: str, job_dir: Path) -> None:
 
                 for idx in indices[:50]:
                     filler = fillers[idx]
+                    card = _filler_card_data(filler)
                     existing_action = decision_map.get(idx, None)
                     raw_default = (
                         existing_action if existing_action is not None else missing_default
@@ -1502,19 +1556,33 @@ def render_timeline_editor(job_id: str, job_dir: Path) -> None:
                             label_visibility="collapsed",
                         )
                     with col2:
-                        st.caption(f'"{filler.get("word", "")}"')
+                        word_label = f'"{card["word"]}"'
+                        if card["protected"]:
+                            word_label = f"\U0001f512 {word_label}"
+                        if card["llm_safe_to_remove"] is True:
+                            word_label = f"{word_label} \u2022 LLM:SAFE"
+                        elif card["llm_safe_to_remove"] is False:
+                            word_label = f"{word_label} \u2022 LLM:REVIEW"
+                        st.caption(word_label)
                     with col3:
                         start = filler.get("start_seconds", filler.get("start", ""))
                         st.caption(f"{start}")
+                        # Pause timing badges
+                        pause_parts: list[str] = []
+                        if card["pause_before_ms"] > 0:
+                            pause_parts.append(f"\u23f8 {card['pause_before_ms']:.0f}ms before")
+                        if card["pause_after_ms"] > 0:
+                            pause_parts.append(f"{card['pause_after_ms']:.0f}ms after")
+                        if pause_parts:
+                            st.caption(" | ".join(pause_parts))
                     with col4:
-                        raw_before = filler.get("context_before", filler.get("before_text", ""))
-                        before_text = ("" if raw_before is None else str(raw_before)).strip()
-                        raw_after = filler.get("context_after", filler.get("after_text", ""))
-                        after_text = ("" if raw_after is None else str(raw_after)).strip()
-                        if before_text or after_text:
-                            st.caption(
-                                f"{before_text} [{filler.get('word', '')}] {after_text}".strip()
-                            )
+                        if card["context_before"] or card["context_after"]:
+                            snippet = (
+                                f"{card['context_before']} [{card['word']}] {card['context_after']}"
+                            ).strip()
+                            st.caption(snippet)
+                        if card["llm_reason"]:
+                            st.caption(f"LLM: {card['llm_reason']}")
 
                     selected_action = "remove" if selection == "Remove" else "keep"
                     decision_map[idx] = selected_action
