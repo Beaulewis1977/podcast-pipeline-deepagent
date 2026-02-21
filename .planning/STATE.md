@@ -1,28 +1,28 @@
 # Project State: Podcast Pipeline
 
 **Last updated:** 2026-02-21
-**Current phase:** Phase 8 in progress (08-05 complete)
-**Overall progress:** In progress (08-05/6 Phase 8 plans complete)
+**Current phase:** Phase 8 COMPLETE (08-06 complete)
+**Overall progress:** COMPLETE (51/51 plans complete — all phases done)
 
 ## Project Reference
 
 See: `.planning/PROJECT.md`
 
 **Core value:** Turn raw podcast recording into multi-platform content without editing software or manual copywriting.
-**Current focus:** Phase 8 execution in progress — 08-04 de-breathing + noise-floor matching render passes complete.
+**Current focus:** Phase 8 complete — all 6 plans executed; integration tests, GPU smoke test, and operator guide locked.
 
 ## Current Position
 
 ```text
-Phase:    8 in progress
-Plan:     5/6 complete in Phase 8; 50 completed overall
-Status:   Phase 8 execution in progress; 08-01, 08-02, 08-03, 08-04, 08-05 complete
-Last activity: 2026-02-21 - Completed 08-05-PLAN.md (pose-match scanner, RIFE bridge, render integration + tests)
+Phase:    8 COMPLETE
+Plan:     6/6 complete in Phase 8; 51 completed overall
+Status:   Phase 8 COMPLETE; all plans 08-01 through 08-06 complete
+Last activity: 2026-02-21 - Completed 08-06-PLAN.md (integration tests, GPU smoke test, operator guide)
 
-Progress: [█████████████████████████████] 50/51 plans complete
+Progress: [██████████████████████████████] 51/51 plans complete
 ```
 
-**Current Phase:** Phase 8 — Intelligent Cut Quality (Plan 6 of 6 next)
+**Current Phase:** Phase 8 — Intelligent Cut Quality (ALL COMPLETE)
 
 ## Phase Status
 
@@ -37,15 +37,15 @@ Progress: [███████████████████████
 | 6 | Audio/Video Enhancement & Podcast Video Platform | Complete (verified) | 3/3 | 100% |
 | 6.1 | Video Marketing Copy Parity + Thumbnail Visual Selection MVP | Complete (verified) | 5/5 | 100% |
 | 7 | Smooth Editing & Filler Word Control | Complete (verified 2026-02-21) | 4/4 | 100% |
-| 8 | Intelligent Cut Quality | In progress | 5/6 | 83% |
+| 8 | Intelligent Cut Quality | Complete | 6/6 | 100% |
 
 ## Performance Metrics
 
 | Metric | Value |
 |--------|-------|
-| Plans completed | 50/50 |
+| Plans completed | 51/51 |
 | Requirements done | 35/83 (21 partial) |
-| Phases complete | 7/8 |
+| Phases complete | 8/8 |
 | Estimated completion | In progress |
 
 ## Accumulated Context
@@ -164,6 +164,9 @@ Progress: [███████████████████████
 | --exp flag used for RIFE (NOT --n which does not exist) | Corrected per Phase 8 research; --n and --cpu flags do not exist in practical-RIFE | 2026-02-21 |
 | RIFE disabled by default (rife_enabled=False); pose_match_enabled=True with graceful cv2 fallback | Keeps baseline render unchanged while enabling pose matching without requiring opencv install | 2026-02-21 |
 | Bridge clips copied to stable_dir before TemporaryDirectory cleanup | Ensures RIFE bridge clips survive tempdir lifecycle for filtergraph use | 2026-02-21 |
+| Smoke test split into helper functions (_check_torch/_check_opencv/_resolve_rife_script) | Avoids PLR0911 return-statement limit in main() while keeping early returns per check | 2026-02-21 |
+| noise_floor_correction strict less-than: exact threshold = correction applied | delta_db < threshold_db guard — at exactly threshold the condition is False, so correction fires | 2026-02-21 |
+| Phase 8 integration tests use monkeypatch builtins.__import__ to simulate missing optional deps | Avoids uninstalling packages; simulates ImportError for silero_vad/librosa/cv2 in test environment | 2026-02-21 |
 
 ### Roadmap Evolution
 
@@ -289,16 +292,17 @@ Progress: [███████████████████████
 - 2026-02-21: Completed 08-03-PLAN.md (triage-aware editorial_action in review stage, _filler_card_data UI helper, Streamlit filler card Phase 8 display)
 - 2026-02-21: Completed 08-04-PLAN.md (VAD breath detector, noise-floor matcher, render de-breathing + noise-floor passes, 14 tests, gpu optional deps)
 - 2026-02-21: Completed 08-05-PLAN.md (pose-match scanner via Farneback optical flow, RIFE bridge with --exp flag, render _apply_pose_match_pass + xfade fallback, 20 tests)
+- 2026-02-21: Completed 08-06-PLAN.md (GPU smoke test, legacy compat regressions, triage-chain integration tests, Phase 8 disabled baseline regressions, operator guide)
 
 ## Session Continuity
 
 ### Last session
 
-2026-02-21 08:47 UTC — Completed `08-05-PLAN.md` and generated `08-05-SUMMARY.md`.
+2026-02-21 08:59 UTC — Completed `08-06-PLAN.md` and generated `08-06-SUMMARY.md`.
 
 ### Stopped at
 
-Completed 08-05-PLAN.md — ready to execute 08-06-PLAN.md (integration tests for all Phase 8 features).
+Completed 08-06-PLAN.md — Phase 8 complete, all 51 plans done across 8 phases.
 
 ### Resume file
 
@@ -306,4 +310,4 @@ None
 
 ---
 
-*State updated: 2026-02-21 (08-05 complete)*
+*State updated: 2026-02-21 (08-06 complete — Phase 8 COMPLETE, all 51 plans done)*
