@@ -2,27 +2,27 @@
 
 **Last updated:** 2026-02-21
 **Current phase:** Phase 8 in progress (08-01 complete)
-**Overall progress:** In progress (08-01/6 Phase 8 plans complete)
+**Overall progress:** In progress (08-04/6 Phase 8 plans complete)
 
 ## Project Reference
 
 See: `.planning/PROJECT.md`
 
 **Core value:** Turn raw podcast recording into multi-platform content without editing software or manual copywriting.
-**Current focus:** Phase 8 execution in progress — 08-01 FillerConfig restructure + FillerCut enrichment complete.
+**Current focus:** Phase 8 execution in progress — 08-04 de-breathing + noise-floor matching render passes complete.
 
 ## Current Position
 
 ```text
 Phase:    8 in progress
-Plan:     3/6 complete in Phase 8; 48 completed overall
-Status:   Phase 8 execution in progress; 08-01, 08-02, 08-03 complete
-Last activity: 2026-02-21 - Completed 08-03-PLAN.md (review stage triage display + Streamlit filler card Phase 8 enrichment)
+Plan:     4/6 complete in Phase 8; 49 completed overall
+Status:   Phase 8 execution in progress; 08-01, 08-02, 08-03, 08-04 complete
+Last activity: 2026-02-21 - Completed 08-04-PLAN.md (VAD breath detector, noise-floor matcher, render integration)
 
-Progress: [███████████████████████████] 48/51 plans complete
+Progress: [████████████████████████████] 49/51 plans complete
 ```
 
-**Current Phase:** Phase 8 — Intelligent Cut Quality (Plan 4 of 6 next)
+**Current Phase:** Phase 8 — Intelligent Cut Quality (Plan 5 of 6 next)
 
 ## Phase Status
 
@@ -37,13 +37,13 @@ Progress: [███████████████████████
 | 6 | Audio/Video Enhancement & Podcast Video Platform | Complete (verified) | 3/3 | 100% |
 | 6.1 | Video Marketing Copy Parity + Thumbnail Visual Selection MVP | Complete (verified) | 5/5 | 100% |
 | 7 | Smooth Editing & Filler Word Control | Complete (verified 2026-02-21) | 4/4 | 100% |
-| 8 | Intelligent Cut Quality | In progress | 3/6 | 50% |
+| 8 | Intelligent Cut Quality | In progress | 4/6 | 67% |
 
 ## Performance Metrics
 
 | Metric | Value |
 |--------|-------|
-| Plans completed | 48/48 |
+| Plans completed | 49/49 |
 | Requirements done | 35/83 (21 partial) |
 | Phases complete | 7/8 |
 | Estimated completion | In progress |
@@ -157,6 +157,10 @@ Progress: [███████████████████████
 | write_edit_plan action comes from _materialize_filler_decisions directly — no secondary protected override needed | _derive_editorial_action already handles protection; duplicate gate removed for clarity | 2026-02-21 |
 | _create_initial_review_state uses _derive_editorial_action for triage-aware defaults | Protected fillers default to keep; disfluencies remove; LLM-safe hedges remove; uncleared hedges keep for editor review | 2026-02-21 |
 | _filler_card_data helper centralizes Phase 8 display field extraction | Makes UI rendering and tests independent of field-access code; returns typed display dict | 2026-02-21 |
+| silero-vad>=6.1 selected (NOT >=5.0) and opencv-python-headless (NOT opencv-python) for GPU extras | v6.x fixes torchaudio deprecation; headless avoids Qt display failures on WSL/server | 2026-02-21 |
+| torch/torchaudio routed via pytorch-cu128 uv.sources (NOT cu121) | RTX 5060 Ti is Blackwell sm_120 requiring CUDA 12.8; cu121 fails at runtime | 2026-02-21 |
+| De-breathing pass runs after word-boundary snapping, before merge/invert | Ensures extended ranges participate in merge step to handle overlapping extensions | 2026-02-21 |
+| compute_noise_floor_correction uses strict less-than: exact threshold = correction applied | delta_db < threshold_db means at exactly threshold, condition is False; correction proceeds | 2026-02-21 |
 
 ### Roadmap Evolution
 
@@ -201,6 +205,10 @@ Progress: [███████████████████████
 - Phase 7 execution continued: completed 07-03 Streamlit editorial UX wiring (category-grouped filler controls, bulk actions, and review→edit-plan persistence regressions)
 - Phase 7 execution completed: finished 07-04 integration hardening (cross-path compatibility regressions and Phase 7 operator runbook documentation)
 - Phase 8 added: Intelligent Cut Quality
+- Phase 8 execution started: completed 08-01-PLAN.md (FillerConfig typed category sub-lists, FillerCut Phase 8 enrichment fields, upgraded _detect_fillers)
+- Phase 8 execution continued: completed 08-02-PLAN.md (FillerTriageResult model, _triage_fillers batched LLM triage helper, filler_triage.json artifact)
+- Phase 8 execution continued: completed 08-03-PLAN.md (triage-aware editorial_action, _filler_card_data UI helper, Streamlit filler card Phase 8 display)
+- Phase 8 execution continued: completed 08-04-PLAN.md (VAD breath detector, noise-floor matcher, render de-breathing + noise-floor passes, gpu optional deps)
 
 ### Technical Notes
 
@@ -213,6 +221,8 @@ Progress: [███████████████████████
 - Model cache: env -> app_data -> project -> HF hub for model artifacts
 - Sidecar naming: prepare-sidecars.mjs maps Node.js platform/arch to Rust target triples
 - Release workflow: tag-triggered with manual dispatch, 4 platform targets
+- GPU extras: `uv sync --extras gpu` installs silero-vad>=6.1, librosa>=0.10, opencv-python-headless>=4.9
+- torch/torchaudio: installed via pytorch-cu128 index (CUDA 12.8 for Blackwell sm_120 / RTX 5060 Ti)
 
 ### Open Questions
 
@@ -274,16 +284,17 @@ Progress: [███████████████████████
 - 2026-02-21: Completed 08-01-PLAN.md (FillerConfig typed category sub-lists, FillerCut Phase 8 enrichment fields, upgraded _detect_fillers with category/pause/context/protection gate)
 - 2026-02-21: Completed 08-02-PLAN.md (FillerTriageResult model, _triage_fillers batched LLM triage helper, filler_triage.json artifact, 25 passing tests)
 - 2026-02-21: Completed 08-03-PLAN.md (triage-aware editorial_action in review stage, _filler_card_data UI helper, Streamlit filler card Phase 8 display)
+- 2026-02-21: Completed 08-04-PLAN.md (VAD breath detector, noise-floor matcher, render de-breathing + noise-floor passes, 14 tests, gpu optional deps)
 
 ## Session Continuity
 
 ### Last session
 
-2026-02-21 08:35 UTC — Completed `08-03-PLAN.md` and generated `08-03-SUMMARY.md`.
+2026-02-21 08:27 UTC — Completed `08-04-PLAN.md` and generated `08-04-SUMMARY.md`.
 
 ### Stopped at
 
-Completed 08-03-PLAN.md — ready to execute 08-04-PLAN.md (render stage protected/pause-aware cut integration).
+Completed 08-04-PLAN.md — ready to execute 08-05-PLAN.md (pose matching + RIFE frame interpolation).
 
 ### Resume file
 
