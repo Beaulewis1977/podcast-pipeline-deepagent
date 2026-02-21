@@ -215,12 +215,24 @@ class ReviewStage(Stage):
 
         decisions = ReviewDecisions()
 
-        # Default: approve all filler cuts
+        # Default: set per-filler actions using triage-aware derivation.
+        # Phase 8: protected fillers default to "keep"; disfluencies and
+        # LLM-confirmed safe hedges default to "remove"; uncertain hedges
+        # default to "keep" so editors can review them.
         if filler_path.exists():
             fillers = json.loads(filler_path.read_text())
+            triage_map = _load_filler_triage_map(job_dir)
             decisions.approved_filler_cuts = list(range(len(fillers)))
             decisions.filler_decisions = [
-                FillerDecision(index=i, action="remove") for i in range(len(fillers))
+                FillerDecision(
+                    index=i,
+                    action=_derive_editorial_action(
+                        f,
+                        triage_map.get(i),
+                        None,
+                    ),
+                )
+                for i, f in enumerate(fillers)
             ]
 
         # Default: no content cuts approved (require explicit approval)
@@ -362,24 +374,11 @@ def write_edit_plan(
     approved_filler: list[FillerCutRange] = []
     if not decisions.reject_all_fillers:
         normalized_decisions = _materialize_filler_decisions(decisions, filler_cuts)
-
-        for idx, legacy_action in normalized_decisions:
-            if idx >= len(filler_cuts):
+        for idx, action in normalized_decisions:
+            if action != "remove" or idx >= len(filler_cuts):
                 continue
             filler = filler_cuts[idx]
             triage = triage_map.get(idx)
-
-            # _materialize_filler_decisions already resolved the correct action by
-            # applying explicit filler_decisions, bulk rules, and legacy fallbacks
-            # in the correct priority order.  Use that as the authoritative action.
-            # Phase 8 adds one additional gate: protected fillers must never be
-            # removed, even if a bulk rule or legacy path would remove them.
-            action: Literal["remove", "keep"] = legacy_action
-            if action == "remove" and bool(filler.get("protected", False)):
-                action = "keep"
-
-            if action != "remove":
-                continue
 
             # Populate Phase 8 enrichment fields from the filler cut dict
             llm_safe: bool | None = None

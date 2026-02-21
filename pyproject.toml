@@ -216,6 +216,13 @@ module = [
     "soundfile.*",
     "streamlit.*",
     "uvicorn.*",
+    # Optional GPU/audio extras — not installed in base env
+    "silero_vad",
+    "silero_vad.*",
+    "librosa",
+    "librosa.*",
+    "cv2",
+    "cv2.*",
 ]
 ignore_missing_imports = true
 
