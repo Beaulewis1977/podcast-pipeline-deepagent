@@ -830,7 +830,7 @@ The following are explicitly **deferred** to a follow-on phase:
 | Risk | Severity | Mitigation |
 |---|---|---|
 | LLM triage adds latency to analyze stage | Medium | Batch calls (max 20/call); disable with `enable_llm_triage: false`; triage runs async after main analysis |
-| RIFE `practical-RIFE` CLI interface changes between versions | Medium | Pin the commit hash in setup docs; subprocess wrapper catches non-zero exit codes |
+| RIFE `practical-RIFE` CLI changes between versions | Medium | Pin the commit hash in setup docs; subprocess wrapper catches non-zero exit codes |
 | CUDA version mismatch between torch and driver | High | Verify with `nvcc --version` + `nvidia-smi` before uv install; document exact CUDA 12.x path |
 | OpenCV GPU build not available in standard pip package | Low | Use `opencv-python` CPU build — optical flow runs on CPU, fast enough (< 50ms/frame) |
 | RIFE on RTX 5060 Ti (Ada Lovelace) — driver compatibility | Low | RTX 5060 Ti uses CUDA 12.x compute capability 8.9; all torch 2.3+ wheels support this |

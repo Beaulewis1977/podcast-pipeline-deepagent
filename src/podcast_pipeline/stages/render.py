@@ -2044,6 +2044,11 @@ class RenderStage(Stage):
                     crossfade_s = effective_s
                     dissolve_s = effective_s
             elif apply_content_audio:
+                # Only audio crossfade is configured or available at this join.
+                # Video uses concat (dissolve_s = 0), so audio shortens slightly
+                # while video does not. This intentional asymmetry causes minor
+                # A/V timeline drift per join; set content_video_dissolve_ms > 0
+                # to enable the coupled both-or-neither path above.
                 crossfade_s = self._clamp_transition_duration(
                     base_duration_s=base_crossfade_s,
                     left_duration_s=audio_duration,
@@ -2052,6 +2057,10 @@ class RenderStage(Stage):
                 )
                 dissolve_s = 0.0
             elif apply_content_video:
+                # Only video dissolve is configured or available at this join.
+                # Audio uses concat (crossfade_s = 0), so video shortens slightly
+                # while audio does not. Set content_audio_crossfade_ms > 0 to
+                # enable the coupled both-or-neither path above.
                 dissolve_s = self._clamp_transition_duration(
                     base_duration_s=base_dissolve_s,
                     left_duration_s=video_duration,

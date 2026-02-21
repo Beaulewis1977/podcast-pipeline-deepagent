@@ -442,9 +442,7 @@ def _materialize_filler_decisions(
 
     if decisions.filler_bulk_rules:
         for idx, filler in enumerate(filler_cuts):
-            category = str(filler.get("category", "")).strip().lower()
-            if not category:
-                continue
+            category = str(filler.get("category", "")).strip().lower() or "uncategorized"
             rule = decisions.filler_bulk_rules.get(category)
             if rule == "remove_all":
                 decision_map[idx] = "remove"

@@ -1431,13 +1431,16 @@ def render_timeline_editor(job_id: str, job_dir: Path) -> None:
         filler_groups = _group_fillers_by_category(fillers)
         decision_map = _filler_decision_map(decisions, fillers)
         bulk_rules: dict[str, str] = dict(decisions.filler_bulk_rules)
+        # Compute once: when explicit decisions exist, unspecified fillers default
+        # to "keep" so opening the UI does not silently convert them to "remove".
+        missing_default = "keep" if decision_map else "remove"
 
         for category_key in sorted(filler_groups.keys()):
             indices = filler_groups[category_key]
             remove_count = sum(
                 1
                 for idx in indices
-                if _normalize_filler_action(decision_map.get(idx, "remove")) == "remove"
+                if _normalize_filler_action(decision_map.get(idx, missing_default)) == "remove"
             )
             with st.expander(
                 f"{_filler_category_label(category_key)} ({len(indices)} found · {remove_count} remove)"
@@ -1480,10 +1483,6 @@ def render_timeline_editor(job_id: str, job_dir: Path) -> None:
                 elif review_each:
                     bulk_rules[category_key] = "review_each"
 
-                # When explicit decisions exist, default unspecified fillers to "keep"
-                # so that simply opening the UI does not turn implicit fillers into
-                # explicit "remove" decisions.
-                missing_default = "keep" if decision_map else "remove"
                 for idx in indices[:50]:
                     filler = fillers[idx]
                     existing_action = decision_map.get(idx, None)
