@@ -104,6 +104,100 @@ class TestReviewStage:
         assert decisions.selected_thumbnail == 0
         assert "youtube" in decisions.export_platforms
 
+    def test_review_edit_plan_render_contract_respects_explicit_filler_decisions(
+        self,
+        temp_dir: Path,
+    ) -> None:
+        """review/edit_plan contract should serialize only fillers marked remove."""
+        from podcast_pipeline.stages.review import FillerDecision, ReviewDecisions, write_edit_plan
+
+        job_dir = temp_dir / "review-render-explicit"
+        analysis_dir = job_dir / "analysis"
+        analysis_dir.mkdir(parents=True, exist_ok=True)
+        (analysis_dir / "analysis.json").write_text(
+            json.dumps({"content_cuts": [], "viral_clips": [], "thumbnail_frames": []})
+        )
+        filler_cuts = [
+            {"start_seconds": 1.0, "end_seconds": 1.2, "word": "um"},
+            {"start_seconds": 2.0, "end_seconds": 2.3, "word": "like"},
+            {"start_seconds": 3.0, "end_seconds": 3.2, "word": "uh"},
+        ]
+
+        decisions = ReviewDecisions(
+            filler_decisions=[
+                FillerDecision(index=0, action="keep"),
+                FillerDecision(index=1, action="remove"),
+                FillerDecision(index=2, action="remove"),
+            ],
+            approved_filler_cuts=[0],
+        )
+        edit_path = write_edit_plan(
+            job_dir, decisions, {"content_cuts": [], "viral_clips": []}, filler_cuts
+        )
+
+        payload = json.loads(edit_path.read_text())
+        assert [item["word"] for item in payload["filler_cuts"]] == ["like", "uh"]
+
+    def test_review_edit_plan_legacy_approved_filler_cuts_remains_compatible(
+        self,
+        temp_dir: Path,
+    ) -> None:
+        """Legacy approved_filler_cuts payloads should still produce deterministic edit plans."""
+        from podcast_pipeline.stages.review import ReviewDecisions, write_edit_plan
+
+        job_dir = temp_dir / "review-render-legacy"
+        analysis_dir = job_dir / "analysis"
+        analysis_dir.mkdir(parents=True, exist_ok=True)
+        (analysis_dir / "analysis.json").write_text(
+            json.dumps({"content_cuts": [], "viral_clips": [], "thumbnail_frames": []})
+        )
+        filler_cuts = [
+            {"start_seconds": 0.5, "end_seconds": 0.8, "word": "um"},
+            {"start_seconds": 1.0, "end_seconds": 1.3, "word": "like"},
+            {"start_seconds": 1.6, "end_seconds": 1.9, "word": "uh"},
+        ]
+
+        decisions = ReviewDecisions(approved_filler_cuts=[2, 0], filler_decisions=[])
+        edit_path = write_edit_plan(
+            job_dir, decisions, {"content_cuts": [], "viral_clips": []}, filler_cuts
+        )
+
+        payload = json.loads(edit_path.read_text())
+        assert [item["word"] for item in payload["filler_cuts"]] == ["um", "uh"]
+
+    def test_review_edit_plan_mixed_new_and_legacy_payload_remains_deterministic(
+        self,
+        temp_dir: Path,
+    ) -> None:
+        """Explicit filler decisions should take precedence over legacy approved indices."""
+        from podcast_pipeline.stages.review import FillerDecision, ReviewDecisions, write_edit_plan
+
+        job_dir = temp_dir / "review-render-mixed"
+        analysis_dir = job_dir / "analysis"
+        analysis_dir.mkdir(parents=True, exist_ok=True)
+        (analysis_dir / "analysis.json").write_text(
+            json.dumps({"content_cuts": [], "viral_clips": [], "thumbnail_frames": []})
+        )
+        filler_cuts = [
+            {"start_seconds": 0.5, "end_seconds": 0.8, "word": "um"},
+            {"start_seconds": 1.0, "end_seconds": 1.3, "word": "like"},
+            {"start_seconds": 1.6, "end_seconds": 1.9, "word": "uh"},
+        ]
+
+        decisions = ReviewDecisions(
+            approved_filler_cuts=[0, 2],
+            filler_decisions=[FillerDecision(index=1, action="remove")],
+        )
+        edit_path = write_edit_plan(
+            job_dir,
+            decisions,
+            {"content_cuts": [], "viral_clips": []},
+            filler_cuts,
+        )
+
+        payload = json.loads(edit_path.read_text())
+        assert [item["word"] for item in payload["filler_cuts"]] == ["like"]
+
 
 class TestStageValidation:
     """Tests for strict stage validation at pipeline entry points."""

@@ -1546,6 +1546,72 @@ class TestRenderEditPlanSmoothing:
         assert "trim=start=0.000:end=1.100" in filter_complex
         assert "trim=start=2.100:end=4.000" in filter_complex
 
+    def test_render_legacy_edit_plan_payload_remains_executable(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """Legacy edit_plan.json payloads should still build smoothing-aware render filters."""
+        stage = RenderStage(load_config())
+        review_dir = tmp_path / "review"
+        review_dir.mkdir(parents=True, exist_ok=True)
+        (review_dir / "edit_plan.json").write_text(
+            json.dumps(
+                {
+                    "filler_cuts": [
+                        {
+                            "start_seconds": 1.15,
+                            "end_seconds": 1.85,
+                            "word": "um",
+                        }
+                    ],
+                    "content_cuts": [
+                        {
+                            "start_seconds": 3.15,
+                            "end_seconds": 3.85,
+                            "reason": "off-topic tangent",
+                        }
+                    ],
+                    "clip_ranges": [],
+                }
+            )
+        )
+
+        edit_plan = stage._load_edit_plan(tmp_path)
+        assert edit_plan is not None
+
+        monkeypatch.setattr(
+            stage,
+            "_resolve_transition_filter_availability",
+            lambda *, needs_content_transitions: {"acrossfade": True, "xfade": False},
+        )
+        transcript_words = [
+            {"word": "we", "start": 0.8, "end": 1.0},
+            {"word": "should", "start": 1.2, "end": 1.4},
+            {"word": "ship", "start": 1.8, "end": 2.0},
+            {"word": "today", "start": 2.2, "end": 2.4},
+            {"word": "cut", "start": 2.8, "end": 3.0},
+            {"word": "this", "start": 3.2, "end": 3.4},
+            {"word": "part", "start": 3.8, "end": 4.0},
+        ]
+
+        rendered = stage._build_edit_plan_filter(
+            edit_plan,
+            7.0,
+            [],
+            stage._build_audio_enhancement_filters(),
+            transcript_words=transcript_words,
+        )
+
+        assert rendered is not None
+        filter_complex = rendered[0]
+        assert "trim=start=0.000:end=1.100" in filter_complex
+        assert "trim=start=2.100:end=3.100" in filter_complex
+        assert "trim=start=3.850:end=7.000" in filter_complex
+        assert "acrossfade=" in filter_complex
+        transition_index = filter_complex.find("acrossfade=")
+        enhancement_index = filter_complex.find("highpass=f=70")
+        assert transition_index >= 0
+        assert enhancement_index > transition_index
+
 
 class TestRenderStatusSemantics:
     """Tests for top-level render status and platform result details."""
