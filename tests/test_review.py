@@ -237,3 +237,48 @@ def test_write_edit_plan_defaults_to_all_fillers_when_no_decisions_present(tmp_p
     payload = json.loads(edit_path.read_text())
 
     assert [cut["word"] for cut in payload["filler_cuts"]] == ["um", "so"]
+
+
+def test_write_edit_plan_applies_category_bulk_rule_overrides(tmp_path: Path) -> None:
+    """Category bulk rules should override per-item decisions deterministically."""
+    filler_cuts = [
+        {"start_seconds": 0.5, "end_seconds": 0.8, "word": "um", "category": "disfluency"},
+        {"start_seconds": 1.0, "end_seconds": 1.3, "word": "like", "category": "hedge"},
+        {"start_seconds": 1.5, "end_seconds": 1.8, "word": "uh", "category": "disfluency"},
+    ]
+    decisions = ReviewDecisions(
+        filler_decisions=[
+            FillerDecision(index=0, action="keep"),
+            FillerDecision(index=1, action="remove"),
+            FillerDecision(index=2, action="keep"),
+        ],
+        filler_bulk_rules={"disfluency": "remove_all"},
+    )
+
+    edit_path = write_edit_plan(tmp_path, decisions, analysis={}, filler_cuts=filler_cuts)
+    payload = json.loads(edit_path.read_text())
+    exported_words = [item["word"] for item in payload["filler_cuts"]]
+
+    assert exported_words == ["um", "like", "uh"]
+
+
+def test_write_edit_plan_emits_filler_ranges_in_index_order(tmp_path: Path) -> None:
+    """Output ordering should stay deterministic even when decisions arrive unsorted."""
+    filler_cuts = [
+        {"start_seconds": 0.5, "end_seconds": 0.8, "word": "a"},
+        {"start_seconds": 1.0, "end_seconds": 1.3, "word": "b"},
+        {"start_seconds": 1.5, "end_seconds": 1.8, "word": "c"},
+    ]
+    decisions = ReviewDecisions(
+        filler_decisions=[
+            FillerDecision(index=2, action="remove"),
+            FillerDecision(index=0, action="remove"),
+            FillerDecision(index=1, action="keep"),
+        ]
+    )
+
+    edit_path = write_edit_plan(tmp_path, decisions, analysis={}, filler_cuts=filler_cuts)
+    payload = json.loads(edit_path.read_text())
+    exported_words = [item["word"] for item in payload["filler_cuts"]]
+
+    assert exported_words == ["a", "c"]

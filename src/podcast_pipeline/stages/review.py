@@ -36,6 +36,9 @@ class ReviewDecisions(BaseModel):
     # Filler cuts - list of indices to approve (empty = approve all)
     approved_filler_cuts: list[int] = Field(default_factory=list)
     filler_decisions: list[FillerDecision] = Field(default_factory=list)
+    filler_bulk_rules: dict[str, Literal["remove_all", "keep_all", "review_each"]] = Field(
+        default_factory=dict
+    )
     reject_all_fillers: bool = False
 
     # Content cuts - list of indices to approve
@@ -311,18 +314,23 @@ def write_edit_plan(
     # Support both start_seconds/end_seconds and start/end key variants
     approved_filler: list[FillerCutRange] = []
     if not decisions.reject_all_fillers:
-        filler_indices = _resolve_filler_cut_indices(decisions, len(filler_cuts))
-        for idx in filler_indices:
-            if idx < len(filler_cuts):
-                filler = filler_cuts[idx]
-                approved_filler.append(
-                    FillerCutRange(
-                        start_seconds=float(filler.get("start_seconds", filler.get("start", 0.0))),
-                        end_seconds=float(filler.get("end_seconds", filler.get("end", 0.0))),
-                        word=str(filler.get("word", "")),
-                        confidence=filler.get("confidence"),
-                    )
+        normalized_decisions = _materialize_filler_decisions(decisions, filler_cuts)
+        for idx, action in normalized_decisions:
+            if action != "remove" or idx >= len(filler_cuts):
+                continue
+            filler = filler_cuts[idx]
+            approved_filler.append(
+                FillerCutRange(
+                    start_seconds=float(filler.get("start_seconds", filler.get("start", 0.0))),
+                    end_seconds=float(filler.get("end_seconds", filler.get("end", 0.0))),
+                    word=str(filler.get("word", "")),
+                    confidence=filler.get("confidence"),
+                    category=str(filler.get("category", "")),
+                    context_before=str(filler.get("context_before", filler.get("before_text", ""))),
+                    context_after=str(filler.get("context_after", filler.get("after_text", ""))),
+                    editorial_action=action,
                 )
+            )
 
     # Determine approved content cuts
     # Support both start_seconds/end_seconds and start/end key variants
@@ -406,6 +414,40 @@ def _resolve_filler_cut_indices(decisions: ReviewDecisions, filler_count: int) -
         seen_fallback.add(idx)
         deduped_fallback.append(idx)
     return sorted(deduped_fallback)
+
+
+def _materialize_filler_decisions(
+    decisions: ReviewDecisions,
+    filler_cuts: list[dict[str, Any]],
+) -> list[tuple[int, Literal["remove", "keep"]]]:
+    """Resolve deterministic per-filler actions with explicit/legacy fallback semantics."""
+    filler_count = len(filler_cuts)
+    if filler_count <= 0:
+        return []
+
+    decision_map: dict[int, Literal["remove", "keep"]] = {}
+    if decisions.filler_decisions:
+        for decision in decisions.filler_decisions:
+            if 0 <= decision.index < filler_count:
+                decision_map[decision.index] = decision.action
+    else:
+        fallback_indices = _resolve_filler_cut_indices(decisions, filler_count)
+        fallback_set = set(fallback_indices)
+        for idx in range(filler_count):
+            decision_map[idx] = "remove" if idx in fallback_set else "keep"
+
+    if decisions.filler_bulk_rules:
+        for idx, filler in enumerate(filler_cuts):
+            category = str(filler.get("category", "")).strip().lower()
+            if not category:
+                continue
+            rule = decisions.filler_bulk_rules.get(category)
+            if rule == "remove_all":
+                decision_map[idx] = "remove"
+            elif rule == "keep_all":
+                decision_map[idx] = "keep"
+
+    return sorted(decision_map.items(), key=lambda item: item[0])
 
 
 def get_review_summary(job_dir: Path) -> dict[str, Any]:
