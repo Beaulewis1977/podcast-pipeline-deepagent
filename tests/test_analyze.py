@@ -16,8 +16,8 @@ from podcast_pipeline.stages.analyze import AnalyzeStage
 def _make_stage(
     *,
     enable_llm_triage: bool = True,
-    openai_key: str | None = "sk-test-key",
-    llm_triage_model: str = "gpt-4o-mini",
+    gemini_key: str | None = "gemini-test-key",
+    llm_triage_model: str = "gemini-3-flash-lite",
 ) -> AnalyzeStage:
     """Build an AnalyzeStage with a minimal config for triage testing."""
     config = Config()
@@ -25,7 +25,7 @@ def _make_stage(
         enable_llm_triage=enable_llm_triage,
         llm_triage_model=llm_triage_model,
     )
-    config.api_keys.openai = openai_key
+    config.api_keys.gemini = gemini_key
     return AnalyzeStage(config)
 
 
@@ -74,14 +74,10 @@ def _disfluency_cut(index: int, word: str = "um") -> dict[str, Any]:
     }
 
 
-def _make_mock_openai_response(text: str) -> MagicMock:
-    """Build a fake OpenAI chat completion response."""
-    msg = MagicMock()
-    msg.content = text
-    choice = MagicMock()
-    choice.message = msg
+def _make_mock_gemini_response(text: str) -> MagicMock:
+    """Build a fake google.genai generate_content response."""
     resp = MagicMock()
-    resp.choices = [choice]
+    resp.text = text
     return resp
 
 
@@ -93,9 +89,9 @@ class TestTriageFillerDisabledPath:
         _write_filler_cuts(tmp_path, [_hedge_cut(0), _hedge_cut(1)])
         stage = _make_stage(enable_llm_triage=False)
 
-        with patch("openai.OpenAI") as mock_openai_cls:
+        with patch("google.genai.Client") as mock_genai_cls:
             results = stage._triage_fillers(tmp_path)
-            mock_openai_cls.assert_not_called()
+            mock_genai_cls.assert_not_called()
 
         assert len(results) == 2
         for r in results:
@@ -169,23 +165,20 @@ class TestTriageFillerPromptFormat:
         _write_filler_cuts(tmp_path, [cut])
         stage = _make_stage(enable_llm_triage=True)
 
-        captured_prompt: list[str] = []
+        captured_contents: list[str] = []
 
-        def fake_create(**kwargs: Any) -> MagicMock:
-            messages = kwargs.get("messages", [])
-            for msg in messages:
-                if msg.get("role") == "user":
-                    captured_prompt.append(msg["content"])
-            return _make_mock_openai_response("SAFE\nreason: No semantic function.")
+        def fake_generate_content(model: str, contents: str) -> MagicMock:
+            captured_contents.append(contents)
+            return _make_mock_gemini_response("SAFE\nreason: No semantic function.")
 
         mock_client = MagicMock()
-        mock_client.chat.completions.create = fake_create
+        mock_client.models.generate_content = fake_generate_content
 
-        with patch("openai.OpenAI", return_value=mock_client):
+        with patch("google.genai.Client", return_value=mock_client):
             stage._triage_fillers(tmp_path)
 
-        assert captured_prompt, "Expected at least one user message to be captured"
-        prompt_text = captured_prompt[0]
+        assert captured_contents, "Expected at least one contents string to be captured"
+        prompt_text = captured_contents[0]
 
         assert "I mean" in prompt_text
         assert "[BASICALLY]" in prompt_text
@@ -224,21 +217,18 @@ class TestTriageFillerBatchSplitting:
 
         call_count = 0
 
-        def fake_create(**kwargs: Any) -> MagicMock:
+        def fake_generate_content(model: str, contents: str) -> MagicMock:
             nonlocal call_count
             call_count += 1
             # Return SAFE verdict for all fillers — one block per candidate in batch
-            user_content = next(
-                msg["content"] for msg in kwargs["messages"] if msg["role"] == "user"
-            )
-            num_prompts = user_content.count("SAFE or REVIEW")
+            num_prompts = contents.count("SAFE or REVIEW")
             responses = "\n---\n".join(["SAFE\nreason: Verbal tick only."] * num_prompts)
-            return _make_mock_openai_response(responses)
+            return _make_mock_gemini_response(responses)
 
         mock_client = MagicMock()
-        mock_client.chat.completions.create = fake_create
+        mock_client.models.generate_content = fake_generate_content
 
-        with patch("openai.OpenAI", return_value=mock_client):
+        with patch("google.genai.Client", return_value=mock_client):
             results = stage._triage_fillers(tmp_path)
 
         assert call_count == 2
@@ -252,15 +242,15 @@ class TestTriageFillerBatchSplitting:
 
         call_count = 0
 
-        def fake_create(**kwargs: Any) -> MagicMock:
+        def fake_generate_content(model: str, contents: str) -> MagicMock:
             nonlocal call_count
             call_count += 1
-            return _make_mock_openai_response("\n---\n".join(["SAFE\nreason: Tick."] * 20))
+            return _make_mock_gemini_response("\n---\n".join(["SAFE\nreason: Tick."] * 20))
 
         mock_client = MagicMock()
-        mock_client.chat.completions.create = fake_create
+        mock_client.models.generate_content = fake_generate_content
 
-        with patch("openai.OpenAI", return_value=mock_client):
+        with patch("google.genai.Client", return_value=mock_client):
             stage._triage_fillers(tmp_path)
 
         assert call_count == 1
@@ -275,11 +265,11 @@ class TestTriageFillerParseError:
         stage = _make_stage(enable_llm_triage=True)
 
         mock_client = MagicMock()
-        mock_client.chat.completions.create.return_value = _make_mock_openai_response(
+        mock_client.models.generate_content.return_value = _make_mock_gemini_response(
             "I cannot determine this. The filler seems contextual."
         )
 
-        with patch("openai.OpenAI", return_value=mock_client):
+        with patch("google.genai.Client", return_value=mock_client):
             results = stage._triage_fillers(tmp_path)
 
         assert len(results) == 1
@@ -292,9 +282,9 @@ class TestTriageFillerParseError:
         stage = _make_stage(enable_llm_triage=True)
 
         mock_client = MagicMock()
-        mock_client.chat.completions.create.side_effect = RuntimeError("API timeout")
+        mock_client.models.generate_content.side_effect = RuntimeError("API timeout")
 
-        with patch("openai.OpenAI", return_value=mock_client):
+        with patch("google.genai.Client", return_value=mock_client):
             results = stage._triage_fillers(tmp_path)
 
         assert len(results) == 2
@@ -310,9 +300,9 @@ class TestTriageFillerEmptyInput:
         """No filler_cuts.json → filler_triage.json written as empty array, no LLM calls."""
         stage = _make_stage(enable_llm_triage=True)
 
-        with patch("openai.OpenAI") as mock_openai_cls:
+        with patch("google.genai.Client") as mock_genai_cls:
             results = stage._triage_fillers(tmp_path)
-            mock_openai_cls.assert_not_called()
+            mock_genai_cls.assert_not_called()
 
         assert results == []
 
@@ -333,29 +323,29 @@ class TestTriageFillerEmptyInput:
         _write_filler_cuts(tmp_path, [])
         stage = _make_stage(enable_llm_triage=True)
 
-        with patch("openai.OpenAI") as mock_openai_cls:
+        with patch("google.genai.Client") as mock_genai_cls:
             results = stage._triage_fillers(tmp_path)
-            mock_openai_cls.assert_not_called()
+            mock_genai_cls.assert_not_called()
 
         assert results == []
 
 
 class TestTriageFillerNoApiKey:
-    """Missing OpenAI API key returns safe fallback results."""
+    """Missing Gemini API key returns safe fallback results."""
 
-    def test_triage_fillers_no_openai_key(self, tmp_path: Path) -> None:
-        """No API key → all hedge candidates get safe_to_remove=False with descriptive reason."""
+    def test_triage_fillers_no_gemini_key(self, tmp_path: Path) -> None:
+        """No Gemini API key → all hedge candidates get safe_to_remove=False with descriptive reason."""
         _write_filler_cuts(tmp_path, [_hedge_cut(0), _hedge_cut(1)])
-        stage = _make_stage(enable_llm_triage=True, openai_key=None)
+        stage = _make_stage(enable_llm_triage=True, gemini_key=None)
 
-        with patch("openai.OpenAI") as mock_openai_cls:
+        with patch("google.genai.Client") as mock_genai_cls:
             results = stage._triage_fillers(tmp_path)
-            mock_openai_cls.assert_not_called()
+            mock_genai_cls.assert_not_called()
 
         assert len(results) == 2
         for r in results:
             assert r.safe_to_remove is False
-            assert "openai api key" in r.reason.lower()
+            assert "gemini api key" in r.reason.lower()
 
 
 class TestTriageFillerArtifact:

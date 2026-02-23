@@ -120,3 +120,48 @@ class TestFillerTriageResultDefaults:
 
         payload = json.loads(result.model_dump_json())
         assert payload["safe_to_remove"] is True
+
+
+class TestFillerConfigTriageModelRegression:
+    """Regression guard: triage model default must not drift to OpenAI or reasoning models."""
+
+    def test_filler_config_triage_model_not_openai(self) -> None:
+        """Triage model default must NOT be an OpenAI or reasoning model.
+
+        Spec requires gemini-3-flash-lite or claude-haiku-4-5 — lightweight, non-reasoning,
+        non-OpenAI models. This test prevents silent drift back to gpt-4o-mini or similar.
+        """
+        from podcast_pipeline.config.settings import FillerConfig
+
+        config = FillerConfig()
+        # Must be gemini-3-flash-lite or claude-haiku-4-5 per spec
+        assert config.llm_triage_model in ("gemini-3-flash-lite", "claude-haiku-4-5"), (
+            f"Triage model must be a lightweight non-reasoning model, got '{config.llm_triage_model}'"
+        )
+        # Explicitly forbidden: reasoning/CoT models are too slow/expensive for triage
+        forbidden = {
+            "gpt-4o-mini",
+            "gpt-4o",
+            "o1",
+            "o1-mini",
+            "o3-mini",
+            "gemini-3-pro",
+            "gemini-3-pro-preview",
+            "gemini-3-pro-image-preview",
+            "claude-3.5-sonnet",
+            "claude-opus-4-6",
+        }
+        assert config.llm_triage_model not in forbidden, (
+            f"Triage model '{config.llm_triage_model}' is forbidden"
+            " -- use non-reasoning lite models"
+        )
+
+    def test_filler_config_triage_model_starts_with_gemini_or_claude(self) -> None:
+        """Default triage model must use Gemini or Claude (not OpenAI) as provider."""
+        from podcast_pipeline.config.settings import FillerConfig
+
+        config = FillerConfig()
+        assert config.llm_triage_model.startswith(("gemini", "claude")), (
+            f"Triage model '{config.llm_triage_model}' must start with 'gemini' or 'claude'"
+            " — OpenAI models are not the primary provider and must not be the default"
+        )
