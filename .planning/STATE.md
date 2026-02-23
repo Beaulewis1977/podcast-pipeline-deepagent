@@ -1,8 +1,8 @@
 # Project State: Podcast Pipeline
 
-**Last updated:** 2026-02-21
-**Current phase:** Phase 8 complete (verified 2026-02-21)
-**Overall progress:** COMPLETE (51/51 plans complete — all phases done)
+**Last updated:** 2026-02-23
+**Current phase:** Phase 8 re-execution in progress
+**Overall progress:** Phase 8 plan 02 re-executed (triage Gemini transport fix)
 
 ## Project Reference
 
@@ -22,7 +22,7 @@ Last activity: 2026-02-21 - Completed 08-06-PLAN.md (integration tests, GPU smok
 Progress: [██████████████████████████████] 51/51 plans complete
 ```
 
-**Current Phase:** Phase 8 — Intelligent Cut Quality (ALL COMPLETE)
+**Current Phase:** Phase 8 — Intelligent Cut Quality (re-execution: plan 02 complete)
 
 ## Phase Status
 
@@ -167,6 +167,9 @@ Progress: [███████████████████████
 | Smoke test split into helper functions (_check_torch/_check_opencv/_resolve_rife_script) | Avoids PLR0911 return-statement limit in main() while keeping early returns per check | 2026-02-21 |
 | noise_floor_correction strict less-than: exact threshold = correction applied | delta_db < threshold_db guard — at exactly threshold the condition is False, so correction fires | 2026-02-21 |
 | Phase 8 integration tests use monkeypatch builtins.__import__ to simulate missing optional deps | Avoids uninstalling packages; simulates ImportError for silero_vad/librosa/cv2 in test environment | 2026-02-21 |
+| Triage transport is provider-aware: gemini models use google.genai, others use openai (legacy fallback) | Sending gemini model names to OpenAI API would 404; provider dispatch required for correct routing | 2026-02-23 |
+| API key gate uses provider-specific key: api_keys.gemini for gemini models, api_keys.openai for others | Key gate must match the transport layer — checking openai key for a gemini model would skip triage incorrectly | 2026-02-23 |
+| Regression test explicitly forbids gpt-4o-mini, o1, o3-mini and other reasoning/OpenAI defaults | Prevents silent drift back to OpenAI; llm_triage_model must be gemini-3-flash-lite or claude-haiku-4-5 | 2026-02-23 |
 
 ### Roadmap Evolution
 
@@ -293,16 +296,17 @@ Progress: [███████████████████████
 - 2026-02-21: Completed 08-04-PLAN.md (VAD breath detector, noise-floor matcher, render de-breathing + noise-floor passes, 14 tests, gpu optional deps)
 - 2026-02-21: Completed 08-05-PLAN.md (pose-match scanner via Farneback optical flow, RIFE bridge with --exp flag, render _apply_pose_match_pass + xfade fallback, 20 tests)
 - 2026-02-21: Completed 08-06-PLAN.md (GPU smoke test, legacy compat regressions, triage-chain integration tests, Phase 8 disabled baseline regressions, operator guide)
+- 2026-02-23: Re-executed 08-02-PLAN.md (triage Gemini transport fix — google.genai routing, provider-aware API key gate, model-drift regression guard)
 
 ## Session Continuity
 
 ### Last session
 
-2026-02-23 23:13 UTC — Re-executed `08-01-PLAN.md` (fix llm_triage_model default to gemini-3-flash-lite). Verified all Phase 8 config fields correct. All checks pass.
+2026-02-23 23:16 UTC — Re-executed `08-02-PLAN.md` (triage transport fix: google.genai for Gemini, provider-aware key gate, regression guard in test_triage.py, updated test_analyze.py mocks). 27 triage tests pass.
 
 ### Stopped at
 
-Completed 08-01-PLAN.md re-execution — llm_triage_model default confirmed as gemini-3-flash-lite in settings.py.
+Completed 08-02-PLAN.md re-execution — triage provider routing correct, regression guard added, all tests pass.
 
 ### Resume file
 

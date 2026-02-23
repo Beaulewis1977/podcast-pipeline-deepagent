@@ -1,148 +1,119 @@
 ---
 phase: 08-intelligent-cut-quality
-plan: 02
-subsystem: analysis
-tags: [openai, pydantic, llm-triage, filler-words, batch-llm]
+plan: "02"
+subsystem: stages
+tags: [google-genai, openai, triage, filler-words, regression-guard, provider-routing]
 
 # Dependency graph
 requires:
   - phase: 08-01
-    provides: enriched FillerCut model with category/pause_before_ms/pause_after_ms/context_before/context_after/protected fields
-  - phase: 07-smooth-editing-filler-word-control
-    provides: filler_cuts.json artifact from transcribe stage
+    provides: FillerConfig with llm_triage_model=gemini-3-flash-lite default
 provides:
-  - FillerTriageResult Pydantic model at models/triage.py
-  - _triage_fillers method on AnalyzeStage that loads filler_cuts.json, filters hedge+unprotected, calls OpenAI in batches, writes filler_triage.json
-  - _run_triage orchestrator method integrated into AnalyzeStage.run()
-  - analysis/filler_triage.json artifact with per-hedge-filler safe_to_remove verdict
+  - "_triage_fillers uses google.genai Client for Gemini models instead of openai.OpenAI"
+  - "Provider-aware API key gate: gemini→api_keys.gemini, openai→api_keys.openai"
+  - "Regression guard preventing triage model default drift to OpenAI or reasoning models"
+  - "Triage tests updated from OpenAI mocks to google.genai.Client mocks"
 affects:
-  - 08-03 (review stage UI for displaying triage verdicts)
+  - "08-03 (triage-aware editorial action consumers)"
+  - "08-06 (integration tests)"
 
 # Tech tracking
 tech-stack:
   added: []
   patterns:
-    - "Lazy openai import inside method body — keeps base install independent of LLM key presence"
-    - "Candidates helper pattern — _load_triage_candidates returns None to signal skip; reduces return-statement count in main method"
-    - "Batch prompt separator — '---\\n' separator for multi-filler batches; parsed by split('---') on response"
-    - "Conservative default — parse errors and disabled flag both produce safe_to_remove=False"
+    - "Provider-aware client routing: model.startswith('gemini') → genai.Client; else → openai.OpenAI"
+    - "Regression tests guard config defaults against model/provider drift"
 
 key-files:
-  created:
-    - src/podcast_pipeline/models/triage.py
-    - tests/test_triage.py
-    - tests/test_analyze.py
+  created: []
   modified:
     - src/podcast_pipeline/stages/analyze.py
+    - tests/test_triage.py
+    - tests/test_analyze.py
 
 key-decisions:
-  - "Batch size 20 — balances latency, token cost, and context window for gpt-4o-mini"
-  - "Parse errors default to safe_to_remove=False — conservative: never auto-remove if uncertain"
-  - "No-API-key path returns results with reason string — keeps downstream consumers consistent (always a list)"
-  - "Disabled flag bypasses LLM entirely with deterministic fallback — enables test environments and cost control"
-  - "_load_triage_candidates helper extracted to keep _triage_fillers under PLR0911 return-statement limit"
+  - "Triage transport is provider-aware: gemini models use google.genai, others use openai (legacy fallback)"
+  - "API key gate uses provider-specific key: api_keys.gemini for gemini models, api_keys.openai for others"
+  - "Regression test explicitly forbids gpt-4o-mini, o1, o3-mini and other reasoning/OpenAI defaults"
+  - "Test helper _make_stage updated to use gemini_key + gemini-3-flash-lite to test the primary code path"
 
 patterns-established:
-  - "Triage result model: FillerTriageResult is the canonical output shape; filler_triage.json is a JSON array of serialized results"
-  - "Prompt format: transcript excerpt with [WORD] bracketing + pause values + SAFE/REVIEW response contract"
-  - "LLM call exception handling: catch Exception, log warning, produce safe_to_remove=False for all affected batch candidates"
+  - "Provider-dispatch: model name prefix determines both client type and API key source"
+  - "Regression guards: forbidden model set prevents silent triage provider drift"
 
 # Metrics
-duration: 6min
-completed: 2026-02-21
+duration: 3min
+completed: 2026-02-23
 ---
 
-# Phase 8 Plan 02: LLM Semantic Triage for Hedge Fillers Summary
+# Phase 8 Plan 02: Triage Provider Transport Fix Summary
 
-**Batched OpenAI triage for hedge filler words using gpt-4o-mini: FillerTriageResult model, _triage_fillers helper writing analysis/filler_triage.json, and 25 passing tests.**
+**Provider-aware triage routing in analyze.py: google.genai Client for Gemini models, OpenAI as legacy fallback, with regression guard blocking model drift to OpenAI/reasoning models**
 
 ## Performance
 
-- **Duration:** 6 min
-- **Started:** 2026-02-21T08:01:03Z
-- **Completed:** 2026-02-21T08:06:40Z
+- **Duration:** 3 min
+- **Started:** 2026-02-23T23:13:46Z
+- **Completed:** 2026-02-23T23:16:02Z
 - **Tasks:** 2
-- **Files modified:** 3 (created 3 new)
+- **Files modified:** 3
 
 ## Accomplishments
 
-- Created `FillerTriageResult` Pydantic model with filler_index, word, category, safe_to_remove, reason, llm_model, triaged_at fields
-- Implemented `_triage_fillers` on AnalyzeStage: loads filler_cuts.json, filters to hedge+unprotected candidates, batches 20 per LLM call, parses SAFE/REVIEW verdicts
-- Implemented `_run_triage` orchestrator and `_load_triage_candidates` helper — integrated at end of `AnalyzeStage.run()`
-- Added 25 tests covering model round-trip, disabled flag, disfluency/protected filtering, prompt format, batch splitting at 20, parse errors, empty input, no-API-key path, and artifact serialization
+- Re-routed `_triage_fillers` transport: Gemini models now use `genai.Client(api_key=api_keys.gemini)` and `client.models.generate_content()`; non-Gemini falls back to `openai.OpenAI`
+- API key gate is now provider-aware: checks `api_keys.gemini` when model starts with "gemini" instead of always checking `api_keys.openai`
+- Added two regression tests preventing triage model default drift to forbidden OpenAI/reasoning models (`gpt-4o-mini`, `o1`, `o3-mini`, etc.)
+- Updated all triage tests in `test_analyze.py` from OpenAI mocks to google.genai.Client mocks, aligning with the primary code path
+- All 27 triage tests pass with full ruff + mypy checks
 
 ## Task Commits
 
 Each task was committed atomically:
 
-1. **Task 1: Create FillerTriageResult model and _triage_fillers helper** - `297496b` (feat)
-2. **Task 2: Add triage tests for model, prompt format, batching, and disabled path** - `f582cb3` (test)
+1. **Task 1: Re-route triage transport from OpenAI to Gemini provider** - `943ed4b` (fix)
+2. **Task 2: Add regression guard and update triage tests for Gemini provider** - `fcdd8bc` (test)
 
 ## Files Created/Modified
 
-- `src/podcast_pipeline/models/triage.py` - FillerTriageResult Pydantic model with safe defaults
-- `src/podcast_pipeline/stages/analyze.py` - _run_triage, _triage_fillers, _load_triage_candidates, _build_triage_prompt, _parse_triage_batch_response, _parse_triage_block methods
-- `tests/test_triage.py` - Model round-trip, defaults, safe_flag, filler_index validation (8 tests)
-- `tests/test_analyze.py` - AnalyzeStage triage integration tests covering all paths (17 tests)
+- `src/podcast_pipeline/stages/analyze.py` - Provider-aware API key gate, genai.Client routing, model-branched API calls
+- `tests/test_triage.py` - Added TestFillerConfigTriageModelRegression with 2 regression tests
+- `tests/test_analyze.py` - Updated _make_stage helper, replaced OpenAI mocks with google.genai.Client mocks throughout
 
 ## Decisions Made
 
-- Batch size 20: balances latency and cost for gpt-4o-mini token window
-- Parse errors conservatively produce safe_to_remove=False — never auto-remove when verdict is uncertain
-- No-API-key and disabled paths both return FillerTriageResult lists (not empty) so downstream consumers see a consistent shape
-- Extracted `_load_triage_candidates` helper to keep `_triage_fillers` within ruff PLR0911 return-statement limit (6 max)
+- Triage transport is provider-aware dispatched on `model.startswith("gemini")` — the same prefix used by FillerConfig default `gemini-3-flash-lite`
+- Log messages use provider-neutral `triage_provider_import_failed` instead of `triage_openai_import_failed`
+- Reason strings in fallback results include provider name for operator diagnostics
+- Test helper `_make_stage` now defaults to `gemini_key` + `gemini-3-flash-lite` so tests exercise the primary Gemini code path
 
 ## Deviations from Plan
 
-### Auto-fixed Issues
-
-**1. [Rule 1 - Bug] Refactored _triage_fillers to respect PLR0911 return-statement limit**
-- **Found during:** Task 1 (ruff check)
-- **Issue:** Initial implementation had 8 return statements; ruff PLR0911 limit is 6
-- **Fix:** Extracted `_load_triage_candidates` helper that handles file-read + filtering, returning None on skip, so _triage_fillers has fewer return paths
-- **Files modified:** src/podcast_pipeline/stages/analyze.py
-- **Verification:** `uv run ruff check` passes cleanly
-- **Committed in:** 297496b (Task 1 commit)
-
-**2. [Rule 1 - Bug] Removed spurious noqa: PLC0415 from openai import**
-- **Found during:** Task 1 (ruff check)
-- **Issue:** `# noqa: PLC0415` was added but PLC0415 is already excluded for stages/* in pyproject.toml; ruff flagged it as RUF100 unused noqa directive
-- **Fix:** Removed the noqa comment
-- **Files modified:** src/podcast_pipeline/stages/analyze.py
-- **Verification:** `uv run ruff check` passes cleanly
-- **Committed in:** 297496b (Task 1 commit)
-
----
-
-**Total deviations:** 2 auto-fixed (both Rule 1 — linting/style bugs caught during Task 1 ruff check)
-**Impact on plan:** Both fixes were minor style corrections caught immediately by ruff. No scope creep.
+None - plan executed exactly as written. The analyze.py changes were partially present as uncommitted working-tree changes; the plan was executed by committing and verifying those changes, then completing the test updates.
 
 ## Issues Encountered
 
-None — implementation matched plan spec exactly after resolving the two lint issues above.
+None. The triage transport changes in `analyze.py` were already applied as working-tree changes (from prior fix commit 19dfa3b). Task 1 staged and committed those changes; Task 2 completed the test updates.
 
 ## User Setup Required
 
-None — no external service configuration required. OpenAI API key is read from `OPENAI_API_KEY` env var; if absent, triage gracefully falls back with descriptive reason strings.
+None - no external service configuration required.
 
 ## Next Phase Readiness
 
-- `analysis/filler_triage.json` artifact is ready for Plan 03 (review stage UI) to display per-filler safe_to_remove verdicts
-- `FillerTriageResult` model is importable from `podcast_pipeline.models.triage`
-- Triage is integrated into AnalyzeStage.run() at the end of the analysis pipeline
-
----
-*Phase: 08-intelligent-cut-quality*
-*Completed: 2026-02-21*
+- Triage provider transport is correct: default model `gemini-3-flash-lite` routes to `google.genai` as intended
+- Regression guard prevents future model drift
+- Triage tests exercise the primary Gemini provider path
+- Ready for any subsequent re-execution of 08-03 through 08-06 plans
 
 ## Self-Check: PASSED
 
-| Item | Status |
-|------|--------|
-| src/podcast_pipeline/models/triage.py | FOUND |
-| src/podcast_pipeline/stages/analyze.py | FOUND |
-| tests/test_triage.py | FOUND |
-| tests/test_analyze.py | FOUND |
-| .planning/phases/08-intelligent-cut-quality/08-02-SUMMARY.md | FOUND |
-| Commit 297496b (Task 1) | FOUND |
-| Commit f582cb3 (Task 2) | FOUND |
+- analyze.py: FOUND
+- test_triage.py: FOUND
+- test_analyze.py: FOUND
+- 08-02-SUMMARY.md: FOUND
+- commit 943ed4b: FOUND
+- commit fcdd8bc: FOUND
+
+---
+*Phase: 08-intelligent-cut-quality*
+*Completed: 2026-02-23*
