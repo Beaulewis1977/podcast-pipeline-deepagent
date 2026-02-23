@@ -82,10 +82,33 @@ defaults to `keep` action regardless of its category.
 
 ```yaml
 fillers:
-  enable_llm_triage: true         # default: true
-  llm_triage_model: gpt-4o-mini   # any OpenAI-compatible model
-  llm_triage_max_context_words: 5  # N words before/after the filler
+  enable_llm_triage: true                  # default: true
+  llm_triage_model: gemini-3-flash-lite    # default: gemini-3-flash-lite (see below)
+  llm_triage_max_context_words: 5          # N words before/after the filler
 ```
+
+**Supported triage models:**
+
+| Model | Transport | Notes |
+|-------|-----------|-------|
+| `gemini-3-flash-lite` | `google.genai` | **Default** — fast, cheap, correct routing |
+| `claude-haiku-4-5` | Anthropic | Alternative fast model |
+
+**Forbidden (reasoning/CoT) models — DO NOT USE:**
+
+These models are too slow and expensive for per-filler classification.  The triage
+stage needs sub-second responses per batch, not deep reasoning chains.
+
+- `o1`, `o1-mini`, `o3-mini` (OpenAI reasoning)
+- `gemini-3-pro`, `gemini-3-pro-preview`, `gemini-3-pro-image-preview` (Gemini reasoning)
+- Any model with a visible chain-of-thought prefix in its name
+
+Setting `llm_triage_model` to any of the above will cause triage to run orders of
+magnitude slower and cost significantly more per job.
+
+**Transport dispatch:** Gemini model names are routed via `google.genai`.  All other
+model names fall back to the OpenAI-compatible transport.  Make sure the correct API
+key is configured in your `.env` (`GOOGLE_API_KEY` for Gemini models).
 
 LLM triage runs on unprotected hedge words only.  Disfluencies and protected words
 are never sent to the LLM.
@@ -117,7 +140,7 @@ word-boundary snapping and before the FFmpeg concat step.
 ### De-breathing Pass
 
 Detects trailing breath sounds at cut boundaries and extends the cut point to swallow
-them.  Requires the `gpu` optional dependency group (`silero-vad>=6.1`).
+them.  Requires the `gpu` optional dependency group (`silero-vad>=6.2,<7`).
 
 ```yaml
 smoothing:
@@ -138,7 +161,7 @@ uv sync --extra gpu
 
 Measures the RMS noise floor at each splice join (tail of left segment, head of right
 segment).  When the mismatch exceeds the threshold, injects an FFmpeg `volume` filter
-to equalise levels.  Requires `librosa>=0.10`.
+to equalise levels.  Requires `librosa>=0.11,<1`.
 
 ```yaml
 smoothing:
@@ -163,7 +186,7 @@ Configure under the `smoothing:` key in `config.yaml`.
 
 Scans a search window of frames around each content-cut join and selects the frame
 pair with the minimum Farneback optical-flow magnitude — the most visually similar
-pair.  Requires `opencv-python-headless>=4.9`.
+pair.  Requires `opencv-python-headless>=4.13,<5`.
 
 ```yaml
 smoothing:
@@ -194,7 +217,8 @@ smoothing:
 exist in practical-RIFE).  `--cpu` also does not exist; for CPU-only execution set
 `CUDA_VISIBLE_DEVICES=""` in the subprocess environment.
 
-**Model:** use RIFE 4.25 (NOT 4.26 — 4.26 does not exist as of February 2026).
+**Model:** use RIFE 4.25 (recommended default). RIFE 4.26 does exist but may produce
+artifacts on some content types; 4.25 is the stable recommended version.
 
 ---
 
@@ -211,8 +235,8 @@ fail at runtime with "no kernel image for this device" errors.
 # Step 1: install GPU extras (silero-vad, librosa, opencv-python-headless)
 uv sync --extra gpu
 
-# Step 2: install torch with cu128 (Blackwell-compatible)
-uv pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu128
+# Step 2: install torch 2.10.x with cu128 (Blackwell-compatible)
+uv pip install "torch==2.10.*" "torchaudio==2.10.*" --index-url https://download.pytorch.org/whl/cu128
 ```
 
 ### Verify GPU availability
@@ -311,7 +335,7 @@ The script performs these checks in order:
 Torch was installed with the wrong CUDA index.  Reinstall with cu128:
 
 ```bash
-uv pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu128
+uv pip install "torch==2.10.*" "torchaudio==2.10.*" --index-url https://download.pytorch.org/whl/cu128
 ```
 
 ### "RuntimeError: no kernel image is available for execution on the device"
@@ -347,7 +371,7 @@ Also verify that torch CUDA is available (see above).
 ```bash
 uv sync --extra gpu
 # or
-uv pip install opencv-python-headless>=4.9
+uv pip install "opencv-python-headless>=4.13,<5"
 ```
 
 Do NOT install `opencv-python` (non-headless variant) on WSL or server environments —
@@ -361,11 +385,12 @@ it requires a display and will fail with Qt errors.
 
 ### "silero_vad import error"
 
-Use `silero-vad>=6.1` (NOT 5.x).  Version 6.x fixes a `torchaudio` deprecation that
-causes silent import failures in v5.
+Use `silero-vad>=6.2,<7` (NOT 5.x or 6.0/6.1).  Version 6.2+ fixes a `torchaudio`
+deprecation that causes silent import failures in v5, and the `<7` upper bound prevents
+unexpected breaking API changes.
 
 ```bash
-uv pip install "silero-vad>=6.1"
+uv pip install "silero-vad>=6.2,<7"
 ```
 
 ---

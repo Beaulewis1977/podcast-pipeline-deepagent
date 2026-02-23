@@ -158,7 +158,7 @@ class FillerConfig(BaseModel):
 
     # LLM semantic triage (hedge words only)
     enable_llm_triage: bool = True
-    llm_triage_model: str = "gpt-4o-mini"   # cheap + fast; overridable
+    llm_triage_model: str = "gemini-3-flash-lite"   # cheap + fast; overridable (or claude-haiku-4-5)
     llm_triage_max_context_words: int = 5    # words before/after to include
 ```
 
@@ -173,7 +173,7 @@ fillers:
   padding_ms: 50
   protect_pause_threshold_ms: 300
   enable_llm_triage: true
-  llm_triage_model: "gpt-4o-mini"
+  llm_triage_model: "gemini-3-flash-lite"
   llm_triage_max_context_words: 5
 ```
 
@@ -282,7 +282,7 @@ reason: <one sentence>
 
 - Calls are **batched** (max 20 per LLM call using the existing provider infrastructure) to minimise latency.
 - Response is parsed into `FillerTriage` objects and written to `analysis/filler_triage.json`.
-- Cost estimate: ~$0.001 per 20 fillers at gpt-4o-mini pricing.
+- Cost estimate: ~$0.001 per 20 fillers at gemini-3-flash-lite pricing.
 - Disabled when `enable_llm_triage: false` — triage defaults to `REVIEW` for all hedges.
 
 ```python

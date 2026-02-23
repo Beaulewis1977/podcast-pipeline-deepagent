@@ -5,8 +5,8 @@
 Run: python scripts/smoke_test_gpu_rife.py
 Expected: prints "RIFE OK" on success, exits non-zero on failure.
 
-Requirements: torch>=2.7 with cu128, practical-RIFE cloned with model weights,
-opencv-python-headless>=4.9.
+Requirements: torch==2.10.* with cu128, practical-RIFE cloned with model weights,
+opencv-python-headless>=4.13.
 
 GPU note: RTX 5060 Ti is Blackwell sm_120.  Requires CUDA 12.8 (cu128 torch wheel),
 NOT cu121.  See docs/phase8-operator-guide.md for setup instructions.
@@ -26,7 +26,7 @@ def _check_torch() -> bool:
     except ImportError:
         print("FAIL: torch not installed")
         print(
-            "      Install: uv pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu128"
+            '      Install: uv pip install "torch==2.10.*" "torchaudio==2.10.*" --index-url https://download.pytorch.org/whl/cu128'
         )
         return False
 
@@ -34,7 +34,7 @@ def _check_torch() -> bool:
         print("FAIL: CUDA not available")
         print("      Ensure torch was installed with the cu128 index (NOT cu121):")
         print(
-            "      uv pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu128"
+            '      uv pip install "torch==2.10.*" "torchaudio==2.10.*" --index-url https://download.pytorch.org/whl/cu128'
         )
         return False
 

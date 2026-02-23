@@ -32,7 +32,7 @@ Each profile will be saved in a new `branding/` directory as a JSON/YAML file.
 To ensure the AI (Gemini) understands your specific taste, the `brand_voice` field will be injected as a **System Instruction** during the `Analyze` stage.
 
 *   **Marketing Copy**: The AI will use your instructions to decide between "Funny/Witty," "Academic/Professional," or "Aggressive/Viral" tones for titles and descriptions.
-*   **Thumbnail Prompts**: If you tell the AI you like *"Minimalist, high-key photography,"* it will ensure all Imagen 3 prompts follow that aesthetic rather than generating random styles.
+*   **Thumbnail Prompts**: If you tell the AI you like *\"Minimalist, high-key photography,\"* it will ensure all image generation prompts follow that aesthetic rather than generating random styles. The `gemini-3-pro-image-preview` model will be used to review thumbnail composition and ensure brand alignment.
 *   **Clip Selection**: The AI will look for moments that match your persona (e.g., if your voice is "Inspirational," it will prioritize clips with high emotional impact).
 
 ### 1.2 Per-Platform Branding Registry
@@ -105,15 +105,15 @@ When a sound effect plays, the app will automatically **duck** (lower the volume
 
 ---
 
-## 5. AI Thumbnail Studio (Imagen 3)
+## 5. AI Thumbnail Studio
 
-Seamlessly generate customized thumbnail art without leaving the app.
+Seamlessly generate customized thumbnail art without leaving the app. Using the new Gemini vision models, the AI will deeply analyze extracted visual frames to guide the creation process.
 
 ### Features
 
-*   **Prompt Suggestion**: Gemini's `Analyze` stage generates 3 high-impact image prompts based on the episode context and your **Brand Voice**.
-*   **Imagen 3 Integration**: The app calls the Google Generative AI API to produce 4 unique candidate images.
-*   **Auto-Branding**: Generated images are automatically framed with your `thumbnail_border` and logo before the final review.
+*   **Prompt Suggestion**: The `gemini-3-pro-image-preview` model analyzes the episode context and extracted frames to generate 3 high-impact thumbnail prompts based on your **Brand Voice**.
+*   **Image Generation & Review**: Output thumbnails are generated via Google Generative AI, then analyzed at ultra-high speed by `gemini-2.5-flash-image` (to verify no text artifacts or bad hands) before presentation.
+*   **Auto-Branding**: Approved images are automatically framed with your `thumbnail_border` and logo before the final review.
 
 ---
 
@@ -136,9 +136,9 @@ While reviewing your edit, a new sidebar will allow for real-time styling:
 
 *   **Caption Stylist**: Toggle "Word-Level Highlighting" and adjust font size/placement on the fly.
 *   **Thumbnail Visionary**:
-    *   A "Magic Wand" button that generates 4 AI images via Imagen 3.
+    *   A "Magic Wand" button that uses `gemini-3-pro-image-preview` to generate and audit AI thumbnail options.
     *   A gallery view to pick your favorite.
-    *   A "Apply Branding" toggle to see it with your logo and green border instantly.
+    *   An "Apply Branding" toggle to instantly see the image with your logo and brand border applied. `gemini-2.5-flash-image` can be used to scan the final composite and verify the logo isn't obstructing the subject.
 *   **Audio Mixer**: Dropdowns to select your Intro/Outro music and a toggle for "Auto-Ducking."
 
 ---
@@ -333,7 +333,7 @@ This lets Claude Code call `probe_media`, `extract_frame`, `overlay_image`, etc.
 | Tech | Category | Cost | Reliability |
 | :--- | :--- | :--- | :--- |
 | **FFmpeg drawtext/ass** | Captions | **FREE** (Open Source) | Professional Grade |
-| **Imagen 3 API** | AI Art | **Pay-as-you-go** | Studio Quality |
+| **Gemini Vision Models** | Visual Verification | **Pay-as-you-go** (`gemini-2.5-flash-image`, `gemini-3-pro-image-preview`) | Studio Quality |
 | **Google Fonts** | Typography | **FREE** | High Quality |
 | **SciPy / Librosa** | Sync/Correlation | **FREE** | Scientific Precision |
 | **Freesound.org** | Sound Effects | **FREE** (CC0) | Great for bundling |
@@ -388,5 +388,5 @@ Each phase should be independently demoable before moving to the next:
 5.  **Phase 9.5**: Create the **ASS caption generator** for word-highlighting, rendered via toolkit's `burn_captions`.
 6.  **Phase 9.6**: Prototype the **cross-correlation sync** tool (Clap Detector) via toolkit's `sync_tracks`.
 7.  **Phase 9.7**: Implement **Production Sound Kits** (music, stingers, auto-ducking) via toolkit's `mix_audio`.
-8.  **Phase 9.8**: Build the **AI Thumbnail Studio** (Imagen 3 API integration).
+8.  **Phase 9.8**: Build the **AI Thumbnail Studio** natively integrating `gemini-3-pro-image-preview` for prompt generation/audit and `gemini-2.5-flash-image` for layout validation.
 9.  **Phase 9.9**: Add the **"Branding & AI" tab** to the UI to manage all persona and style settings.
