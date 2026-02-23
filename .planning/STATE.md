@@ -223,6 +223,7 @@ Progress: [███████████████████████
 - Phase 8 execution continued: completed 08-02-PLAN.md (FillerTriageResult model, _triage_fillers batched LLM triage helper, filler_triage.json artifact)
 - Phase 8 execution continued: completed 08-03-PLAN.md (triage-aware editorial_action, _filler_card_data UI helper, Streamlit filler card Phase 8 display)
 - Phase 8 execution continued: completed 08-04-PLAN.md (VAD breath detector, noise-floor matcher, render de-breathing + noise-floor passes, gpu optional deps)
+- Phase 9 added: Automated Branding, Captions, and Multi-Track Sync (10 plans, 5 waves; spec v4 at docs/plans/2026-02-21-branding-automation-and-sync-spec_v4.md)
 
 ### Technical Notes
 
