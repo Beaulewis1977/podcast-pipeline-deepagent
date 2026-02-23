@@ -747,22 +747,32 @@ class AnalyzeStage(Stage):
                 for idx, raw_cut in candidates
             ]
 
-        # Check OpenAI API key
-        if not self.config.api_keys.openai:
-            self.logger.warning("triage_skipped", reason="no_openai_api_key")
+        model = self.config.fillers.llm_triage_model
+
+        # Determine provider and API key from model name
+        if model.startswith("gemini"):
+            api_key = self.config.api_keys.gemini
+            provider_name = "gemini"
+        elif model.startswith("claude"):
+            api_key = getattr(self.config.api_keys, "anthropic", None)
+            provider_name = "anthropic"
+        else:
+            api_key = self.config.api_keys.openai
+            provider_name = "openai"
+
+        if not api_key:
+            self.logger.warning("triage_skipped", reason=f"no_{provider_name}_api_key")
             return [
                 FillerTriageResult(
                     filler_index=idx,
                     word=str(raw_cut.get("word", "")),
                     category="hedge",
                     safe_to_remove=False,
-                    reason="No OpenAI API key configured",
+                    reason=f"No {provider_name} API key configured for model '{model}'",
                     llm_model="",
                 )
                 for idx, raw_cut in candidates
             ]
-
-        model = self.config.fillers.llm_triage_model
 
         # Build prompts for each candidate
         prompts: list[str] = []
@@ -785,23 +795,46 @@ class AnalyzeStage(Stage):
         batch_size = 20
         results: list[FillerTriageResult] = []
 
-        try:
-            import openai
+        # Construct provider client (Gemini-first; OpenAI as legacy fallback)
+        # client type varies by provider — use Any to avoid cross-branch type error
+        client: Any
+        if model.startswith("gemini"):
+            try:
+                from google import genai
 
-            client = openai.OpenAI(api_key=self.config.api_keys.openai)
-        except ImportError as exc:
-            self.logger.warning("triage_openai_import_failed", error=str(exc))
-            return [
-                FillerTriageResult(
-                    filler_index=idx,
-                    word=str(raw_cut.get("word", "")),
-                    category="hedge",
-                    safe_to_remove=False,
-                    reason=f"OpenAI package unavailable: {exc}",
-                    llm_model="",
-                )
-                for idx, raw_cut in candidates
-            ]
+                client = genai.Client(api_key=api_key)
+            except ImportError as exc:
+                self.logger.warning("triage_provider_import_failed", error=str(exc))
+                return [
+                    FillerTriageResult(
+                        filler_index=idx,
+                        word=str(raw_cut.get("word", "")),
+                        category="hedge",
+                        safe_to_remove=False,
+                        reason=f"google-genai not installed: {exc}",
+                        llm_model="",
+                    )
+                    for idx, raw_cut in candidates
+                ]
+        else:
+            # Legacy fallback: OpenAI-compatible client for non-Gemini models
+            try:
+                import openai
+
+                client = openai.OpenAI(api_key=api_key)
+            except ImportError as exc:
+                self.logger.warning("triage_provider_import_failed", error=str(exc))
+                return [
+                    FillerTriageResult(
+                        filler_index=idx,
+                        word=str(raw_cut.get("word", "")),
+                        category="hedge",
+                        safe_to_remove=False,
+                        reason=f"openai not installed: {exc}",
+                        llm_model="",
+                    )
+                    for idx, raw_cut in candidates
+                ]
 
         for batch_start in range(0, len(candidates), batch_size):
             batch_candidates = candidates[batch_start : batch_start + batch_size]
@@ -819,15 +852,23 @@ class AnalyzeStage(Stage):
             )
 
             try:
-                response = client.chat.completions.create(
-                    model=model,
-                    messages=[
-                        {"role": "system", "content": system_message},
-                        {"role": "user", "content": combined_user_content},
-                    ],
-                    temperature=0.0,
-                )
-                raw_text = response.choices[0].message.content or ""
+                if model.startswith("gemini"):
+                    response = client.models.generate_content(
+                        model=model,
+                        contents=f"{system_message}\n\n{combined_user_content}",
+                    )
+                    raw_text = response.text or ""
+                else:
+                    # OpenAI path (legacy fallback for non-Gemini models)
+                    response = client.chat.completions.create(
+                        model=model,
+                        messages=[
+                            {"role": "system", "content": system_message},
+                            {"role": "user", "content": combined_user_content},
+                        ],
+                        temperature=0.0,
+                    )
+                    raw_text = response.choices[0].message.content or ""
                 batch_results = self._parse_triage_batch_response(
                     raw_text=raw_text,
                     batch_candidates=batch_candidates,
