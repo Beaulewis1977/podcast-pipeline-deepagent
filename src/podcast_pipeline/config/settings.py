@@ -156,7 +156,7 @@ class FillerConfig(BaseModel):
 
     # Phase 8: LLM semantic triage (hedge words only)
     enable_llm_triage: bool = True
-    llm_triage_model: str = "gpt-4o-mini"
+    llm_triage_model: str = "gemini-3-flash-lite"
     llm_triage_max_context_words: int = 5
 
 
