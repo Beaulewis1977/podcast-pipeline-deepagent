@@ -1,8 +1,8 @@
 # Project State: Podcast Pipeline
 
 **Last updated:** 2026-02-23
-**Current phase:** Phase 8 re-execution in progress
-**Overall progress:** Phase 8 plan 03 re-executed (review/UI editorial_action wiring verification)
+**Current phase:** Phase 8 re-execution COMPLETE
+**Overall progress:** All 6 Phase 8 plans re-executed with current baselines
 
 ## Project Reference
 
@@ -14,15 +14,15 @@ See: `.planning/PROJECT.md`
 ## Current Position
 
 ```text
-Phase:    8 COMPLETE
+Phase:    8 COMPLETE (re-executed)
 Plan:     6/6 complete in Phase 8; 51 completed overall
-Status:   Phase 8 COMPLETE; all plans 08-01 through 08-06 complete
-Last activity: 2026-02-21 - Completed 08-06-PLAN.md (integration tests, GPU smoke test, operator guide)
+Status:   Phase 8 COMPLETE; all plans 08-01 through 08-06 re-executed with current baselines
+Last activity: 2026-02-23 - Re-executed 08-06-PLAN.md (smoke test torch 2.10.x baseline, operator guide forbidden models, version floors)
 
 Progress: [██████████████████████████████] 51/51 plans complete
 ```
 
-**Current Phase:** Phase 8 — Intelligent Cut Quality (re-execution: plan 02 complete)
+**Current Phase:** Phase 8 — Intelligent Cut Quality (re-execution: all 6 plans complete)
 
 ## Phase Status
 
@@ -172,6 +172,9 @@ Progress: [███████████████████████
 | Regression test explicitly forbids gpt-4o-mini, o1, o3-mini and other reasoning/OpenAI defaults | Prevents silent drift back to OpenAI; llm_triage_model must be gemini-3-flash-lite or claude-haiku-4-5 | 2026-02-23 |
 | GPU extras use floor + upper bound pattern (>=X.Y,<NEXT_MAJOR) | Prevents silent breaking API changes from major version releases while enforcing current stable baseline | 2026-02-23 |
 | RIFE inference_img.py does NOT accept --output; output written to ./output/ relative to cwd; subprocess.run must set cwd=work_dir and collect from work_dir/output/img*.png | Upstream practical-RIFE contract; --output flag causes subprocess failure with unrecognized arguments | 2026-02-23 |
+| torch==2.10.* pinned baseline in smoke test and operator guide (not >=2.7 unpinned) | Reproducible GPU installs; prevents silent torch major-version drift on Blackwell hardware | 2026-02-23 |
+| Operator guide explicitly forbids reasoning/CoT models for LLM triage (o1, gemini-3-pro, etc.) | Per-filler classification needs sub-second batch responses; reasoning models are too slow/expensive | 2026-02-23 |
+| RIFE 4.26 exists (corrected from "does not exist"); 4.25 is recommended default to avoid artifacts | Research-verified: 4.26 released but 4.25 more stable for podcast content type | 2026-02-23 |
 
 ### Roadmap Evolution
 
@@ -233,7 +236,8 @@ Progress: [███████████████████████
 - Sidecar naming: prepare-sidecars.mjs maps Node.js platform/arch to Rust target triples
 - Release workflow: tag-triggered with manual dispatch, 4 platform targets
 - GPU extras: `uv sync --extras gpu` installs silero-vad>=6.2,<7, librosa>=0.11,<1, opencv-python-headless>=4.13,<5
-- torch/torchaudio: installed via pytorch-cu128 index (CUDA 12.8 for Blackwell sm_120 / RTX 5060 Ti)
+- torch/torchaudio: torch==2.10.* baseline via pytorch-cu128 index (CUDA 12.8 for Blackwell sm_120 / RTX 5060 Ti)
+- LLM triage model: default gemini-3-flash-lite (google.genai transport); FORBIDDEN: o1, o1-mini, o3-mini, gemini-3-pro (reasoning/CoT too slow for per-filler batches)
 
 ### Open Questions
 
@@ -302,16 +306,17 @@ Progress: [███████████████████████
 - 2026-02-23: Re-executed 08-03-PLAN.md (review/UI wiring verification — all editorial_action paths and filler card display confirmed passing, no-op plan)
 - 2026-02-23: Re-executed 08-04-PLAN.md (GPU extras version floors updated: silero-vad>=6.2,<7; librosa>=0.11,<1; opencv-python-headless>=4.13,<5; torch/torchaudio uv.sources routing verified correct)
 - 2026-02-23: Re-executed 08-05-PLAN.md (RIFE bridge --output bug fix: removed --output flag, added cwd=work_dir + PYTHONPATH injection, changed glob to work_dir/output/img*.png; updated tests to verify upstream contract)
+- 2026-02-23: Re-executed 08-06-PLAN.md (smoke test torch 2.10.x baseline; operator guide gemini-3-flash-lite default + forbidden reasoning model list + dep version floors; integration tests verified no-op — all 133 tests pass)
 
 ## Session Continuity
 
 ### Last session
 
-2026-02-23 23:35 UTC — Re-executed `08-05-PLAN.md` (RIFE bridge --output bug fix: removed --output flag, added cwd=work_dir + PYTHONPATH injection, changed glob to work_dir/output/img*.png; updated tests to assert --output absent, cwd kwarg present, output/img*.png collection). 14/14 tests pass.
+2026-02-23 23:40 UTC — Re-executed `08-06-PLAN.md` (smoke test torch 2.10.* baseline, opencv>=4.13, pinned install hint; operator guide: gemini-3-flash-lite default, forbidden o1/gemini-pro reasoning models, silero-vad>=6.2,<7, librosa>=0.11,<1, opencv>=4.13,<5, RIFE 4.26 note corrected; Task 2 no-op — all 133 tests pass).
 
 ### Stopped at
 
-Completed 08-05-PLAN.md re-execution — RIFE bridge upstream-compatible CLI contract fixed; all tests pass.
+Completed 08-06-PLAN.md re-execution — Phase 8 fully locked with current baselines across all 6 plans.
 
 ### Resume file
 
