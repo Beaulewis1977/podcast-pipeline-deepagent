@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-02-23
 **Current phase:** Phase 8 re-execution in progress
-**Overall progress:** Phase 8 plan 02 re-executed (triage Gemini transport fix)
+**Overall progress:** Phase 8 plan 03 re-executed (review/UI editorial_action wiring verification)
 
 ## Project Reference
 
@@ -170,6 +170,7 @@ Progress: [███████████████████████
 | Triage transport is provider-aware: gemini models use google.genai, others use openai (legacy fallback) | Sending gemini model names to OpenAI API would 404; provider dispatch required for correct routing | 2026-02-23 |
 | API key gate uses provider-specific key: api_keys.gemini for gemini models, api_keys.openai for others | Key gate must match the transport layer — checking openai key for a gemini model would skip triage incorrectly | 2026-02-23 |
 | Regression test explicitly forbids gpt-4o-mini, o1, o3-mini and other reasoning/OpenAI defaults | Prevents silent drift back to OpenAI; llm_triage_model must be gemini-3-flash-lite or claude-haiku-4-5 | 2026-02-23 |
+| GPU extras use floor + upper bound pattern (>=X.Y,<NEXT_MAJOR) | Prevents silent breaking API changes from major version releases while enforcing current stable baseline | 2026-02-23 |
 
 ### Roadmap Evolution
 
@@ -230,7 +231,7 @@ Progress: [███████████████████████
 - Model cache: env -> app_data -> project -> HF hub for model artifacts
 - Sidecar naming: prepare-sidecars.mjs maps Node.js platform/arch to Rust target triples
 - Release workflow: tag-triggered with manual dispatch, 4 platform targets
-- GPU extras: `uv sync --extras gpu` installs silero-vad>=6.1, librosa>=0.10, opencv-python-headless>=4.9
+- GPU extras: `uv sync --extras gpu` installs silero-vad>=6.2,<7, librosa>=0.11,<1, opencv-python-headless>=4.13,<5
 - torch/torchaudio: installed via pytorch-cu128 index (CUDA 12.8 for Blackwell sm_120 / RTX 5060 Ti)
 
 ### Open Questions
@@ -297,16 +298,18 @@ Progress: [███████████████████████
 - 2026-02-21: Completed 08-05-PLAN.md (pose-match scanner via Farneback optical flow, RIFE bridge with --exp flag, render _apply_pose_match_pass + xfade fallback, 20 tests)
 - 2026-02-21: Completed 08-06-PLAN.md (GPU smoke test, legacy compat regressions, triage-chain integration tests, Phase 8 disabled baseline regressions, operator guide)
 - 2026-02-23: Re-executed 08-02-PLAN.md (triage Gemini transport fix — google.genai routing, provider-aware API key gate, model-drift regression guard)
+- 2026-02-23: Re-executed 08-03-PLAN.md (review/UI wiring verification — all editorial_action paths and filler card display confirmed passing, no-op plan)
+- 2026-02-23: Re-executed 08-04-PLAN.md (GPU extras version floors updated: silero-vad>=6.2,<7; librosa>=0.11,<1; opencv-python-headless>=4.13,<5; torch/torchaudio uv.sources routing verified correct)
 
 ## Session Continuity
 
 ### Last session
 
-2026-02-23 23:16 UTC — Re-executed `08-02-PLAN.md` (triage transport fix: google.genai for Gemini, provider-aware key gate, regression guard in test_triage.py, updated test_analyze.py mocks). 27 triage tests pass.
+2026-02-23 23:23 UTC — Re-executed `08-04-PLAN.md` (GPU extras version floor update: silero-vad>=6.2,<7, librosa>=0.11,<1, opencv-python-headless>=4.13,<5; torch/torchaudio uv.sources routing to pytorch-cu128 verified correct, no changes needed). uv lock --check passes.
 
 ### Stopped at
 
-Completed 08-02-PLAN.md re-execution — triage provider routing correct, regression guard added, all tests pass.
+Completed 08-04-PLAN.md re-execution — GPU extras version floors corrected; uv.lock resolves cleanly.
 
 ### Resume file
 
@@ -314,4 +317,4 @@ None
 
 ---
 
-*State updated: 2026-02-23 (08-01 re-executed — config default verified correct; Phase 8 COMPLETE, all 51 plans done)*
+*State updated: 2026-02-23 (08-04 re-executed — GPU extras version floors corrected; Phase 8 COMPLETE, all 51 plans done)*

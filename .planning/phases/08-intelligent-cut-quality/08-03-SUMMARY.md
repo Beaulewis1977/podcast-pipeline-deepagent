@@ -1,117 +1,91 @@
 ---
 phase: 08-intelligent-cut-quality
-plan: 03
-subsystem: ui
-tags: [streamlit, filler-words, editorial-action, triage, review, edit-plan, phase8]
+plan: "03"
+subsystem: testing
+tags: [editorial-action, filler-words, review, streamlit, phase8-display]
 
 # Dependency graph
 requires:
   - phase: 08-02
-    provides: FillerTriageResult model, filler_triage.json artifact, _triage_fillers batched LLM triage
+    provides: "_triage_fillers with google.genai transport, FillerTriageResult model"
   - phase: 08-01
-    provides: enriched FillerCut with category/pause_before_ms/pause_after_ms/context_before/context_after/protected
+    provides: "FillerConfig with llm_triage_model=gemini-3-flash-lite default"
 provides:
-  - _derive_editorial_action() wired into _create_initial_review_state for triage-aware defaults
-  - write_edit_plan() refactored to use _materialize_filler_decisions action directly (no redundant protected gate)
-  - _filler_card_data() helper returning display dict for context, pause, protection, LLM verdict, LLM reason
-  - Streamlit filler card rendering updated with lock icon, LLM verdict badge, pause timing badges, LLM reason caption
-  - 9 review stage tests + 5 UI filler card tests
+  - "Verified editorial_action derivation covers all four paths: protected->keep, disfluency->remove, LLM-safe->remove, LLM-review->keep"
+  - "Verified explicit user decision override takes precedence over category defaults"
+  - "Verified Streamlit filler card _filler_card_data helper returns context, pause, protection, and LLM reason fields"
+  - "Verified graceful degradation when Phase 8 fields are absent"
 affects:
-  - 08-04 (render stage reads FillerCutRange protected/pause fields)
-  - 08-05 (integration tests validate end-to-end triage -> review -> render flow)
+  - "08-04 through 08-06 (integration tests consume same review/UI wiring)"
 
 # Tech tracking
 tech-stack:
   added: []
   patterns:
-    - "_filler_card_data() helper pattern: normalize Phase 8 fields to display dict before rendering"
-    - "Unicode symbols for UI badges: \U0001f512 (lock), \u2022 (bullet), \u23f8 (pause)"
-    - "Pre-commit stash behavior: untracked Python files still scanned by mypy hook"
+    - "Verification-only plan: run existing tests, add only if coverage gaps found, no-op if all pass"
 
 key-files:
-  created:
-    - tests/test_review.py (Phase 8 section added)
-    - tests/test_ui_app.py (Phase 8 filler card tests added)
-  modified:
-    - src/podcast_pipeline/stages/review.py
-    - src/podcast_pipeline/ui/app.py
-    - pyproject.toml
+  created: []
+  modified: []
 
 key-decisions:
-  - "write_edit_plan action comes directly from _materialize_filler_decisions output — no secondary protected override needed since _derive_editorial_action already handles protection"
-  - "_create_initial_review_state uses _derive_editorial_action for triage-aware default actions rather than blanket remove for all fillers"
-  - "_filler_card_data helper centralizes Phase 8 display field extraction — makes UI rendering and tests independent of field-access code"
-  - "mypy override for librosa/silero_vad/cv2 in pyproject.toml required for inline lazy imports in utility files to pass pre-commit hook"
+  - "Both tasks were no-ops: existing tests (from original 08-03 execution) already cover all editorial_action paths and filler card display scenarios"
 
 patterns-established:
-  - "Filler card helper pattern: extract display dict via _filler_card_data(), render from dict — enables unit testing without Streamlit mock"
-  - "Pre-commit pyproject.toml gate: when adding files with optional-dep imports, always stage pyproject.toml override alongside the new files"
+  - "Four editorial_action paths tested and confirmed: protected->keep, disfluency->remove, LLM-safe hedge->remove, uncleared hedge->keep"
+  - "Five filler card display scenarios tested: context, pause badges, protected lock, LLM reason, and absent Phase 8 fields (graceful degradation)"
 
 # Metrics
-duration: 25min
-completed: 2026-02-21
+duration: <1min
+completed: 2026-02-23
 ---
 
-# Phase 8 Plan 03: Review Stage Triage Display Summary
+# Phase 8 Plan 03: Review/UI Editorial Action Wiring Verification Summary
 
-**Triage-aware editorial_action derivation in review stage + Streamlit filler card Phase 8 display (context, pause badges, lock icon, LLM verdict, LLM reason)**
+**All four editorial_action derivation paths and five filler card display scenarios verified passing via existing tests — no new code needed after 08-01/08-02 re-execution**
 
 ## Performance
 
-- **Duration:** ~25 min
-- **Started:** 2026-02-21T08:10:00Z
-- **Completed:** 2026-02-21T08:35:00Z
-- **Tasks:** 2
-- **Files modified:** 4 (2 new test sections, 2 source files, 1 config)
+- **Duration:** <1 min
+- **Started:** 2026-02-23T23:18:47Z
+- **Completed:** 2026-02-23T23:18:55Z
+- **Tasks:** 2 (both verification no-ops)
+- **Files modified:** 0
 
 ## Accomplishments
 
-- `_create_initial_review_state` upgraded to use `_load_filler_triage_map` + `_derive_editorial_action`, so initial filler decisions correctly default to keep for protected fillers, remove for disfluencies, remove for LLM-safe hedges, and keep for uncleared hedges
-- `write_edit_plan` refactored to use the action resolved by `_materialize_filler_decisions` directly — the redundant secondary protected-gate was removed since `_derive_editorial_action` already handles protection correctly
-- `_filler_card_data()` helper added to `app.py`: normalizes filler dict into typed display data dict including word, context, pause_before/after_ms, protected, llm_safe_to_remove, llm_reason, and derived default_action
-- Streamlit filler card rendering updated: lock icon for protected words, LLM:SAFE/LLM:REVIEW badge, pause timing captions, context snippet, LLM reason caption — all gracefully absent when Phase 8 fields are missing
-- 9 Phase 8 review tests + 5 filler card tests — all passing
+- Confirmed `_derive_editorial_action` in `stages/review.py` correctly handles all four editorial paths: `protected=True` -> `"keep"`, `category="disfluency"` -> `"remove"`, hedge with `safe_to_remove=True` -> `"remove"`, hedge with `safe_to_remove=False` or no triage -> `"keep"`
+- Confirmed explicit `filler_decisions` override overrides category-derived defaults (disfluency that would normally be `"remove"` becomes `"keep"` with explicit override)
+- Confirmed `_filler_card_data` helper in `ui/app.py` returns all five Phase 8 display fields: `context_before`, `context_after`, `pause_before_ms`, `pause_after_ms`, `protected`, `default_action`, `llm_safe_to_remove`, `llm_reason`
+- Confirmed legacy filler card (no Phase 8 fields) degrades gracefully with safe empty defaults
+- All 49 tests in `test_review.py` + `test_ui_app.py` pass; ruff lint is clean
 
 ## Task Commits
 
-1. **Task 1: Wire triage into editorial_action and review stage** - `3a10803` (feat)
-2. **Task 2: Add _filler_card_data helper and Phase 8 UI display** - `75c0ea7` (feat)
+Both tasks were verification no-ops — all coverage already existed from original 08-03 execution:
+
+1. **Task 1: Verify review editorial_action logic and add missing path coverage** - no-op (all four paths + override already covered)
+2. **Task 2: Verify Streamlit filler card Phase 8 display fields** - no-op (all five scenarios already covered)
+
+**Plan metadata:** (docs commit below)
 
 ## Files Created/Modified
 
-- `src/podcast_pipeline/stages/review.py` - _create_initial_review_state uses triage-aware defaults; write_edit_plan simplified
-- `src/podcast_pipeline/ui/app.py` - Added _filler_card_data() helper; filler card rendering shows Phase 8 enriched fields
-- `tests/test_review.py` - Added 9 Phase 8 tests: editorial_action derivation priority logic + backward compat + write_edit_plan enrichment
-- `tests/test_ui_app.py` - Added 5 filler card tests: context snippet, pause badges, protected lock, llm reason, no-phase8 graceful defaults
-- `pyproject.toml` - Extended mypy overrides for optional silero_vad/librosa/cv2 imports (untracked utility files scanned by pre-commit)
+None - this plan was a pure verification run. All required tests existed from the original Phase 8 execution.
 
 ## Decisions Made
 
-- `write_edit_plan` action comes directly from `_materialize_filler_decisions` output without a secondary protected override — `_derive_editorial_action` already handles the protected-keep logic upstream in the initial review state creation
-- `_filler_card_data` helper centralizes Phase 8 display extraction to make unit testing independent of Streamlit rendering — tests call the helper directly and verify the returned dict
-- mypy override for `librosa`/`silero_vad`/`cv2` modules in `pyproject.toml` must be staged together with any commit that adds files using those imports, otherwise the pre-commit mypy hook fails on the untracked utility files
+Both tasks were no-ops. The original 08-03 execution left full coverage in place:
+- `test_review.py` lines 294-427: 6 editorial_action tests + 3 write_edit_plan triage integration tests
+- `test_ui_app.py` lines 823-910: 5 filler card display tests
 
 ## Deviations from Plan
 
-### Auto-fixed Issues
-
-**1. [Rule 3 - Blocking] Staged pyproject.toml mypy overrides alongside Task 1 commit**
-- **Found during:** Task 1 (pre-commit hook failure)
-- **Issue:** Untracked `noise_match.py` and `vad.py` files (from Phase 8 plan 04 research work) use lazy `import librosa` / `import silero_vad` inside try/except blocks. The pre-commit mypy hook scans all of `src/` including untracked files. The committed `pyproject.toml` lacked `ignore_missing_imports` overrides for these modules.
-- **Fix:** Staged and committed the `pyproject.toml` changes that add `silero_vad`, `librosa`, and `cv2` to the mypy overrides — these were already present as unstaged changes from plan 04 work.
-- **Files modified:** `pyproject.toml`
-- **Verification:** `uv run mypy src/` passes cleanly with 47 source files; pre-commit hook passes
-- **Committed in:** `3a10803` (Task 1 commit)
-
----
-
-**Total deviations:** 1 auto-fixed (Rule 3 — blocking pre-commit issue from pre-existing unstaged changes)
-**Impact on plan:** Config-only fix required to unblock commit. No scope creep. All plan deliverables implemented as specified.
+None - plan executed exactly as written. Both tasks confirmed existing coverage was sufficient; no tests were added.
 
 ## Issues Encountered
 
-- Task 1 and Task 2 had partial prior implementation already in place from the branch's research/planning work (commits `fc8a7da` and `f834f16`). The plan's deliverables were verified, tests written fresh, and the remaining wiring (triage-aware _create_initial_review_state, refactored write_edit_plan, _filler_card_data, UI rendering) committed atomically.
-- Pre-commit mypy hook double-ran each commit attempt (normal behavior — hooks re-run to verify). All passed after pyproject.toml was staged.
+None. Tests and lint pass cleanly.
 
 ## User Setup Required
 
@@ -119,24 +93,17 @@ None - no external service configuration required.
 
 ## Next Phase Readiness
 
-- FillerCutRange now carries complete Phase 8 enrichment: protected, pause timing, llm_safe_to_remove, llm_reason
-- editorial_action derivation is tested and deterministic: protected > disfluency > LLM verdict > keep (review)
-- Streamlit UI filler cards show all enriched data and degrade gracefully for legacy edit plans
-- Plan 04 (render stage integration with protected/pause-aware cut handling) can proceed
+- Review/UI wiring is regression-locked and verified compatible with the 08-01 (model default) and 08-02 (Gemini transport) re-execution changes
+- Ready to confirm 08-04 through 08-06 remain unchanged and passing
 
 ## Self-Check: PASSED
 
-| Item | Status |
-|------|--------|
-| src/podcast_pipeline/stages/review.py | FOUND |
-| src/podcast_pipeline/ui/app.py | FOUND |
-| tests/test_review.py (Phase 8 section) | FOUND |
-| tests/test_ui_app.py (filler card tests) | FOUND |
-| pyproject.toml | FOUND |
-| Commit 3a10803 (Task 1) | FOUND |
-| Commit 75c0ea7 (Task 2) | FOUND |
-| .planning/phases/08-intelligent-cut-quality/08-03-SUMMARY.md | CREATED |
+- tests/test_review.py: FOUND — 13 editorial_action/filler tests confirmed
+- tests/test_ui_app.py: FOUND — 5 filler card tests confirmed
+- `uv run pytest tests/test_review.py -q -k "editorial_action or phase8 or backward_compat or filler"`: 13 passed
+- `uv run pytest tests/test_ui_app.py -q -k "filler_card or context or pause or protected or llm_reason"`: 5 passed
+- `uv run ruff check src/podcast_pipeline/stages/review.py src/podcast_pipeline/ui/app.py`: All checks passed
 
 ---
 *Phase: 08-intelligent-cut-quality*
-*Completed: 2026-02-21*
+*Completed: 2026-02-23*
