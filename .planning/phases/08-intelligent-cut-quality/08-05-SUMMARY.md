@@ -1,140 +1,120 @@
 ---
 phase: 08-intelligent-cut-quality
 plan: 05
-subsystem: video-processing
-tags: [pose-match, rife, optical-flow, farneback, frame-interpolation, opencv, subprocess, render]
+subsystem: infra
+tags: [rife, subprocess, frame-interpolation, rife-bridge, tests, pose-match]
 
 # Dependency graph
 requires:
   - phase: 08-intelligent-cut-quality
-    provides: SmoothingConfig with pose_match_*, rife_* fields (08-04 plan)
-  - phase: 08-intelligent-cut-quality
-    provides: render._apply_de_breathing_pass() pipeline position (08-04 plan)
-  - phase: 07-smooth-editing-filler-word-control
-    provides: render._build_edit_plan_filter() content-cut join pipeline
+    provides: RifeBridge class with generate() method in rife_bridge.py
 
 provides:
-  - utils/pose_match.py: pose_distance() via Farneback optical flow + scan_best_frame_pair() with clamped window
-  - utils/rife_bridge.py: RifeBridge class with generate() using --exp flag, frames_to_exp(), and available()
-  - render._apply_pose_match_pass(): content-join pose scan -> RIFE bridge -> xfade fallback pipeline
-  - render._extract_frames(): FFmpeg frame extractor with graceful failure fallback
-  - render._encode_bridge_frames(): PNG-to-MP4 concat-demuxer bridge clip encoder
-  - tests/test_pose_match.py: 8 tests covering ImportError fallback, determinism, window clamping, minimum selection
-  - tests/test_rife_bridge.py: 12 tests covering --exp correctness, --n/--cpu absence, failure paths, output sorting
-
-affects:
-  - 08-06-PLAN (integration tests exercise pose-match and RIFE paths)
+  - Fixed RifeBridge.generate() with upstream-compatible CLI contract (no --output flag)
+  - subprocess.run called with cwd=work_dir so RIFE writes output to work_dir/output/
+  - PYTHONPATH=rife_dir injected into subprocess env for model import resolution
+  - Output collected from work_dir/output/img*.png (not work_dir/*.png)
+  - Corrected docstring: "4.26 exists but 4.25 recommended" (not "4.26 does not exist")
+  - Updated tests asserting --output absent, cwd kwarg present, output/img*.png collection
+affects: [08-intelligent-cut-quality, render-pose-match, rife-bridge-consumers]
 
 # Tech tracking
 tech-stack:
   added: []
   patterns:
-    - Lazy optional import for cv2/numpy in pose_distance() with float('inf') fallback
-    - subprocess.run() with --exp flag (NOT --n, NOT --cpu) for RIFE frame interpolation
-    - CUDA_VISIBLE_DEVICES="" env pattern for CPU fallback instead of --cpu flag
-    - TemporaryDirectory for frame extraction cleanup; stable_dir copy for bridge clips
-    - FFmpeg concat demuxer for PNG sequence to MP4 bridge clip encoding
+    - "RIFE subprocess uses cwd= to control output dir (inference_img.py writes to ./output/ relative to cwd)"
+    - "PYTHONPATH injection for subprocess when cwd differs from module repo directory"
 
 key-files:
-  created:
-    - src/podcast_pipeline/utils/pose_match.py
-    - src/podcast_pipeline/utils/rife_bridge.py
-    - tests/test_pose_match.py
-    - tests/test_rife_bridge.py
+  created: []
   modified:
-    - src/podcast_pipeline/stages/render.py
+    - src/podcast_pipeline/utils/rife_bridge.py
+    - tests/test_rife_bridge.py
 
 key-decisions:
-  - "--exp flag used for RIFE (NOT --n which does not exist); confirmed from Phase 8 research corrections"
-  - "No --cpu flag for RIFE; CPU fallback via CUDA_VISIBLE_DEVICES='' env var instead"
-  - "RIFE disabled by default (rife_enabled=False) — requires manual RIFE installation"
-  - "pose_match_enabled=True by default — degrades gracefully when cv2 unavailable (returns inf)"
-  - "Audio-only jobs auto-skip pose matching with info-level log message"
-  - "Bridge clips copied to stable_dir before TemporaryDirectory cleanup to survive tempdir lifecycle"
-  - "scan_best_frame_pair clamps search window to min(window, available_frames) — no IndexError on short segments"
+  - "RIFE inference_img.py does NOT accept --output flag; output is written to ./output/ relative to cwd"
+  - "subprocess.run must set cwd=work_dir (=output_dir) so RIFE output ends up in work_dir/output/"
+  - "PYTHONPATH=rife_dir must be injected so RIFE relative model imports resolve when cwd is not the RIFE repo"
+  - "script_path must be resolved (absolute) in cmd list so subprocess finds it when cwd differs from rife_dir"
+  - "Glob pattern changed from output_dir.glob('*.png') to (work_dir/'output').glob('img*.png')"
+  - "RIFE 4.26 does exist; docstring corrected to say 4.25 recommended rather than 4.26 does not exist"
 
 patterns-established:
-  - "Optional dep pattern: try import cv2/numpy except ImportError: return float('inf')"
-  - "RIFE subprocess always uses --exp <int> computed by frames_to_exp(num_frames)"
-  - "Frame extraction via _extract_frames() silently degrades on FFmpegError — pose match skips join"
-  - "Bridge clip pipeline: RIFE frames -> _encode_bridge_frames() -> copy to stable_dir -> filtergraph movie= source"
+  - "Test RIFE subprocess contract: assert --output absent, assert cwd in kwargs, assert img prefix in output subdir"
+  - "Create mock RIFE output in out_dir/output/img*.png (not out_dir/*.png) for subprocess success tests"
 
 # Metrics
-duration: 20min
-completed: 2026-02-21
+duration: 8min
+completed: 2026-02-23
 ---
 
-# Phase 8 Plan 05: Pose-Match and RIFE Frame Interpolation Summary
+# Phase 8 Plan 05: RIFE Bridge --output Bug Fix Summary
 
-**OpenCV Farneback optical-flow frame selection and RIFE AI bridge frame generation for invisible content-cut joins, with lazy cv2 import, --exp subprocess flag, and xfade fallback**
+**Fixed critical RIFE subprocess bug: removed --output flag, added cwd=work_dir, PYTHONPATH injection, and img*.png output collection from work_dir/output/ subdirectory**
 
 ## Performance
 
-- **Duration:** ~20 min
-- **Started:** 2026-02-21T08:42:24Z
-- **Completed:** 2026-02-21T08:47:42Z
-- **Tasks:** 2
-- **Files modified:** 5
+- **Duration:** ~8 min
+- **Started:** 2026-02-23T23:25:53Z
+- **Completed:** 2026-02-23T23:35:00Z
+- **Tasks:** 2 (1 code fix, 1 test update)
+- **Files modified:** 2
 
 ## Accomplishments
 
-- `utils/pose_match.py` implements `pose_distance()` using Farneback dense optical flow and `scan_best_frame_pair()` with clamped search window — both with lazy `cv2`/`numpy` import and `float('inf')` fallback when opencv is absent
-- `utils/rife_bridge.py` implements `RifeBridge` class with `generate()` using `--exp` flag (corrected per Phase 8 research, NOT `--n`), `frames_to_exp()` converter (rounds up to next power-of-two), and `available()` filesystem check
-- `render._apply_pose_match_pass()` wires the full pipeline: extracts frames via FFmpeg at each content-cut join, calls `scan_best_frame_pair()`, optionally generates RIFE bridge clips, copies them to a stable directory, and falls back to Phase 7 xfade when RIFE fails or is disabled
-- `render._extract_frames()` and `render._encode_bridge_frames()` added as helpers with graceful FFmpegError fallback
-- 20 tests total: 8 in `test_pose_match.py` (cv2-skip aware) and 12 in `test_rife_bridge.py` (pure mock/subprocess)
+- Removed `--output` flag from RIFE subprocess cmd — upstream `inference_img.py` does not accept this argument and would fail with "unrecognized arguments"
+- Set `cwd=str(work_dir)` where `work_dir = output_dir` so RIFE writes to `./output/` relative to the process working directory
+- Injected `PYTHONPATH=rife_dir` into subprocess env so RIFE's relative model imports (`from model.RIFE_HDv3 import device`) resolve correctly when `cwd` is `work_dir` (not the RIFE repo directory)
+- Resolved `script_path` to absolute path in cmd so subprocess finds the script regardless of `cwd`
+- Changed glob from `output_dir.glob("*.png")` to `(work_dir / "output").glob("img*.png")` matching actual RIFE output structure
+- Corrected module docstring: RIFE 4.26 exists but 4.25 is recommended; removed false "4.26 does not exist" claim
+- Updated tests: fixed existing test mock setup to use `out_dir/output/img*.png` structure; added `--output` absence and `cwd` kwarg assertions; added two new tests explicitly verifying the upstream contract
 
 ## Task Commits
 
-1. **Task 1: Create pose-match scanner and RIFE bridge utilities** - `7a9418a` (feat — pre-existing from session start)
-2. **Task 2: Wire pose-match and RIFE into render + tests** - `4b203bb` (feat)
+Each task was committed atomically:
+
+1. **Task 1: Fix RIFE bridge --output bug and use cwd-based output collection** - `44dd4ca` (fix)
+2. **Task 2: Update RIFE bridge tests for upstream-compatible CLI contract** - `b273c8a` (test)
+
+**Plan metadata:** (created in final commit)
 
 ## Files Created/Modified
 
-- `src/podcast_pipeline/utils/pose_match.py` - Created: `pose_distance()` + `scan_best_frame_pair()` with lazy cv2 import
-- `src/podcast_pipeline/utils/rife_bridge.py` - Created: `RifeBridge` class with `generate(--exp)`, `frames_to_exp()`, `available()`
-- `src/podcast_pipeline/stages/render.py` - Added `_apply_pose_match_pass()`, `_extract_frames()`, `_encode_bridge_frames()`
-- `tests/test_pose_match.py` - Created: 8 tests (ImportError fallback, determinism, window clamping, minimum pair selection)
-- `tests/test_rife_bridge.py` - Created: 12 tests (frames_to_exp, availability, --exp correctness, failure/success paths)
+- `/home/kngpnn/dev/podcast-pipeline-deepagent/src/podcast_pipeline/utils/rife_bridge.py` - Removed --output flag, added cwd=work_dir, PYTHONPATH env injection, fixed glob pattern and docstring
+- `/home/kngpnn/dev/podcast-pipeline-deepagent/tests/test_rife_bridge.py` - Fixed existing mock setup for output subdir structure; added --output absence + cwd assertions; added 2 new contract tests (14 total, all passing)
 
 ## Decisions Made
 
-- `--exp` flag is the correct RIFE CLI flag (NOT `--n` which doesn't exist) — confirmed from Phase 8 research Correction 3
-- No `--cpu` flag in RIFE — CPU fallback should be via `CUDA_VISIBLE_DEVICES=""` in subprocess env (not yet wired but documented)
-- `rife_enabled=False` default keeps baseline render behavior unchanged; RIFE is opt-in
-- `pose_match_enabled=True` with graceful cv2 fallback: safe to enable without requiring opencv install
-- Bridge clips are copied to `jobs/<job>/render/bridge_clips/` before the TemporaryDirectory is cleaned up, ensuring they survive the context manager lifetime
-- Audio-only jobs detected via `video_path is None` and skip pose matching with an info log
+- rife_bridge.py was already partially fixed from the Phase 8 original execution but had the original `--output` bug. The re-execution fully replaced the subprocess invocation block per the research-verified pattern.
+- render.py `_apply_pose_match_pass()` confirmed correct: it calls `rife.generate(frame_a, frame_b, bridge_dir, num_frames=...)` and uses the returned `list[Path]`. No changes needed since generate()'s return type is unchanged.
 
 ## Deviations from Plan
 
-None — plan executed exactly as written. Both utility files were pre-created (`7a9418a`) at session start; this plan's Task 2 added the render integration and tests.
+None - plan executed exactly as written. Task 1 applied the research-verified fix to rife_bridge.py. Task 2 updated tests to match the new output collection contract.
 
 ## Issues Encountered
 
-- Pre-commit hook applied `ruff format` reformatting on first commit attempt; re-staged and committed clean on second attempt
-- `type: ignore[import-not-found]` comments in test file were flagged as unused by mypy (cv2 override in pyproject.toml already handles this globally) — removed the comments
+`test_rife_bridge_subprocess_success_returns_sorted_pngs` was failing before this plan (1 of 12 tests failed) because it created PNGs directly in `out_dir` but the fixed implementation globs from `out_dir/output/img*.png`. This was the expected pre-existing failing test that this plan was designed to fix.
 
 ## User Setup Required
 
-None — no external service configuration required. Pose matching degrades gracefully without opencv installed. RIFE requires manual setup of `inference_img.py` and setting `smoothing.rife_script_path` + `smoothing.rife_enabled=true` in config.yaml.
+None - no external service configuration required.
 
 ## Next Phase Readiness
 
-- Plan 06 (integration tests) can now exercise the full Phase 8 render pipeline including pose-match and RIFE fallback paths
-- RIFE is wired and tested — users can activate it by pointing `rife_script_path` to a practical-RIFE installation and setting `rife_enabled: true`
-
-## Self-Check: PASSED
-
-Files present and commits verified:
-- `src/podcast_pipeline/utils/pose_match.py` — FOUND (pose_distance, scan_best_frame_pair)
-- `src/podcast_pipeline/utils/rife_bridge.py` — FOUND (RifeBridge, frames_to_exp, generate with --exp)
-- `src/podcast_pipeline/stages/render.py` — FOUND (_apply_pose_match_pass, _extract_frames, _encode_bridge_frames)
-- `tests/test_pose_match.py` — FOUND (8 tests)
-- `tests/test_rife_bridge.py` — FOUND (12 tests)
-- Commit `7a9418a` (Task 1: pose_match + rife_bridge utilities) — FOUND
-- Commit `4b203bb` (Task 2: render integration + tests) — FOUND
+- RIFE bridge now has upstream-compatible CLI contract; will not fail on real practical-RIFE installations
+- render.py `_apply_pose_match_pass` continues to work unchanged (same generate() API)
+- All 14 rife_bridge tests pass with the corrected subprocess behavior
 
 ---
 *Phase: 08-intelligent-cut-quality*
-*Completed: 2026-02-21*
+*Completed: 2026-02-23*
+
+## Self-Check: PASSED
+
+- FOUND: src/podcast_pipeline/utils/rife_bridge.py
+- FOUND: tests/test_rife_bridge.py
+- FOUND: .planning/phases/08-intelligent-cut-quality/08-05-SUMMARY.md
+- FOUND: commit 44dd4ca (fix: RIFE bridge --output bug fix)
+- FOUND: commit b273c8a (test: RIFE bridge upstream contract tests)

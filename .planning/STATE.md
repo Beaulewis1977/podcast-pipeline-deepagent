@@ -171,6 +171,7 @@ Progress: [███████████████████████
 | API key gate uses provider-specific key: api_keys.gemini for gemini models, api_keys.openai for others | Key gate must match the transport layer — checking openai key for a gemini model would skip triage incorrectly | 2026-02-23 |
 | Regression test explicitly forbids gpt-4o-mini, o1, o3-mini and other reasoning/OpenAI defaults | Prevents silent drift back to OpenAI; llm_triage_model must be gemini-3-flash-lite or claude-haiku-4-5 | 2026-02-23 |
 | GPU extras use floor + upper bound pattern (>=X.Y,<NEXT_MAJOR) | Prevents silent breaking API changes from major version releases while enforcing current stable baseline | 2026-02-23 |
+| RIFE inference_img.py does NOT accept --output; output written to ./output/ relative to cwd; subprocess.run must set cwd=work_dir and collect from work_dir/output/img*.png | Upstream practical-RIFE contract; --output flag causes subprocess failure with unrecognized arguments | 2026-02-23 |
 
 ### Roadmap Evolution
 
@@ -300,16 +301,17 @@ Progress: [███████████████████████
 - 2026-02-23: Re-executed 08-02-PLAN.md (triage Gemini transport fix — google.genai routing, provider-aware API key gate, model-drift regression guard)
 - 2026-02-23: Re-executed 08-03-PLAN.md (review/UI wiring verification — all editorial_action paths and filler card display confirmed passing, no-op plan)
 - 2026-02-23: Re-executed 08-04-PLAN.md (GPU extras version floors updated: silero-vad>=6.2,<7; librosa>=0.11,<1; opencv-python-headless>=4.13,<5; torch/torchaudio uv.sources routing verified correct)
+- 2026-02-23: Re-executed 08-05-PLAN.md (RIFE bridge --output bug fix: removed --output flag, added cwd=work_dir + PYTHONPATH injection, changed glob to work_dir/output/img*.png; updated tests to verify upstream contract)
 
 ## Session Continuity
 
 ### Last session
 
-2026-02-23 23:23 UTC — Re-executed `08-04-PLAN.md` (GPU extras version floor update: silero-vad>=6.2,<7, librosa>=0.11,<1, opencv-python-headless>=4.13,<5; torch/torchaudio uv.sources routing to pytorch-cu128 verified correct, no changes needed). uv lock --check passes.
+2026-02-23 23:35 UTC — Re-executed `08-05-PLAN.md` (RIFE bridge --output bug fix: removed --output flag, added cwd=work_dir + PYTHONPATH injection, changed glob to work_dir/output/img*.png; updated tests to assert --output absent, cwd kwarg present, output/img*.png collection). 14/14 tests pass.
 
 ### Stopped at
 
-Completed 08-04-PLAN.md re-execution — GPU extras version floors corrected; uv.lock resolves cleanly.
+Completed 08-05-PLAN.md re-execution — RIFE bridge upstream-compatible CLI contract fixed; all tests pass.
 
 ### Resume file
 
@@ -317,4 +319,4 @@ None
 
 ---
 
-*State updated: 2026-02-23 (08-04 re-executed — GPU extras version floors corrected; Phase 8 COMPLETE, all 51 plans done)*
+*State updated: 2026-02-23 (08-05 re-executed — RIFE bridge --output bug fixed; upstream-compatible CLI contract; all rife_bridge tests pass)*
