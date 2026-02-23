@@ -1,13 +1,13 @@
 # Roadmap: Podcast Pipeline
 
 **Created:** 2026-01-29
-**Last Updated:** 2026-02-21
+**Last Updated:** 2026-02-23
 **Milestone:** v1.0 (Streamlit-first)
 **Phases:** 8 + follow-ups 5.1 and 6.1
 
 ## Overview
 
-The repository already contains a working pipeline skeleton (ingest → transcribe → analyze → review → render) plus a Streamlit UI. The roadmap now focuses on wiring the existing stages end-to-end, eliminating stubs, and producing real edited outputs. After a stable Streamlit release, we move to a desktop distribution target (Rust + Tauri v2) that reuses the same Python backend.
+The repository already contains a working pipeline skeleton (ingest -> transcribe -> analyze -> review -> render) plus a Streamlit UI. The roadmap now focuses on wiring the existing stages end-to-end, eliminating stubs, and producing real edited outputs. After a stable Streamlit release, we move to a desktop distribution target (Rust + Tauri v2) that reuses the same Python backend.
 
 ---
 
@@ -32,7 +32,7 @@ The repository already contains a working pipeline skeleton (ingest → transcri
 - Align dependencies/config and remove unsafe parsing (`eval` in FFmpeg helpers)
 
 **Success Criteria:**
-1. A job runs ingest → render with outputs that reflect approved cuts and clips
+1. A job runs ingest -> render with outputs that reflect approved cuts and clips
 2. Multi-track audio inputs produce speaker-labeled transcripts by default
 3. Review decisions are persisted and applied in render
 4. UI can show stage progress without blocking
@@ -40,12 +40,12 @@ The repository already contains a working pipeline skeleton (ingest → transcri
 **Plans:** 6 plans
 
 Plans:
-- [ ] 01-01-PLAN.md — Job creation + progress reporting
-- [ ] 01-02-PLAN.md — Edit plan generation + research/viral UI
-- [ ] 01-03-PLAN.md — Multi-track transcription default
-- [ ] 01-04-PLAN.md — Config/deps alignment + safe FFmpeg parsing
-- [ ] 01-05-PLAN.md — Edit-plan-driven render + clip exports
-- [ ] 01-06-PLAN.md — Analyze stage research + viral artifacts
+- [ ] 01-01-PLAN.md -- Job creation + progress reporting
+- [ ] 01-02-PLAN.md -- Edit plan generation + research/viral UI
+- [ ] 01-03-PLAN.md -- Multi-track transcription default
+- [ ] 01-04-PLAN.md -- Config/deps alignment + safe FFmpeg parsing
+- [ ] 01-05-PLAN.md -- Edit-plan-driven render + clip exports
+- [ ] 01-06-PLAN.md -- Analyze stage research + viral artifacts
 
 ---
 
@@ -54,7 +54,7 @@ Plans:
 **Goal:** Research signals materially improve title/thumbnail/clip recommendations.
 
 **Dependencies:** Phase 1
-**Status:** Code complete (verified 2026-02-04) — UAT in progress (see 02-UAT.md)
+**Status:** Code complete (verified 2026-02-04) -- UAT in progress (see 02-UAT.md)
 
 **Scope / Requirements:**
 - Add engagement rate + velocity metrics to YouTube research output
@@ -72,11 +72,11 @@ Plans:
 **Plans:** 5 plans
 
 Plans:
-- [x] 02-01-PLAN.md — Research metrics foundation (engagement/velocity/competition/posting)
-- [x] 02-02-PLAN.md — Viral detector signal expansion + scoring updates
-- [x] 02-03-PLAN.md — Weighted keyword extraction + YouTube API caching
-- [x] 02-04-PLAN.md — Analyze-stage combined clip re-ranking
-- [x] 02-05-PLAN.md — UI visibility for research and combined viral scoring
+- [x] 02-01-PLAN.md -- Research metrics foundation (engagement/velocity/competition/posting)
+- [x] 02-02-PLAN.md -- Viral detector signal expansion + scoring updates
+- [x] 02-03-PLAN.md -- Weighted keyword extraction + YouTube API caching
+- [x] 02-04-PLAN.md -- Analyze-stage combined clip re-ranking
+- [x] 02-05-PLAN.md -- UI visibility for research and combined viral scoring
 
 ---
 
@@ -102,12 +102,12 @@ Plans:
 **Plans:** 6/6 complete
 
 Plans:
-- [x] 03-01-PLAN.md — Backend service contract + supervisor
-- [x] 03-02-PLAN.md — Tauri shell + sidecar lifecycle
-- [x] 03-03-PLAN.md — Streamlit migration to service client
-- [x] 03-04-PLAN.md — FFmpeg/model asset packaging
-- [x] 03-05-PLAN.md — Crash recovery + resume orchestration
-- [x] 03-06-PLAN.md — Installer matrix + smoke validation
+- [x] 03-01-PLAN.md -- Backend service contract + supervisor
+- [x] 03-02-PLAN.md -- Tauri shell + sidecar lifecycle
+- [x] 03-03-PLAN.md -- Streamlit migration to service client
+- [x] 03-04-PLAN.md -- FFmpeg/model asset packaging
+- [x] 03-05-PLAN.md -- Crash recovery + resume orchestration
+- [x] 03-06-PLAN.md -- Installer matrix + smoke validation
 
 ---
 
@@ -136,16 +136,16 @@ Plans:
 4. Runtime-critical behavior is protected by dedicated tests and stricter quality gates
 
 Plans:
-- [ ] 04-01-PLAN.md — Runtime invariants: stage validation + job lock + state sync
-- [ ] 04-02-PLAN.md — Service run/resume contract parity + client hardening
-- [ ] 04-03-PLAN.md — Streamlit workflow truthfulness fixes
-- [ ] 04-04-PLAN.md — Model and config validation hardening
-- [ ] 04-05-PLAN.md — Provider reliability and degraded-mode semantics
-- [ ] 04-06-PLAN.md — Service security, supervisor timeout, and reconciliation hardening
-- [ ] 04-07-PLAN.md — Render truthfulness + quality-control wiring + preflight checks
-- [ ] 04-08-PLAN.md — Output quality backbone: enhancement, thumbnails, research cache/query
-- [ ] 04-09-PLAN.md — Desktop lifecycle controls + Streamlit timeline editing UX completion
-- [ ] 04-10-PLAN.md — Confidence gates: runtime-critical tests, coverage thresholds, docs alignment
+- [ ] 04-01-PLAN.md -- Runtime invariants: stage validation + job lock + state sync
+- [ ] 04-02-PLAN.md -- Service run/resume contract parity + client hardening
+- [ ] 04-03-PLAN.md -- Streamlit workflow truthfulness fixes
+- [ ] 04-04-PLAN.md -- Model and config validation hardening
+- [ ] 04-05-PLAN.md -- Provider reliability and degraded-mode semantics
+- [ ] 04-06-PLAN.md -- Service security, supervisor timeout, and reconciliation hardening
+- [ ] 04-07-PLAN.md -- Render truthfulness + quality-control wiring + preflight checks
+- [ ] 04-08-PLAN.md -- Output quality backbone: enhancement, thumbnails, research cache/query
+- [ ] 04-09-PLAN.md -- Desktop lifecycle controls + Streamlit timeline editing UX completion
+- [ ] 04-10-PLAN.md -- Confidence gates: runtime-critical tests, coverage thresholds, docs alignment
 
 **Details:**
 Plans are ordered in 5 execution waves to prioritize P0 runtime correctness first, then reliability/security, then output quality and UX completion, and finally confidence gates.
@@ -160,9 +160,9 @@ Plans are ordered in 5 execution waves to prioritize P0 runtime correctness firs
 **Plans:** 3/3 complete
 
 Plans:
-- [x] 05-01-PLAN.md — Research-led platform schema defaults and fail-fast validation for `spotify_video`/`apple_video`
-- [x] 05-02-PLAN.md — Render compliance wiring with ffprobe topology/timing checks and truthful failure contracts
-- [x] 05-03-PLAN.md — Optional `apple_hls` hand-off packaging plus Apple/Spotify workflow-boundary documentation
+- [x] 05-01-PLAN.md -- Research-led platform schema defaults and fail-fast validation for `spotify_video`/`apple_video`
+- [x] 05-02-PLAN.md -- Render compliance wiring with ffprobe topology/timing checks and truthful failure contracts
+- [x] 05-03-PLAN.md -- Optional `apple_hls` hand-off packaging plus Apple/Spotify workflow-boundary documentation
 
 **Details:**
 Plans are sequenced in 3 waves:
@@ -195,9 +195,9 @@ Plans are sequenced in 3 waves:
 4. Operator-facing guidance remains truthful for Apple/Spotify publication boundaries
 
 Plans:
-- [x] 05.1-01-PLAN.md — Canonical export target registry + review-state normalization contract
-- [x] 05.1-02-PLAN.md — Streamlit export UI wiring for video targets + persistence round-trip safeguards
-- [x] 05.1-03-PLAN.md — CLI approval parity + invalid-key error contracts + regression coverage
+- [x] 05.1-01-PLAN.md -- Canonical export target registry + review-state normalization contract
+- [x] 05.1-02-PLAN.md -- Streamlit export UI wiring for video targets + persistence round-trip safeguards
+- [x] 05.1-03-PLAN.md -- CLI approval parity + invalid-key error contracts + regression coverage
 
 **Details:**
 Plans run in 2 execution waves:
@@ -230,9 +230,9 @@ Plans run in 2 execution waves:
 5. No crossfade/word-boundary/filler-control render-core rewrites land in Phase 6
 
 Plans:
-- [x] 06-01-PLAN.md — Enhancement config contract + FFmpeg capability preflight + scope guardrails
-- [x] 06-02-PLAN.md — Audio enhancement chain (FFmpeg-native de-esser + optional noisereduce dereverb)
-- [x] 06-03-PLAN.md — Optional video color correction chain + canonical-filter regression coverage
+- [x] 06-01-PLAN.md -- Enhancement config contract + FFmpeg capability preflight + scope guardrails
+- [x] 06-02-PLAN.md -- Audio enhancement chain (FFmpeg-native de-esser + optional noisereduce dereverb)
+- [x] 06-03-PLAN.md -- Optional video color correction chain + canonical-filter regression coverage
 
 **Details:**
 Plans run in 2 execution waves:
@@ -277,11 +277,11 @@ Scope boundary note:
 7. Per-platform custom thumbnail assignment UX remains explicitly deferred to follow-on scope
 
 Plans:
-- [x] 06.1-01-PLAN.md — Full-platform marketing contract: model + provider prompt quality/trend wiring + regression locking
-- [x] 06.1-02-PLAN.md — Marketing surfaces parity: full-platform render/UI coverage + trend-aware workflow regressions
-- [x] 06.1-03-PLAN.md — Thumbnail data contracts: virality schema + ranked selection state + compatibility
-- [x] 06.1-04-PLAN.md — Thumbnail MVP UX: analyze-time frame extraction + Streamlit visual ranked multi-select
-- [x] 06.1-05-PLAN.md — Thumbnail export contract: per-target compliance enforcement + fail-fast diagnostics + docs
+- [x] 06.1-01-PLAN.md -- Full-platform marketing contract: model + provider prompt quality/trend wiring + regression locking
+- [x] 06.1-02-PLAN.md -- Marketing surfaces parity: full-platform render/UI coverage + trend-aware workflow regressions
+- [x] 06.1-03-PLAN.md -- Thumbnail data contracts: virality schema + ranked selection state + compatibility
+- [x] 06.1-04-PLAN.md -- Thumbnail MVP UX: analyze-time frame extraction + Streamlit visual ranked multi-select
+- [x] 06.1-05-PLAN.md -- Thumbnail export contract: per-target compliance enforcement + fail-fast diagnostics + docs
 
 **Details:**
 Plans run in 4 waves:
@@ -298,29 +298,29 @@ Plans run in 4 waves:
 **Plans:** 4 plans
 
 Plans:
-- [x] 07-01-PLAN.md — Foundation contracts: boundary snapping utilities, additive edit-plan metadata, and per-filler decision compatibility.
-- [x] 07-02-PLAN.md — Render smoothing engine: typed policy config, snapped cuts, selective micro-fade/crossfade/xfade with short-segment guardrails.
-- [x] 07-03-PLAN.md — Streamlit/editorial UX: category-grouped filler review, bulk actions, and deterministic decision persistence.
-- [x] 07-04-PLAN.md — Integration hardening: end-to-end regression coverage, legacy artifact compatibility, and operator documentation.
+- [x] 07-01-PLAN.md -- Foundation contracts: boundary snapping utilities, additive edit-plan metadata, and per-filler decision compatibility.
+- [x] 07-02-PLAN.md -- Render smoothing engine: typed policy config, snapped cuts, selective micro-fade/crossfade/xfade with short-segment guardrails.
+- [x] 07-03-PLAN.md -- Streamlit/editorial UX: category-grouped filler review, bulk actions, and deterministic decision persistence.
+- [x] 07-04-PLAN.md -- Integration hardening: end-to-end regression coverage, legacy artifact compatibility, and operator documentation.
 
 ---
 
-### Phase 8: Intelligent Cut Quality — Context-Aware Filler Control & Invisible Edit Rendering
+### Phase 8: Intelligent Cut Quality -- Context-Aware Filler Control & Invisible Edit Rendering (REPLAN)
 
-**Goal:** Deliver semantically-aware filler word triage (category-based auto-remove vs. LLM-checked review vs. pause-protected keep) and invisible video cut rendering (de-breathing, noise-floor matching, pose-match frame selection, RIFE AI bridge frames)  without breaking existing Phase 7 smoothing contracts.
+**Goal:** Deliver semantically-aware filler word triage (category-based auto-remove vs. LLM-checked review vs. pause-protected keep) and invisible video cut rendering (de-breathing, noise-floor matching, pose-match frame selection, RIFE AI bridge frames) without breaking existing Phase 7 smoothing contracts.
 **Depends on:** Phase 7
-**Status:** Complete (verified 2026-02-21)
-**Plans:** 6/6 complete
+**Status:** Replanned (2026-02-23) -- fixes RIFE --output bug, model default, and dependency versions identified by post-execution research refresh
+**Plans:** 6 plans
 
 **Scope / Requirements:**
 
 - Restructure `FillerConfig` into typed `disfluencies`, `hedge_words`, `custom_words` sub-lists with backward-compatible `words` fallback
 - Enrich `FillerCut` transcript model with `category`, `pause_before_ms`, `pause_after_ms`, `context_before`, `context_after`, `protected` fields
-- Add pause-gate protection logic: fillers adjacent to ≥ 300ms pauses are `protected` and default to keep
-- Add LLM semantic triage sub-stage in `AnalyzeStage` for hedge fillers (batched, cheap gpt-4o-mini calls)
+- Add pause-gate protection logic: fillers adjacent to >= 300ms pauses are `protected` and default to keep
+- Add LLM semantic triage sub-stage in `AnalyzeStage` for hedge fillers (batched, cheap gemini-3-flash-lite calls)
 - Write `analysis/filler_triage.json` with per-filler `safe_to_remove` verdicts and LLM reasons
-- Wire triage results into review stage `FillerCutRange.default_action` (disfluency → remove, protected → keep, LLM-safe hedge → remove, LLM-review hedge → review)
-- Update Streamlit filler cards with context snippet, pause badges (ms display), 🔒 protection lock, and LLM reason
+- Wire triage results into review stage `FillerCutRange.default_action` (disfluency -> remove, protected -> keep, LLM-safe hedge -> remove, LLM-review hedge -> review)
+- Update Streamlit filler cards with context snippet, pause badges (ms display), protection lock, and LLM reason
 - Add `silero-vad` de-breathing pass extending cut boundaries past trailing breath sounds
 - Add `librosa` RMS noise-floor mismatch detection with FFmpeg gain-ramp correction
 - Add `opencv-python` Farneback optical-flow pose-match scanner for optimal cut-point frame selection
@@ -332,7 +332,7 @@ Plans:
 **Success Criteria:**
 
 1. `um`/`uh`/`hmm`/`er`/`ah` auto-removed; `like`/`you know` sent to LLM for semantic check
-2. Any filler adjacent to ≥ 300ms pause is protected (`default_action=keep`) in edit plan
+2. Any filler adjacent to >= 300ms pause is protected (`default_action=keep`) in edit plan
 3. LLM hedge triage produces `filler_triage.json` with one verdict per hedge filler; disabled flag respected
 4. Streamlit filler card shows context snippet, pause timing badges, and LLM reason text
 5. De-breathing extends cut boundaries to swallow trailing breath sounds
@@ -344,40 +344,40 @@ Plans:
 
 Plans:
 
-- [x] 08-01-PLAN.md — FillerConfig restructure + FillerCut category/pause/context enrichment in transcribe
-- [x] 08-02-PLAN.md — LLM semantic triage sub-stage (AnalyzeStage) + FillerTriage model + filler_triage.json artifact
-- [x] 08-03-PLAN.md — Review + UI wiring: triage -> FillerCutRange editorial_action + context/badge/protection UI
-- [x] 08-04-PLAN.md — GPU deps + SmoothingConfig Phase 8 fields + de-breathing (silero-vad) + noise-floor matching (librosa)
-- [x] 08-05-PLAN.md — Pose-match (opencv Farneback) + RIFE AI frame interpolation (practical-RIFE subprocess + --exp flag)
-- [x] 08-06-PLAN.md — Integration hardening: cross-path regressions, GPU smoke test, legacy compat, operator guide
+- [ ] 08-01-PLAN.md -- Fix llm_triage_model default (gpt-4o-mini -> gemini-3-flash-lite) + verify config fields
+- [ ] 08-02-PLAN.md -- Audit triage code for hardcoded model names + add model-default regression guard
+- [ ] 08-03-PLAN.md -- Verify review/UI editorial_action wiring + filler card Phase 8 display
+- [ ] 08-04-PLAN.md -- Update GPU dependency version floors (silero-vad 6.2, librosa 0.11, opencv 4.13)
+- [ ] 08-05-PLAN.md -- Fix RIFE --output bug + update tests for upstream-compatible CLI contract
+- [ ] 08-06-PLAN.md -- Update smoke test/operator guide versions + integration tests + legacy compat regressions
 
 **Details:**
 
 Plans run in 4 execution waves:
 
-- Wave 1: `08-01` (FillerConfig + FillerCut) and `08-02` (LLM triage) in parallel — no file overlap
-- Wave 2: `08-03` (review/UI wiring, depends on 01+02) and `08-04` (audio render passes + gpu deps, depends on 01) in parallel — no file overlap
-- Wave 3: `08-05` (video render passes, depends on 04 for shared settings.py/render.py)
-- Wave 4: `08-06` (integration hardening + docs, depends on 03+05)
+- Wave 1: `08-01` (config fix) and `08-02` (triage code audit + regression test) in parallel -- no file overlap
+- Wave 2: `08-03` (review/UI verification, depends on 01+02) and `08-04` (dependency version update, depends on 01) in parallel -- no file overlap
+- Wave 3: `08-05` (RIFE --output fix, depends on 04)
+- Wave 4: `08-06` (smoke test + operator guide + integration tests, depends on 03+05)
 
 **New dependencies (optional `gpu` extras group):**
 
 | Package | Version | Purpose | GPU required |
 |---|---|---|---|
-| `silero-vad` | >= 6.1 | Breath/VAD detection | No (CPU) |
-| `librosa` | >= 0.10 | Audio RMS analysis | No |
-| `opencv-python-headless` | >= 4.9 | Pose-match optical flow | No (CPU) |
-| `torch` | >= 2.7 (cu128 index) | RIFE + silero-vad runtime | Yes (RTX 5060 Ti Blackwell sm_120) |
-| `torchaudio` | >= 2.7 (cu128 index) | silero-vad audio I/O | Yes |
+| `silero-vad` | >= 6.2, < 7 | Breath/VAD detection | No (CPU) |
+| `librosa` | >= 0.11, < 1 | Audio RMS analysis | No |
+| `opencv-python-headless` | >= 4.13, < 5 | Pose-match optical flow | No (CPU) |
+| `torch` | 2.10.x (cu128 index) | RIFE + silero-vad runtime | Yes (RTX 5060 Ti Blackwell sm_120) |
+| `torchaudio` | 2.10.x (cu128 index) | silero-vad audio I/O | Yes |
 | `practical-RIFE` | git clone (model 4.25) | Frame interpolation subprocess | Yes |
 
-**Spec corrections applied (from 08-RESEARCH.md):**
-- RTX 5060 Ti = Blackwell sm_120 (NOT Ada Lovelace 8.9); requires cu128, NOT cu121
-- silero-vad >= 6.1 (NOT >= 5.0); fixes torchaudio deprecation
-- RIFE uses --exp flag (NOT --n); no --cpu flag exists
-- opencv-python-headless (NOT opencv-python); avoids Qt/display errors
-- torchvision NOT required by RIFE; omitted from deps
-- RIFE model 4.25 (NOT 4.26) as default; 4.26 has artifacts on some content
+**Replan corrections (from 08-RESEARCH.md 2026-02-23 refresh):**
+- CRITICAL: RIFE `--output` flag removed from bridge wrapper (upstream inference_img.py does not accept it)
+- HIGH: llm_triage_model default changed from gpt-4o-mini to gemini-3-flash-lite
+- MEDIUM: Dependency version floors raised to current stable (silero-vad 6.2, librosa 0.11, opencv-headless 4.13)
+- MEDIUM: torch/torchaudio baseline documented as 2.10.x (was >=2.7)
+- LOW: RIFE 4.26 note corrected (exists but 4.25 remains recommended)
+- LOW: Reasoning/CoT models explicitly forbidden for triage in operator guide
 
 ---
 
