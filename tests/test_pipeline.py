@@ -1668,7 +1668,7 @@ class TestPhase9BrandingWorkflow:
 
         assert not supervisor.gpu_lease.is_held()
 
-        with supervisor.gpu_lease.acquire(job_id="job-e2e", operation="flux"):
+        with supervisor.gpu_lease.acquire(job_id="job-e2e", operation="thumbnail_gen"):
             assert supervisor.gpu_lease.is_held()
             assert supervisor.gpu_lease.holder_job_id == "job-e2e"
 

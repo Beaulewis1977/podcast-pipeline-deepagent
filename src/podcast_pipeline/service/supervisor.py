@@ -6,10 +6,10 @@ pipeline runs in ``asyncio`` tasks. It persists runtime metadata
 file under each job directory for crash/restart reconciliation and
 guards against duplicate concurrent runs for the same job ID.
 
-Phase 9 adds :class:`GPULease` — a shared semaphore-based context
-manager that serializes GPU-heavy workloads (FLUX thumbnail generation
-and NVENC encoding) across concurrent jobs to prevent VRAM contention
-crashes on single-GPU machines.
+Phase 9 adds :class:`GPULease` -- a shared semaphore-based context
+manager that serializes GPU-heavy workloads (thumbnail generation
+and NVENC encoding) across concurrent jobs to prevent contention
+on single-GPU machines.
 """
 
 import asyncio
@@ -40,7 +40,7 @@ RUN_TIMEOUT_SECONDS = 1800.0
 class GPULease:
     """Semaphore-based context manager for serializing GPU-heavy operations.
 
-    FLUX thumbnail generation and NVENC-heavy encoding stages must not run
+    Thumbnail generation and NVENC-heavy encoding stages must not run
     concurrently across different jobs on a single-GPU machine.  The
     ``GPULease`` wraps a :class:`threading.Semaphore` with ``permits=1``
     so that at most one GPU-heavy workload is active at any time.
@@ -53,7 +53,7 @@ class GPULease:
 
         gpu_lease = GPULease()  # created once on Supervisor
 
-        with gpu_lease.acquire(job_id="job-42", operation="flux_thumbnail"):
+        with gpu_lease.acquire(job_id="job-42", operation="thumbnail_gen"):
             # run GPU-heavy work
             ...
 
@@ -240,7 +240,7 @@ class Supervisor:
         # job_id -> asyncio.Task
         self._active: dict[str, asyncio.Task[None]] = {}
         # Phase 9: shared GPU lease for cross-job serialization of
-        # FLUX thumbnail generation and NVENC encoding workloads.
+        # Thumbnail generation and NVENC encoding workloads.
         self.gpu_lease = GPULease()
 
     # ------------------------------------------------------------------

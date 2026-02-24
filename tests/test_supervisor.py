@@ -298,10 +298,10 @@ class TestGPULease:
         lease = GPULease()
         assert not lease.is_held()
 
-        with lease.acquire(job_id="job-1", operation="flux_thumbnail"):
+        with lease.acquire(job_id="job-1", operation="thumbnail_gen"):
             assert lease.is_held()
             assert lease.holder_job_id == "job-1"
-            assert lease.holder_operation == "flux_thumbnail"
+            assert lease.holder_operation == "thumbnail_gen"
 
         assert not lease.is_held()
         assert lease.holder_job_id is None
@@ -322,7 +322,7 @@ class TestGPULease:
 
         def _second_job() -> None:
             second_started.set()
-            with lease.acquire(job_id="job-2", operation="flux_thumbnail"):
+            with lease.acquire(job_id="job-2", operation="thumbnail_gen"):
                 results.append("second_done")
 
         t1 = threading.Thread(target=_first_job)
