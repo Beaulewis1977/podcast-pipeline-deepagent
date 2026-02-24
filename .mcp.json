@@ -1,0 +1,28 @@
+{
+  "mcpServers": {
+    "ffmpeg-server": {
+      "type": "stdio",
+      "command": "uv",
+      "args": [
+        "run",
+        "--group",
+        "dev",
+        "python",
+        "-m",
+        "podcast_pipeline.mcp.ffmpeg_server"
+      ],
+      "env": {},
+      "description": "Phase 9 FFmpeg toolkit MCP server. Exposes all 14 media operations as MCP tools for local developer automation and debugging. Dev-only — requires fastmcp in the dev dependency group.",
+      "when": "dev",
+      "notes": [
+        "Run `uv sync --group dev` before first use.",
+        "Requires FFmpeg to be installed on PATH.",
+        "Hardware encoder detection runs once at server startup.",
+        "Tools: probe_media, extract_frame, detect_hardware_encoders, transcode,",
+        "        normalize_loudness, burn_captions, overlay_image, apply_filtergraph,",
+        "        denoise, trim_segment, concat_segments, mix_audio, sync_tracks,",
+        "        package_hls."
+      ]
+    }
+  }
+}
