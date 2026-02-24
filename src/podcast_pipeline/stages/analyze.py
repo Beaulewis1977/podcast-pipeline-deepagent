@@ -777,8 +777,8 @@ class AnalyzeStage(Stage):
             word = str(raw_cut.get("word", ""))
             context_before = str(raw_cut.get("context_before", ""))
             context_after = str(raw_cut.get("context_after", ""))
-            pause_before_ms = float(raw_cut.get("pause_before_ms", 0.0))
-            pause_after_ms = float(raw_cut.get("pause_after_ms", 0.0))
+            pause_before_ms = float(raw_cut.get("pause_before_ms") or 0.0)
+            pause_after_ms = float(raw_cut.get("pause_after_ms") or 0.0)
             prompt = self._build_triage_prompt(
                 word=word,
                 context_before=context_before,
