@@ -1939,15 +1939,26 @@ class RenderStage(Stage):
         run_ffmpeg(args)
         self._assert_output_exists(output_file, f"{platform} video export")
 
+        # Phase 09-12 (GAP-7): Resolve effective branding profile — decisions
+        # take precedence over config.yaml active_profile.
+        effective_profile_name: str | None = (
+            decisions.branding_profile_name
+            if decisions.branding_profile_name is not None
+            else self.config.branding.active_profile
+        )
+
         # Phase 9.8: Apply production sound-kit stingers after cut assembly but before
         # loudness normalization so the ducked mix is part of the normalized output.
-        output_file = self._mix_stingers(
-            video_path=output_file,
-            output_dir=output_dir,
-            platform=platform,
-            edit_plan=edit_plan,
-            src_duration=src_duration,
-        )
+        # Phase 09-12 (GAP-7): Gate stinger mixing on ReviewDecisions toggle.
+        if decisions.sound_kit_enabled:
+            output_file = self._mix_stingers(
+                video_path=output_file,
+                output_dir=output_dir,
+                platform=platform,
+                edit_plan=edit_plan,
+                src_duration=src_duration,
+                profile_name_override=effective_profile_name,
+            )
 
         if normalize_audio:
             self._normalize_loudness(
@@ -1965,16 +1976,18 @@ class RenderStage(Stage):
             spec=spec,
         )
 
-        # Phase 9: Caption burn-in — runs after loudness normalization so captions
-        # are applied to the compliance-validated, normalized video.  Only executed
-        # when config.branding.captions.enabled is True.
-        if self.config.branding.captions.enabled:
+        # Phase 09-12 (GAP-7): Gate caption burn-in on ReviewDecisions toggle
+        # (replaces self.config.branding.captions.enabled check — UI decision
+        # takes precedence over config.yaml).
+        if decisions.captions_enabled:
             captioned = self._burn_captions(
                 video_path=output_file,
                 output_dir=output_dir,
                 job_dir=output_dir.parent.parent,
                 platform=platform,
                 spec=spec,
+                aspect_ratio_override=decisions.caption_aspect_ratio,
+                profile_name_override=effective_profile_name,
             )
             if captioned is not None:
                 output_file = captioned
@@ -1990,6 +2003,9 @@ class RenderStage(Stage):
         job_dir: Path,
         platform: str,
         spec: PlatformSpec,
+        *,
+        aspect_ratio_override: str | None = None,
+        profile_name_override: str | None = None,
     ) -> Path | None:
         """Generate ASS captions from word alignment and burn them into the video.
 
@@ -2019,7 +2035,13 @@ class RenderStage(Stage):
                 includes actionable diagnostics for the operator.
         """
         caption_cfg = self.config.branding.captions
-        aspect_ratio = (spec.aspect_ratio or "16:9").strip()
+        # Phase 09-12 (GAP-4): Use aspect ratio override from decisions when set;
+        # otherwise infer from platform spec.
+        aspect_ratio = (
+            aspect_ratio_override
+            if aspect_ratio_override is not None
+            else (spec.aspect_ratio or "16:9").strip()
+        )
 
         # Locate word alignment artifact — required when captions enabled.
         alignment_path = job_dir / "transcribe" / caption_cfg.alignment_filename
@@ -2048,17 +2070,23 @@ class RenderStage(Stage):
 
         branding_cfg = self.config.branding
         branding_profile = None
-        if branding_cfg.active_profile:
+        # Phase 09-12 (GAP-7): Use profile name override from decisions when set.
+        active_profile_name = (
+            profile_name_override
+            if profile_name_override is not None
+            else branding_cfg.active_profile
+        )
+        if active_profile_name:
             try:
                 branding_profile = load_branding_profile(
-                    branding_cfg.active_profile,
+                    active_profile_name,
                     branding_cfg.branding_dir,
                 )
             except Exception as exc:
                 self.logger.warning(
                     "caption_branding_load_failed",
                     platform=platform,
-                    profile=branding_cfg.active_profile,
+                    profile=active_profile_name,
                     error=str(exc),
                 )
 
@@ -3671,6 +3699,8 @@ class RenderStage(Stage):
         platform: str,
         edit_plan: EditPlan | None,
         src_duration: float,
+        *,
+        profile_name_override: str | None = None,
     ) -> Path:
         """Mix intro/transition/outro stingers into the rendered video.
 
@@ -3700,18 +3730,25 @@ class RenderStage(Stage):
         branding_cfg = self.config.branding
         kit_config = branding_cfg.sound_kit
 
+        # Phase 09-12 (GAP-7): Use profile name override from decisions when set.
+        active_profile_name = (
+            profile_name_override
+            if profile_name_override is not None
+            else branding_cfg.active_profile
+        )
+
         # Resolve the active branding profile for sound-kit field access.
         # best-effort: if profile loading fails we fall back to kit_config paths only.
         profile_intro: Path | None = None
         profile_transition: Path | None = None
         profile_outro: Path | None = None
 
-        if branding_cfg.active_profile:
+        if active_profile_name:
             try:
                 from podcast_pipeline.utils.branding import load_profile as _load_bp
 
                 branding_profile = _load_bp(
-                    branding_cfg.active_profile,
+                    active_profile_name,
                     branding_cfg.branding_dir,
                 )
                 if branding_profile is not None:
@@ -3721,7 +3758,7 @@ class RenderStage(Stage):
             except Exception as exc:
                 self.logger.warning(
                     "sound_kit_profile_load_failed",
-                    profile=branding_cfg.active_profile,
+                    profile=active_profile_name,
                     error=str(exc),
                 )
 

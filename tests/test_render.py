@@ -3311,9 +3311,8 @@ class TestCaptionBurnIn:
     def test_caption_burn_disabled_skips_burn_in_render_video(
         self, tmp_path: Path, monkeypatch
     ) -> None:
-        """_render_video must skip caption burn when captions.enabled is False."""
+        """_render_video must skip caption burn when decisions.captions_enabled is False."""
         config = load_config()
-        config.branding.captions.enabled = False
         stage = RenderStage(config)
         spec = config.platforms.youtube
 
@@ -3345,20 +3344,19 @@ class TestCaptionBurnIn:
             input_video=input_video,
             platform="youtube",
             spec=spec,
-            decisions=ReviewDecisions(review_complete=True),
+            decisions=ReviewDecisions(review_complete=True, captions_enabled=False),
             video_info={"width": 1920, "height": 1080, "duration": 30.0},
             edit_plan=None,
             normalize_audio=False,
         )
 
-        assert burn_calls == [], "_burn_captions must not be called when captions are disabled"
+        assert burn_calls == [], "_burn_captions must not be called when captions_enabled=False"
 
     def test_caption_burn_enabled_calls_burn_in_render_video(
         self, tmp_path: Path, monkeypatch
     ) -> None:
-        """_render_video must invoke _burn_captions when captions.enabled is True."""
+        """_render_video must invoke _burn_captions when decisions.captions_enabled is True."""
         config = load_config()
-        config.branding.captions.enabled = True
         stage = RenderStage(config)
         spec = config.platforms.youtube
 
@@ -3393,14 +3391,14 @@ class TestCaptionBurnIn:
             input_video=input_video,
             platform="youtube",
             spec=spec,
-            decisions=ReviewDecisions(review_complete=True),
+            decisions=ReviewDecisions(review_complete=True, captions_enabled=True),
             video_info={"width": 1920, "height": 1080, "duration": 30.0},
             edit_plan=None,
             normalize_audio=False,
         )
 
         assert len(burn_calls) == 1, (
-            "_burn_captions should be called exactly once when captions are enabled"
+            "_burn_captions should be called exactly once when captions_enabled=True"
         )
 
     def test_caption_burn_legacy_alignment_location_discovered(
@@ -3480,3 +3478,297 @@ class TestCaptionBurnIn:
         ass_files = list(output_dir.glob("*.ass"))
         assert ass_files, "ASS file must be written to output_dir"
         assert any("9_16" in f.name for f in ass_files), "ASS filename should include aspect ratio"
+
+
+class TestGAP7RenderWiring:
+    """GAP-7 regression tests: ReviewDecisions fields must actually affect render output.
+
+    Prior to Phase 09-12, captions_enabled/sound_kit_enabled/branding_profile_name were
+    persisted by the UI but silently ignored by render.py.  These tests lock the new
+    gating behaviour so it cannot regress.
+    """
+
+    # ── Helpers ────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _make_stage() -> RenderStage:
+        """Return a RenderStage with default config."""
+        return RenderStage(load_config())
+
+    @staticmethod
+    def _fake_ffmpeg_writer(args: list[str]) -> None:
+        """Simulate FFmpeg by writing empty bytes to the last argument path."""
+        out = Path(args[-1])
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(b"rendered")
+
+    def _call_render_video(  # noqa: PLR0913
+        self,
+        stage: RenderStage,
+        monkeypatch: Any,
+        tmp_path: Path,
+        *,
+        decisions: ReviewDecisions,
+        mock_mix_stingers: bool = True,
+        mock_burn_captions: bool = True,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """Call _render_video with mocks; return (stinger_calls, burn_calls)."""
+        config = load_config()
+        spec = config.platforms.youtube
+
+        input_video = tmp_path / "input" / "raw.mp4"
+        input_video.parent.mkdir(parents=True, exist_ok=True)
+        input_video.write_bytes(b"video")
+        output_dir = tmp_path / "output" / "youtube"
+
+        stinger_calls: list[dict[str, Any]] = []
+        burn_calls: list[dict[str, Any]] = []
+
+        monkeypatch.setattr(
+            "podcast_pipeline.stages.render.run_ffmpeg",
+            self._fake_ffmpeg_writer,
+        )
+        monkeypatch.setattr(stage, "_normalize_loudness", lambda *_a, **_k: None)
+        monkeypatch.setattr(stage, "_validate_video_platform_compliance", lambda *_a, **_k: None)
+
+        if mock_mix_stingers:
+
+            def _fake_mix(*_args: Any, **kwargs: Any) -> Path:
+                stinger_calls.append(dict(kwargs))
+                video = output_dir / "stingered.mp4"
+                video.parent.mkdir(parents=True, exist_ok=True)
+                video.write_bytes(b"stingered")
+                return video
+
+            monkeypatch.setattr(stage, "_mix_stingers", _fake_mix)
+
+        if mock_burn_captions:
+
+            def _fake_burn(*_args: Any, **kwargs: Any) -> Path | None:
+                burn_calls.append(dict(kwargs))
+                return None
+
+            monkeypatch.setattr(stage, "_burn_captions", _fake_burn)
+
+        stage._render_video(
+            output_dir=output_dir,
+            input_video=input_video,
+            platform="youtube",
+            spec=spec,
+            decisions=decisions,
+            video_info={"width": 1920, "height": 1080, "duration": 30.0},
+            edit_plan=None,
+            normalize_audio=False,
+        )
+
+        return stinger_calls, burn_calls
+
+    # ── Tests ──────────────────────────────────────────────────────────────────
+
+    def test_render_video_captions_gate_respects_decisions(
+        self, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        """_burn_captions called when captions_enabled=True; skipped when False."""
+        stage = self._make_stage()
+
+        # captions_enabled=True → _burn_captions MUST be called.
+        _, burn_calls_on = self._call_render_video(
+            stage,
+            monkeypatch,
+            tmp_path / "on",
+            decisions=ReviewDecisions(review_complete=True, captions_enabled=True),
+        )
+        assert len(burn_calls_on) == 1, "_burn_captions must be called when captions_enabled=True"
+
+        # captions_enabled=False → _burn_captions MUST NOT be called.
+        _, burn_calls_off = self._call_render_video(
+            stage,
+            monkeypatch,
+            tmp_path / "off",
+            decisions=ReviewDecisions(review_complete=True, captions_enabled=False),
+        )
+        assert burn_calls_off == [], "_burn_captions must be skipped when captions_enabled=False"
+
+    def test_render_video_sound_kit_gate_respects_decisions(
+        self, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        """_mix_stingers called when sound_kit_enabled=True; skipped when False."""
+        stage = self._make_stage()
+
+        # sound_kit_enabled=True → _mix_stingers MUST be called.
+        stinger_calls_on, _ = self._call_render_video(
+            stage,
+            monkeypatch,
+            tmp_path / "on",
+            decisions=ReviewDecisions(review_complete=True, sound_kit_enabled=True),
+        )
+        assert len(stinger_calls_on) == 1, (
+            "_mix_stingers must be called when sound_kit_enabled=True"
+        )
+
+        # sound_kit_enabled=False → _mix_stingers MUST NOT be called.
+        stinger_calls_off, _ = self._call_render_video(
+            stage,
+            monkeypatch,
+            tmp_path / "off",
+            decisions=ReviewDecisions(review_complete=True, sound_kit_enabled=False),
+        )
+        assert stinger_calls_off == [], "_mix_stingers must be skipped when sound_kit_enabled=False"
+
+    def test_render_video_branding_profile_override(self, tmp_path: Path, monkeypatch: Any) -> None:
+        """decisions.branding_profile_name flows into _burn_captions and _mix_stingers."""
+        stage = self._make_stage()
+
+        stinger_calls, burn_calls = self._call_render_video(
+            stage,
+            monkeypatch,
+            tmp_path,
+            decisions=ReviewDecisions(
+                review_complete=True,
+                captions_enabled=True,
+                sound_kit_enabled=True,
+                branding_profile_name="custom",
+            ),
+        )
+
+        assert len(stinger_calls) == 1, "_mix_stingers must be called with profile override"
+        assert stinger_calls[0].get("profile_name_override") == "custom", (
+            "_mix_stingers must receive profile_name_override='custom'"
+        )
+
+        assert len(burn_calls) == 1, "_burn_captions must be called with profile override"
+        assert burn_calls[0].get("profile_name_override") == "custom", (
+            "_burn_captions must receive profile_name_override='custom'"
+        )
+
+    def test_burn_captions_aspect_ratio_override(self, tmp_path: Path, monkeypatch: Any) -> None:
+        """_burn_captions uses aspect_ratio_override when provided, ignoring spec.aspect_ratio."""
+        import json as _json
+
+        stage = self._make_stage()
+        config = load_config()
+        spec = config.platforms.youtube  # spec has 16:9
+
+        # Provide alignment artifact so the caption path can proceed.
+        transcribe_dir = tmp_path / "transcribe"
+        transcribe_dir.mkdir(parents=True)
+        (transcribe_dir / "word_alignment.json").write_text(
+            _json.dumps({"words": [{"word": "test", "start": 0.0, "end": 0.5}]})
+        )
+
+        video_path = tmp_path / "output" / "youtube" / "final.mp4"
+        video_path.parent.mkdir(parents=True, exist_ok=True)
+        video_path.write_bytes(b"video")
+        output_dir = video_path.parent
+
+        generated_ass_paths: list[str] = []
+
+        def _capture_ffmpeg(args: list[str]) -> None:
+            """Record the ass= filter path; write output."""
+            for arg in args:
+                if arg.startswith("ass="):
+                    generated_ass_paths.append(arg[4:])
+            out = Path(args[-1])
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_bytes(b"captioned")
+
+        monkeypatch.setattr("podcast_pipeline.stages.render.run_ffmpeg", _capture_ffmpeg)
+
+        result = stage._burn_captions(
+            video_path=video_path,
+            output_dir=output_dir,
+            job_dir=tmp_path,
+            platform="youtube",
+            spec=spec,
+            aspect_ratio_override="9:16",  # override spec's 16:9
+        )
+
+        assert result is not None
+        # The ASS file written to output_dir must reflect "9:16" not "16:9".
+        ass_files = list(output_dir.glob("*.ass"))
+        assert any("9_16" in f.name for f in ass_files), (
+            "ASS filename must reflect the overridden aspect ratio 9:16, not spec's 16:9"
+        )
+
+    def test_mix_stingers_profile_name_override(self, tmp_path: Path, monkeypatch: Any) -> None:
+        """_mix_stingers uses profile_name_override instead of config.branding.active_profile."""
+        stage = self._make_stage()
+
+        loaded_profiles: list[str] = []
+
+        def _fake_load_profile(name: str, branding_dir: Any) -> None:
+            loaded_profiles.append(name)
+
+        monkeypatch.setattr(
+            "podcast_pipeline.utils.branding.load_profile",
+            _fake_load_profile,
+        )
+
+        video_path = tmp_path / "video.mp4"
+        video_path.write_bytes(b"video")
+        output_dir = tmp_path / "output"
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Call with profile_name_override — the override profile name must be used.
+        stage._mix_stingers(
+            video_path=video_path,
+            output_dir=output_dir,
+            platform="youtube",
+            edit_plan=None,
+            src_duration=60.0,
+            profile_name_override="my_custom_profile",
+        )
+
+        assert "my_custom_profile" in loaded_profiles, (
+            "_mix_stingers must use profile_name_override when provided"
+        )
+
+    def test_render_video_captions_disabled_ignores_config(
+        self, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        """decisions.captions_enabled=False skips captions even when config.branding.captions.enabled=True.
+
+        This is the key regression: the UI decision must take precedence over config.yaml.
+        """
+        config = load_config()
+        config.branding.captions.enabled = True  # config says enabled...
+        stage = RenderStage(config)
+
+        burn_calls: list[str] = []
+
+        def _record_burn(*_args: Any, **_kwargs: Any) -> Path | None:
+            burn_calls.append("called")
+            return None
+
+        monkeypatch.setattr(
+            "podcast_pipeline.stages.render.run_ffmpeg",
+            self._fake_ffmpeg_writer,
+        )
+        monkeypatch.setattr(stage, "_burn_captions", _record_burn)
+        monkeypatch.setattr(stage, "_normalize_loudness", lambda *_a, **_k: None)
+        monkeypatch.setattr(stage, "_validate_video_platform_compliance", lambda *_a, **_k: None)
+
+        input_video = tmp_path / "input" / "raw.mp4"
+        input_video.parent.mkdir(parents=True, exist_ok=True)
+        input_video.write_bytes(b"video")
+        output_dir = tmp_path / "output" / "youtube"
+        spec = config.platforms.youtube
+
+        stage._render_video(
+            output_dir=output_dir,
+            input_video=input_video,
+            platform="youtube",
+            spec=spec,
+            decisions=ReviewDecisions(
+                review_complete=True,
+                captions_enabled=False,  # ...but UI says disabled
+            ),
+            video_info={"width": 1920, "height": 1080, "duration": 30.0},
+            edit_plan=None,
+            normalize_audio=False,
+        )
+
+        assert burn_calls == [], (
+            "_burn_captions must NOT be called when decisions.captions_enabled=False, "
+            "even when config.branding.captions.enabled=True"
+        )
