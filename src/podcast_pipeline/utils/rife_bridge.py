@@ -3,10 +3,11 @@
 Wraps the practical-RIFE ``inference_img.py`` script via ``subprocess.run``
 to generate synthetic bridge frames between two images at a content-cut join.
 
-CRITICAL implementation notes (from Phase 8 research corrections):
+Implementation notes:
 - Use ``--exp`` flag (NOT ``--n`` — ``--n`` does not exist in RIFE).
-- Do NOT pass ``--output`` flag — upstream inference_img.py does NOT accept it.
-  RIFE writes to ``./output/`` relative to the process working directory (cwd).
+- Pass ``--output <path>`` to control where frames are written.
+- Pass ``--model <path>`` with absolute path to the ``train_log/`` directory
+  containing model weights (``flownet.pkl``).
 - Do NOT pass ``--cpu`` flag — it does not exist.  For CPU-only execution,
   set ``CUDA_VISIBLE_DEVICES=""`` in the subprocess environment instead.
 - Default model: RIFE 4.25 (recommended; 4.26 exists but may produce artifacts
@@ -17,7 +18,6 @@ CRITICAL implementation notes (from Phase 8 research corrections):
 from __future__ import annotations
 
 import math
-import os
 import subprocess
 from pathlib import Path
 
@@ -125,15 +125,13 @@ class RifeBridge:
 
         exp = self.frames_to_exp(num_frames)  # e.g. num_frames=4 → exp=2 (2^2=4 frames)
 
-        # Use output_dir as the working directory. RIFE writes to ./output/ relative to cwd.
-        work_dir = output_dir
-        work_dir.mkdir(parents=True, exist_ok=True)
+        output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Preserve RIFE's repo dir for model imports (inference_img.py uses relative
-        # imports like `from model.RIFE_HDv3 import device`). Inject PYTHONPATH so
-        # model resolution works even though cwd is work_dir, not the RIFE repo.
+        # Run subprocess with cwd=rife_dir so that:
+        # 1. Python relative imports work (from model.RIFE_HDv2, from train_log.RIFE_HDv3)
+        # 2. Default --model "train_log" resolves to rife_dir/train_log/flownet.pkl
         rife_dir = self.script_path.parent
-        env = {**os.environ, "PYTHONPATH": str(rife_dir)}
+        model_dir = rife_dir / "train_log"
 
         cmd = [
             "python",
@@ -143,9 +141,11 @@ class RifeBridge:
             str(frame_b.resolve()),
             "--exp",
             str(exp),
+            "--model",
+            str(model_dir.resolve()),
+            "--output",
+            str(output_dir.resolve()),
         ]
-        # NOTE: Upstream inference_img.py has no output-path argument; it always
-        # writes frames to ./output/ relative to cwd. Do not add any output flag.
         # NOTE: No --cpu flag (does not exist). For CPU: set CUDA_VISIBLE_DEVICES="" in env.
 
         logger.info(
@@ -154,12 +154,10 @@ class RifeBridge:
             num_frames=num_frames,
             frame_a=str(frame_a),
             frame_b=str(frame_b),
-            work_dir=str(work_dir),
+            output_dir=str(output_dir),
         )
 
-        result = subprocess.run(
-            cmd, cwd=str(work_dir), env=env, capture_output=True, text=True, check=False
-        )
+        result = subprocess.run(cmd, cwd=str(rife_dir), capture_output=True, text=True, check=False)
         if result.returncode != 0:
             logger.error(
                 "rife_failed",
@@ -169,7 +167,7 @@ class RifeBridge:
             )
             return []
 
-        # RIFE outputs to ./output/img*.png relative to cwd
-        generated = sorted((work_dir / "output").glob("img*.png"))
-        logger.info("rife_generated", count=len(generated), work_dir=str(work_dir))
+        # RIFE writes img*.png into the --output directory
+        generated = sorted(output_dir.glob("img*.png"))
+        logger.info("rife_generated", count=len(generated), output_dir=str(output_dir))
         return generated

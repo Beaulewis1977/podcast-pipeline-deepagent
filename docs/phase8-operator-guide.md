@@ -213,9 +213,11 @@ smoothing:
   rife_fallback_to_xfade: true  # fall back to Phase 7 xfade when RIFE fails
 ```
 
-**Subprocess flag:** RIFE is called with `--exp <N>` (NOT `--n` — that flag does not
-exist in practical-RIFE).  `--cpu` also does not exist; for CPU-only execution set
-`CUDA_VISIBLE_DEVICES=""` in the subprocess environment.
+**Subprocess flags:** RIFE is called with `--exp <N>`, `--model <path>`, and
+`--output <path>`.  Do NOT use `--n` (does not exist in practical-RIFE).  `--cpu`
+also does not exist; for CPU-only execution set `CUDA_VISIBLE_DEVICES=""` in the
+subprocess environment.  The bridge sets `cwd` to the RIFE directory so that Python
+imports resolve correctly.
 
 **Model:** use RIFE 4.25 (recommended default). RIFE 4.26 does exist but may produce
 artifacts on some content types; 4.25 is the stable recommended version.
