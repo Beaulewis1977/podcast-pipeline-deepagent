@@ -10,7 +10,8 @@
 ## Summary
 
 Phase 9 delivered 11 backend plans successfully. Post-execution UI audit identified 2 fully missing UI
-surfaces and 4 partial gaps. Existing Phase 9 features that work correctly in UI are also noted.
+surfaces, 4 partial UI gaps, and 1 critical backend wiring gap where UI controls save data but render
+ignores it entirely. Existing Phase 9 features that work correctly in UI are also noted.
 
 ---
 
@@ -147,6 +148,56 @@ platform override entries interactively.
 
 ---
 
+---
+
+## CRITICAL BACKEND WIRING GAP — UI Saves Data, Render Ignores It
+
+### GAP-7: Production Sidebar Decisions Not Consumed by Render Stage
+
+**Discovery:** Found during implementation investigation, not visible in UI-only audit.
+
+**What is broken:** Three Phase 9 `ReviewDecisions` fields are persisted to `review_state.json`
+by the Production sidebar UI but are **completely ignored by `render.py`** at render time:
+
+| ReviewDecisions field | UI control | What render actually does |
+|---|---|---|
+| `captions_enabled` | "Enable Captions" checkbox (app.py ~line 2590) | Ignores this field. Gates caption burn-in on `self.config.branding.captions.enabled` (static config YAML only). |
+| `sound_kit_enabled` | "Enable Sound Kit" checkbox (app.py ~line 2598) | Ignores this field. Always calls `_mix_stingers()` unconditionally — stingers run if sound files are configured, regardless of this toggle. |
+| `branding_profile_name` | Branding Profile selectbox (app.py ~line 2580) | Ignores this field. Uses `self.config.branding.active_profile` (static config YAML only). |
+
+**Root cause:** `_render_video()` receives `decisions` as a parameter but does not pass it to
+`_burn_captions()` or `_mix_stingers()`. Both methods read `self.config.branding.*` directly.
+The `captions_enabled` config check is at render.py line 1971; `_mix_stingers` is called
+unconditionally at line 1944.
+
+**Impact:**
+- Checking "Enable Captions" in the sidebar has zero effect — captions only run if
+  `config.branding.captions.enabled = true` in config.yaml.
+- Unchecking "Enable Sound Kit" has zero effect — stingers still run if configured in the profile.
+- Selecting a branding profile in the sidebar has zero effect on render — only the config.yaml
+  `branding.active_profile` key controls which profile render uses.
+
+**Affected files:**
+- `src/podcast_pipeline/stages/render.py` — `_render_video()` (~line 1940-1981), `_burn_captions()`
+  (~line 1986), `_mix_stingers()` (~line 3667)
+- `src/podcast_pipeline/stages/review.py` — `ReviewDecisions` model (~line 33)
+
+**Fix scope:**
+- In `_render_video()`, gate `_mix_stingers()` call on `decisions.sound_kit_enabled`
+- In `_render_video()`, gate caption burn-in on `decisions.captions_enabled` (in addition to or
+  instead of the static config check — UI decision should take precedence)
+- In `_render_video()`, resolve effective branding profile: use `decisions.branding_profile_name`
+  when set, fall back to `self.config.branding.active_profile`
+- Thread the effective profile name into `_burn_captions()` and `_mix_stingers()` as an override
+  parameter, or temporarily update `self.config.branding.active_profile` before calling them
+- Add `caption_aspect_ratio` field to `ReviewDecisions` (needed for GAP-4) and pass it to
+  `_burn_captions()` to override the spec's default aspect ratio
+
+**Note:** `decisions.ai_thumbnails_enabled` is correctly wired — it is consumed in
+`stages/analyze.py` to gate AI thumbnail generation, not in render.
+
+---
+
 ## EXISTS — Working Correctly
 
 These Phase 9 UI features were verified as fully functional:
@@ -158,8 +209,8 @@ These Phase 9 UI features were verified as fully functional:
 | Brand Studio tab (top-level nav) | `_NAV_LABELS_BY_PAGE` line 56 | `🎨 Brand Studio` |
 | Brand voice text area | Brand Studio ~line 2366 | 2000-char limit with counter |
 | Caption style editor | Brand Studio ~line 2410 | Color, size, shadow, bold, italic, font |
-| Caption enable toggle | Production sidebar ~line 2590 | Wired to render payload |
-| Sound kit enable toggle | Production sidebar ~line 2598 | Wired to render payload |
+| Caption enable toggle | Production sidebar ~line 2590 | Saved to review_state.json — but see GAP-7 |
+| Sound kit enable toggle | Production sidebar ~line 2598 | Saved to review_state.json — but see GAP-7 |
 | Manual sync offset slider | Production sidebar ~line 2615 | ±2000ms (range gap noted in GAP-3) |
 | Active profile selector + Set as Active | Brand Studio ~line 2284 | Persists to review_state.json |
 | Profile create / save / delete | Brand Studio ~line 2295 | Full CRUD lifecycle |
@@ -170,12 +221,26 @@ These Phase 9 UI features were verified as fully functional:
 
 | Priority | Gap | Effort | Impact |
 |---|---|---|---|
+| P0 | GAP-7: Production sidebar decisions not consumed by render | Medium — render.py wiring | Critical — captions/sound kit/branding profile UI controls have zero effect |
 | P0 | GAP-2: youtube_ultra not in EXPORT_TARGETS | Low (1 file change + label) | High — feature completely unusable |
-| P0 | GAP-1: Claude provider selection | Medium | High — can't use Claude without YAML edit |
-| P1 | GAP-3A: Auto-detected sync offset not shown | Low | Medium — UX clarity for multi-track |
-| P1 | GAP-4: Caption aspect ratio selector | Low | Medium — breaks vertical/square exports |
+| P0 | GAP-1: Claude provider selection + Anthropic key status | Medium | High — can't use Claude without YAML edit |
+| P1 | GAP-4: Caption aspect ratio selector (UI + ReviewDecisions field + render wire) | Low | Medium — breaks vertical/square exports |
+| P1 | GAP-3A: Auto-detected sync offset not displayed | Low | Medium — UX clarity for multi-track |
+| P2 | GAP-5A: Split sound kit into stingers + auto-duck toggles | Low | Low — workaround exists via profile |
 | P2 | GAP-3B: Sync slider range ±2000ms vs ±5000ms | Trivial | Low — edge case |
-| P2 | GAP-5A: Indivisible sound kit toggle | Low | Low — workaround exists via profile |
 | P3 | GAP-6A: Logo/font file uploader | Medium | Medium — UX friction for operators |
-| P3 | GAP-5B: Per-job stinger override | Low | Low — profile-level is sufficient for most |
+| P3 | GAP-5B: Per-job stinger path override | Low | Low — profile-level sufficient for most |
 | P3 | GAP-6B: Platform overrides interactive edit | Medium | Low — power-user feature |
+
+---
+
+## Files Involved (for planning reference)
+
+| File | Gaps |
+|---|---|
+| `src/podcast_pipeline/stages/render.py` | GAP-7 (main fix — decisions wiring in `_render_video`, `_burn_captions`, `_mix_stingers`) |
+| `src/podcast_pipeline/stages/review.py` | GAP-7 (add `caption_aspect_ratio` field to `ReviewDecisions`), GAP-5A (add `auto_duck_enabled` field) |
+| `src/podcast_pipeline/export_targets.py` | GAP-2 (add `youtube_ultra` entry) |
+| `src/podcast_pipeline/ui/app.py` | GAP-1, GAP-3A, GAP-3B, GAP-4, GAP-5A, GAP-6A, GAP-6B (all UI changes) |
+| `tests/test_pipeline.py` | GAP-7 (new render wiring tests), GAP-4 (caption_aspect_ratio round-trip) |
+| `tests/test_ui_app.py` | GAP-1 (Anthropic key display), GAP-4 (aspect ratio persistence) |
