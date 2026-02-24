@@ -88,12 +88,12 @@ def test_ffmpeg_toolkit_error_stores_fields() -> None:
     err = FFmpegToolkitError(
         "something broke",
         operation="transcode",
-        args=["-i", "in.mp4"],
+        cmd_args=["-i", "in.mp4"],
         stderr_excerpt="codec not found",
         returncode=1,
     )
     assert err.operation == "transcode"
-    assert list(err.args) == ["-i", "in.mp4"]
+    assert err.cmd_args == ["-i", "in.mp4"]
     assert err.stderr_excerpt == "codec not found"
     assert err.returncode == 1
 
@@ -114,7 +114,7 @@ def test_ffmpeg_toolkit_error_str_includes_all_parts() -> None:
 def test_ffmpeg_toolkit_error_defaults() -> None:
     err = FFmpegToolkitError("bare error")
     assert err.operation == ""
-    assert list(err.args) == []
+    assert err.cmd_args == []
     assert err.stderr_excerpt == ""
     assert err.returncode == -1
     # __str__ should not include returncode=-1
@@ -125,7 +125,7 @@ def test_wrap_ffmpeg_error_converts_fields() -> None:
     source = FFmpegError("original", stderr="long stderr text" * 100, returncode=42)
     wrapped = _wrap_ffmpeg_error(source, "probe_media", ["ffprobe", "file.mp4"])
     assert wrapped.operation == "probe_media"
-    assert list(wrapped.args) == ["ffprobe", "file.mp4"]
+    assert wrapped.cmd_args == ["ffprobe", "file.mp4"]
     assert wrapped.returncode == 42
     # Excerpt must be capped at 500 chars
     assert len(wrapped.stderr_excerpt) <= 500
