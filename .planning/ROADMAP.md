@@ -449,8 +449,8 @@ Plans run in 6 execution waves:
 
 **Goal:** Close all UI and backend wiring gaps discovered post-Phase 9 execution so that every Phase 9 feature is fully accessible, controllable, and functional from the Streamlit interface.
 **Depends on:** Phase 9
-**Status:** Planned
-**Plans:** 3 plans
+**Status:** Complete (verified 2026-02-24)
+**Plans:** 3/3 complete
 
 **Scope / Requirements:**
 
@@ -484,9 +484,9 @@ Seven gaps identified in `09-UI-GAPS.md`. Ordered by priority:
 **Gap reference:** `.planning/phases/09-automated-branding-captions-and-multi-track-sync/09-UI-GAPS.md`
 
 Plans:
-- [ ] 09-12-01-PLAN.md — Render wiring fix (GAP-7) + youtube_ultra registration (GAP-2) + ReviewDecisions extension + regression tests
-- [ ] 09-12-02-PLAN.md — Claude provider selectbox + Anthropic key status (GAP-1) + caption aspect ratio (GAP-4) + sync artifact display + slider range (GAP-3)
-- [ ] 09-12-03-PLAN.md — Split sound kit checkboxes (GAP-5A) + logo/font file uploaders (GAP-6A) + optional P3 stretch goals
+- [x] 09-12-01-PLAN.md — Render wiring fix (GAP-7) + youtube_ultra registration (GAP-2) + ReviewDecisions extension + regression tests
+- [x] 09-12-02-PLAN.md — Claude provider selectbox + Anthropic key status (GAP-1) + caption aspect ratio (GAP-4) + sync artifact display + slider range (GAP-3)
+- [x] 09-12-03-PLAN.md — Split sound kit checkboxes (GAP-5A) + logo/font file uploaders (GAP-6A) + optional P3 stretch goals
 
 **Details:**
 Plans run in 3 execution waves:
