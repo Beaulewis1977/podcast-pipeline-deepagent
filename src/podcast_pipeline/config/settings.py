@@ -159,6 +159,21 @@ class FillerConfig(BaseModel):
     llm_triage_model: str = "gemini-2.5-flash-lite"
     llm_triage_max_context_words: int = 5
 
+    @field_validator("llm_triage_model")
+    @classmethod
+    def reject_reasoning_models(cls, v: str) -> str:
+        """Reject known reasoning/CoT models — too slow and expensive for per-filler triage."""
+        forbidden_prefixes = ("o1", "o3", "gemini-3-pro", "gemini-pro-thinking")
+        lowered = v.lower()
+        for prefix in forbidden_prefixes:
+            if lowered.startswith(prefix):
+                raise ValueError(
+                    f"llm_triage_model '{v}' is a reasoning/CoT model and is forbidden "
+                    f"for filler triage (too slow and expensive). "
+                    f"Use 'gemini-2.5-flash-lite' instead."
+                )
+        return v
+
 
 class AudioConfig(BaseModel):
     """Audio processing configuration."""

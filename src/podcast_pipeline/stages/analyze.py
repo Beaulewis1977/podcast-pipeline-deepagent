@@ -685,6 +685,9 @@ class AnalyzeStage(Stage):
         """Run LLM triage for hedge fillers and write filler_triage.json."""
         try:
             results = self._triage_fillers(job_dir)
+            if not results:
+                self.logger.info("triage_skipped", reason="no_hedge_candidates")
+                return None
             triage_path = job_dir / "analysis" / "filler_triage.json"
             triage_path.parent.mkdir(parents=True, exist_ok=True)
             triage_path.write_text(json.dumps([r.model_dump() for r in results], indent=2))
@@ -749,11 +752,21 @@ class AnalyzeStage(Stage):
 
         model = self.config.fillers.llm_triage_model
 
-        # Determine provider and API key from model name
+        # Determine provider and API key from model name.
+        # Only Gemini is officially supported for triage; other models fall back
+        # to the OpenAI-compatible transport.  Claude/Anthropic models are NOT
+        # supported and will fail at the API call — use gemini-2.5-flash-lite.
         if model.startswith("gemini"):
             api_key = self.config.api_keys.gemini
             provider_name = "gemini"
         else:
+            if model.startswith("claude") or model.startswith("anthropic"):
+                self.logger.warning(
+                    "triage_unsupported_model",
+                    model=model,
+                    reason="Claude/Anthropic models are not supported; "
+                    "routing to OpenAI transport will fail at runtime.",
+                )
             api_key = self.config.api_keys.openai
             provider_name = "openai"
 

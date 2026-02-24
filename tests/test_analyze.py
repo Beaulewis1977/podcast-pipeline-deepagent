@@ -306,17 +306,15 @@ class TestTriageFillerEmptyInput:
 
         assert results == []
 
-    def test_run_triage_writes_empty_json_when_no_cuts(self, tmp_path: Path) -> None:
-        """_run_triage writes an empty array to analysis/filler_triage.json."""
+    def test_run_triage_returns_none_when_no_cuts(self, tmp_path: Path) -> None:
+        """_run_triage returns None and does not write filler_triage.json when no hedge candidates."""
         stage = _make_stage(enable_llm_triage=True)
 
         output = stage._run_triage(tmp_path)
 
-        assert output == "analysis/filler_triage.json"
+        assert output is None
         triage_path = tmp_path / "analysis" / "filler_triage.json"
-        assert triage_path.exists()
-        payload = json.loads(triage_path.read_text())
-        assert payload == []
+        assert not triage_path.exists()
 
     def test_triage_fillers_empty_list_json(self, tmp_path: Path) -> None:
         """filler_cuts.json with empty list → no results, no LLM calls."""
