@@ -910,6 +910,35 @@ class APIKeysConfig(BaseModel):
         )
 
 
+class CaptionConfig(BaseModel):
+    """Phase 9 caption burn-in settings.
+
+    Controls whether ASS captions are generated and burned into exported video.
+    Requires a ``word_alignment.json`` artifact from the transcription stage.
+    """
+
+    enabled: bool = Field(
+        default=False,
+        description="When True, caption burn-in is attempted for each export.",
+    )
+    alignment_filename: str = Field(
+        default="word_alignment.json",
+        description="Filename (relative to job artifacts dir) for word-level alignment data.",
+    )
+    max_words_per_line: int = Field(
+        default=7,
+        ge=1,
+        le=20,
+        description="Maximum words grouped into a single dialogue event.",
+    )
+    gap_threshold_s: float = Field(
+        default=1.5,
+        ge=0.1,
+        le=10.0,
+        description="Silence gap (seconds) that forces a new dialogue event.",
+    )
+
+
 class BrandingConfig(BaseModel):
     """Phase 9 branding profile configuration.
 
@@ -928,6 +957,10 @@ class BrandingConfig(BaseModel):
     branding_dir: Path = Field(
         default=Path("branding"),
         description="Directory that holds branding/<name>.yaml profile files.",
+    )
+    captions: CaptionConfig = Field(
+        default_factory=CaptionConfig,
+        description="Caption burn-in settings (word-level ASS subtitle generation).",
     )
 
 
