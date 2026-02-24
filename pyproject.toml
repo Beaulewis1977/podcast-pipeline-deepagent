@@ -23,6 +23,7 @@ dependencies = [
     "pyloudnorm>=0.1.1",
     "pydub>=0.25.1",
     "soundfile>=0.12.1",
+    "scipy>=1.14.0",
     # AI Providers
     "google-genai>=1.0.0",
     "openai>=1.60.0",
@@ -181,6 +182,7 @@ ignore = [
 ]
 "src/podcast_pipeline/utils/*.py" = [
     "PLC0415", # lazy imports
+    "PLR0913", # many args in utility functions is acceptable
     "S603",    # subprocess calls are trusted internal utilities
 ]
 "src/podcast_pipeline/mcp/*.py" = [
@@ -221,6 +223,7 @@ module = [
     "pydub.*",
     "pyloudnorm.*",
     "soundfile.*",
+    "scipy.*",
     "streamlit.*",
     "uvicorn.*",
     # Optional/conditional imports
@@ -236,8 +239,36 @@ module = [
     "librosa.*",
     "cv2",
     "cv2.*",
+    # Optional thumbnail extras — Vertex AI, FLUX, quantisation libs
+    # Google namespace packages: google and google.cloud are always present
+    # as namespace packages; aiplatform and protobuf may not have stubs
+    "google",
+    "google.cloud",
+    "google.cloud.aiplatform",
+    "google.cloud.aiplatform.*",
+    "google.protobuf",
+    "google.protobuf.*",
+    "diffusers",
+    "diffusers.*",
+    "optimum.quanto",
+    "optimum.quanto.*",
+    "torchao",
+    "torchao.*",
+    "torch",
+    "torch.*",
+    "torchaudio",
+    "torchaudio.*",
 ]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# thumbnails.py uses lazy imports of optional [thumbnails] extras.
+# These modules may or may not be installed and are not part of the
+# base environment.  Disable strict import checking for this file so
+# the overall mypy invocation does not fail on missing optional deps.
+module = "podcast_pipeline.utils.thumbnails"
+ignore_missing_imports = true
+warn_unused_ignores = false
 
 # ============================================================================
 # Pytest - Testing

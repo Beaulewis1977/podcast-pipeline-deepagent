@@ -54,7 +54,7 @@ def _create_test_job(
 
     job = Job(
         job_id=job_id,
-        input_file="/tmp/test.mp4",  # noqa: S108
+        input_file="/tmp/test.mp4",
         status=initial_status,
         stages={name: JobStage(status=status) for name, status in default_stages.items()},
     )

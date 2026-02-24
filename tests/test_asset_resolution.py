@@ -179,7 +179,7 @@ class TestResolveModel:
         monkeypatch.delenv("PODCAST_PIPELINE_DATA_DIR", raising=False)
         monkeypatch.delenv("HF_HOME", raising=False)
         # Point HF_HOME to a temp empty dir
-        monkeypatch.setenv("HF_HOME", str(Path("/tmp/nonexistent_hf_cache_dir")))  # noqa: S108
+        monkeypatch.setenv("HF_HOME", str(Path("/tmp/nonexistent_hf_cache_dir")))
 
         with patch(
             "podcast_pipeline.service.assets._model_cache_search_paths",

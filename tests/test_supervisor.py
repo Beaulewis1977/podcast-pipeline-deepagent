@@ -49,7 +49,7 @@ class _StubPipeline:
 
 def _create_job(jobs_dir: Path, job_id: str = "job-001") -> Job:
     """Create and persist a basic test job."""
-    job = Job(job_id=job_id, input_file="/tmp/video.mp4")  # noqa: S108
+    job = Job(job_id=job_id, input_file="/tmp/video.mp4")
     job.save(jobs_dir)
     return job
 
