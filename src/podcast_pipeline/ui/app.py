@@ -2607,7 +2607,7 @@ def render_production_controls(job_id: str, job_dir: Path) -> None:
         "AI Thumbnail Generation",
         value=decisions.ai_thumbnails_enabled,
         key=f"prod_ai_thumbnails_{job_id}",
-        help="Generate AI thumbnails via Imagen 4 or FLUX during analysis.",
+        help="Generate AI thumbnails via Gemini Vision during analysis.",
     )
 
     # ── Manual Sync Offset Slider ───────────────────────────────────────────
