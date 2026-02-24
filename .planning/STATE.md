@@ -2,27 +2,27 @@
 
 **Last updated:** 2026-02-24
 **Current phase:** Phase 9 — Automated Branding, Captions, and Multi-Track Sync (in progress)
-**Overall progress:** Phase 9 plan 02/10 complete; 53 plans completed overall
+**Overall progress:** Phase 9 plan 03/10 complete; 54 plans completed overall
 
 ## Project Reference
 
 See: `.planning/PROJECT.md`
 
 **Core value:** Turn raw podcast recording into multi-platform content without editing software or manual copywriting.
-**Current focus:** Phase 9 in progress — 09-01 (FFmpeg toolkit) and 09-02 (FastMCP dev server) complete.
+**Current focus:** Phase 9 in progress — 09-01 (FFmpeg toolkit), 09-02 (FastMCP dev server), and 09-03 (Claude provider) complete.
 
 ## Current Position
 
 ```text
-Phase:    9 (in progress — 2/10 plans complete)
-Plan:     09-02 complete; 53 completed overall
-Status:   Phase 9 in progress — FFmpeg toolkit and FastMCP developer server complete
-Last activity: 2026-02-24 - Completed 09-02-PLAN.md (FastMCP dev server: 14 tools, .mcp.json, 28 tests)
+Phase:    9 (in progress — 3/10 plans complete)
+Plan:     09-03 complete; 54 completed overall
+Status:   Phase 9 in progress — FFmpeg toolkit, FastMCP dev server, and Claude analysis provider complete
+Last activity: 2026-02-24 - Completed 09-03-PLAN.md (Claude provider: tool_use schema, config wiring, 44 tests)
 
-Progress: [██████████████████████████████] 53/61 plans complete (Phase 9 ongoing)
+Progress: [██████████████████████████████] 54/61 plans complete (Phase 9 ongoing)
 ```
 
-**Current Phase:** Phase 9 — Automated Branding, Captions, and Multi-Track Sync (2/10 plans complete)
+**Current Phase:** Phase 9 — Automated Branding, Captions, and Multi-Track Sync (3/10 plans complete)
 
 ## Phase Status
 
@@ -38,13 +38,13 @@ Progress: [███████████████████████
 | 6.1 | Video Marketing Copy Parity + Thumbnail Visual Selection MVP | Complete (verified) | 5/5 | 100% |
 | 7 | Smooth Editing & Filler Word Control | Complete (verified 2026-02-21) | 4/4 | 100% |
 | 8 | Intelligent Cut Quality | Complete (verified 2026-02-21) | 6/6 | 100% |
-| 9 | Automated Branding, Captions, and Multi-Track Sync | In progress | 2/10 | 20% |
+| 9 | Automated Branding, Captions, and Multi-Track Sync | In progress | 3/10 | 30% |
 
 ## Performance Metrics
 
 | Metric | Value |
 |--------|-------|
-| Plans completed | 53/61 |
+| Plans completed | 54/61 |
 | Requirements done | 35/83 (21 partial) |
 | Phases complete | 8/8 (Phase 9 in progress) |
 | Estimated completion | In progress |
@@ -180,6 +180,10 @@ Progress: [███████████████████████
 | Empty __all__ = [] in mcp/__init__.py signals dev-only intent and prevents accidental re-exports | Clean import boundary between production code and dev MCP tooling | 2026-02-24 |
 | MCP tools accept scalar inputs (str/float/bool); Path/Enum construction in wrapper | JSON-wire compatible; prevents Pydantic objects from crossing MCP transport boundary | 2026-02-24 |
 | MCP error handling returns {error, operation} dict instead of raising | Prevents MCP client disconnects on toolkit failures; keeps session alive for retries | 2026-02-24 |
+| ClaudeProvider uses tool_use with forced tool_choice to enforce JSON schema contract — no prose JSON parsing | Schema-constrained output prevents silent parse failures and removes regex/JSON extraction coupling | 2026-02-24 |
+| SUPPORTED_CLAUDE_MODELS = {claude-sonnet-4-6, claude-haiku-4-5, claude-opus-4-6} in settings.py | Explicit model registry enforces valid model selection at config validation time | 2026-02-24 |
+| AnalyzeStage.__init__ dispatches on provider name string (gemini/kimi/claude) for primary + fallback | Provider-dispatch pattern scales to new providers without duplicating initialization logic | 2026-02-24 |
+| Implicit Kimi fallback preserved when fallback_provider=None and primary_provider != 'kimi' and KIMI_API_KEY present | Maintains backward compatibility for existing configs that relied on automatic Kimi fallback | 2026-02-24 |
 
 ### Roadmap Evolution
 
@@ -317,16 +321,17 @@ Progress: [███████████████████████
 - 2026-02-23: Re-executed 08-06-PLAN.md (smoke test torch 2.10.x baseline; operator guide gemini-2.5-flash-lite default + forbidden reasoning model list + dep version floors; integration tests verified no-op — all 133 tests pass)
 - 2026-02-24: Completed 09-01-PLAN.md (FFmpeg media toolkit — 14 typed operations, 5 operation groups, structured error model, HLS packaging)
 - 2026-02-24: Completed 09-02-PLAN.md (FastMCP dev server: 14 MCP tools, lifespan hardware-encoder cache, .mcp.json stdio config, 28 tests)
+- 2026-02-24: Completed 09-03-PLAN.md (Claude provider: tool_use schema contract, config wiring, analyze-stage dispatch, 44 regression tests)
 
 ## Session Continuity
 
 ### Last session
 
-2026-02-24 03:36 UTC — Completed `09-02-PLAN.md` (FastMCP dev server: podcast_pipeline.mcp package init, ffmpeg_server.py with 14 tool wrappers, lifespan hardware-encoder cache, .mcp.json stdio config; 28 tests covering registration/invocation/isolation; all passing).
+2026-02-24 04:05 UTC — Completed `09-03-PLAN.md` (ClaudeProvider with tool_use schema-constrained structured output; anthropic>=0.80.0 added; 'claude' registered in SUPPORTED_MODEL_PROVIDERS with 3 models; APIKeysConfig.anthropic field + ANTHROPIC_API_KEY env var; AnalyzeStage provider-dispatch init; 44 tests covering parse paths, retry semantics, credential absence, and fallback continuation).
 
 ### Stopped at
 
-Completed 09-02-PLAN.md — Phase 9 plans 01 and 02 complete; ready for 09-03 (ASS caption generation).
+Completed 09-03-PLAN.md — Phase 9 plans 01, 02, and 03 complete; ready for 09-04.
 
 ### Resume file
 
