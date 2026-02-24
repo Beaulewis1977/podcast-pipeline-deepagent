@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-02-24
 **Current phase:** Phase 9.12 — Streamlit UI Gap Closure
-**Overall progress:** Phase 9 complete (11/11 plans); 63 plans completed overall; Phase 9.12 plan 1/3 complete
+**Overall progress:** Phase 9 complete (11/11 plans); 64 plans completed overall; Phase 9.12 plan 2/3 complete
 
 ## Project Reference
 
@@ -15,14 +15,14 @@ See: `.planning/PROJECT.md`
 
 ```text
 Phase:    9.12 (Streamlit UI Gap Closure)
-Plan:     01/03 complete — 09.12-01 render wiring + export target
-Status:   Executing — 1 plan done, 2 remaining
-Last activity: 2026-02-24 - Completed 09.12-01-PLAN.md (GAP-7 render wiring fix)
+Plan:     02/03 complete — 09.12-02 Settings provider select + Production sidebar caption/sync controls
+Status:   Executing — 2 plans done, 1 remaining
+Last activity: 2026-02-24 - Completed 09.12-02-PLAN.md (GAP-1/GAP-3A/GAP-3B/GAP-4 UI closures)
 
-Progress: [██████████████████████████████] 63/65 plans complete
+Progress: [██████████████████████████████] 64/65 plans complete
 ```
 
-**Current Phase:** Phase 9.12 — Streamlit UI Gap Closure (1/3 plans complete)
+**Current Phase:** Phase 9.12 — Streamlit UI Gap Closure (2/3 plans complete)
 
 ## Phase Status
 
@@ -39,13 +39,13 @@ Progress: [███████████████████████
 | 7 | Smooth Editing & Filler Word Control | Complete (verified 2026-02-21) | 4/4 | 100% |
 | 8 | Intelligent Cut Quality | Complete (verified 2026-02-21) | 6/6 | 100% |
 | 9 | Automated Branding, Captions, and Multi-Track Sync | Complete (verified 2026-02-24) | 11/11 | 100% |
-| 9.12 | Streamlit UI Gap Closure | In progress | 1/3 | 33% |
+| 9.12 | Streamlit UI Gap Closure | In progress | 2/3 | 67% |
 
 ## Performance Metrics
 
 | Metric | Value |
 |--------|-------|
-| Plans completed | 63/65 |
+| Plans completed | 64/65 |
 | Requirements done | 35/83 (21 partial) |
 | Phases complete | 9/9 |
 | Estimated completion | All phases complete |
@@ -208,6 +208,9 @@ Progress: [███████████████████████
 | decisions.captions_enabled replaces config.branding.captions.enabled as burn-in gate | UI decision takes precedence over config.yaml — prevents Production sidebar from being silently ignored | 2026-02-24 |
 | decisions.sound_kit_enabled gates _mix_stingers unconditionally | Stingers skip when False regardless of configured sound files — consistent UI-as-source-of-truth | 2026-02-24 |
 | effective_profile_name resolved once from decisions.branding_profile_name with config fallback | Single resolution point before both _burn_captions and _mix_stingers — avoids redundant override logic | 2026-02-24 |
+| Provider selectbox mutates config.models.provider in session state only — no config.yaml write | App never writes config files; st.caption explains how to persist permanently via env var or config.yaml | 2026-02-24 |
+| _ASPECT_RATIO_OPTIONS defined at module level (not inside render function) | Avoids Streamlit lambda closure issues on reruns; format_func lambda safely indexes module-level list | 2026-02-24 |
+| Caption aspect ratio cleared to None when captions_enabled is False | Prevents stale override value from silently applying when captions are re-enabled — UI intent is always explicit | 2026-02-24 |
 
 ### Roadmap Evolution
 
@@ -356,16 +359,17 @@ Progress: [███████████████████████
 - 2026-02-24: Post-Phase 9 UI audit completed — 7 gaps identified and documented in 09-UI-GAPS.md (2 missing, 4 partial UI gaps + 1 critical render wiring gap where Production sidebar decisions are saved but never consumed by render.py)
 - 2026-02-24: Phase 9.12 added — Streamlit UI Gap Closure (closes all 7 gaps; awaiting planning)
 - 2026-02-24: Completed 09.12-01-PLAN.md (GAP-7 render wiring: decisions.captions_enabled/sound_kit_enabled/branding_profile_name now gate render passes; youtube_ultra registered; caption_aspect_ratio and auto_duck_enabled fields added; 6 regression tests)
+- 2026-02-24: Completed 09.12-02-PLAN.md (GAP-1/3A/3B/4: Settings provider selectbox for Claude/Gemini/Kimi; Anthropic API key status in Settings; caption aspect ratio selectbox in Production sidebar; sync artifact offset+confidence metrics display; slider range +/-5000ms; 1034 tests passing)
 
 ## Session Continuity
 
 ### Last session
 
-2026-02-24 — Phase 9.12 execution started. Completed 09.12-01 (GAP-7 render wiring + export target registration).
+2026-02-24 — Phase 9.12 execution continued. Completed 09.12-02 (GAP-1/3A/3B/4 UI closures: Settings provider select + Production sidebar caption/sync controls).
 
 ### Stopped at
 
-Completed 09.12-01-PLAN.md — next step is 09.12-02 (caption safe-zone + auto-duck wiring).
+Completed 09.12-02-PLAN.md — next step is 09.12-03 (sound kit UI wiring + auto-duck toggle).
 
 ### Resume file
 
