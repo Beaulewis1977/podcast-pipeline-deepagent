@@ -189,6 +189,13 @@ Progress: [███████████████████████
 | brand_voice injected via transcript["brand_voice"] dict key rather than direct provider method parameter | Keeps provider analyze() signatures unchanged across all provider types | 2026-02-24 |
 | BRAND VOICE block positioned after role statement, before TRANSCRIPT section in provider prompt | Frames copy direction without competing with JSON schema at prompt end | 2026-02-24 |
 | load_active_profile() returns None when profile is unconfigured or file missing | All stages treat None as no-branding gracefully without branching | 2026-02-24 |
+| hevc_nvenc is preferred codec for youtube_ultra; render resolves actual encoder at runtime via _resolve_video_encoder using HardwareEncoderInfo | Separates intent (preferred codec) from capability (available encoder) — predictable cross-machine behavior | 2026-02-24 |
+| p010le (NVENC 10-bit) translates to yuv420p10le on libx265 software fallback | NVENC and x265 use different pixel format naming conventions for 10-bit HEVC | 2026-02-24 |
+| AV1 codec without av1_experimental=True on PlatformSpec raises ValueError at config load | Zero silent AV1 activation — always an explicit operator opt-in | 2026-02-24 |
+| hevc_nvenc + p010le + uhq/hq preset is forbidden (RTX artifact guard) — p7 required for RTX 5060 Ti | Known artifact regression on 9th-gen NVENC; p7 achieves equivalent quality without artifacts | 2026-02-24 |
+| force_60fps_shortform gates on smoothing.force_60fps_shortform AND rife_enabled AND aspect_ratio in SHORT_FORM_ASPECT_RATIOS | Three-condition gate prevents silent uplift; all conditions must be explicitly enabled | 2026-02-24 |
+| RIFE 30->60fps uplift runs before filtergraph construction so interpolated frames are the render base | Ensures any branding/caption burn-in or color filters operate on the 60fps content | 2026-02-24 |
+| RifeBridge.uplift_fps raises NotImplementedError; _apply_shortform_60fps_rife catches and returns None | Whole-video RIFE uplift deferred; render continues gracefully with original input | 2026-02-24 |
 
 ### Roadmap Evolution
 
@@ -329,18 +336,18 @@ Progress: [███████████████████████
 - 2026-02-24: Completed 09-03-PLAN.md (Claude provider: tool_use schema contract, config wiring, analyze-stage dispatch, 44 regression tests)
 - 2026-02-24: Completed 09-04-PLAN.md (HEVC 10-bit/NVENC youtube_ultra spec, AV1 experimental gating, force_60fps_shortform toggle, runtime encoder fallback chain + RIFE uplift stub in render)
 - 2026-02-24: Completed 09-05-PLAN.md (BrandingProfile typed model, YAML serialization, platform override merge, BrandingConfig wired into Config, brand_voice prompt injection in BaseProvider)
-- 2026-02-24: Completed 09-04-PLAN.md (HEVC 10-bit/NVENC/AV1 platform config, youtube_ultra spec, force_60fps_shortform toggle, runtime encoder fallback chain in render stage)
+- 2026-02-24: Re-executed 09-04-PLAN.md (completed Tasks 2+3: runtime encoder fallback chain in render, 24 new regression tests for NVENC detection, x265 fallback, shortform RIFE gating, legacy platform isolation; 152 total render tests)
 - 2026-02-24: Completed 09-05-PLAN.md (BrandingProfile typed model, YAML serialization, platform override merge, BrandingConfig in settings, brand_voice prompt injection with double sanitization, 126 tests)
 
 ## Session Continuity
 
 ### Last session
 
-2026-02-24 03:55 UTC — Completed `09-05-PLAN.md` (BrandingProfile typed model with brand_voice, logo, caption, thumbnail border, platform overrides; utils/branding.py load/save/resolve/load_active_profile; BrandingConfig in Config; AnalyzeStage branding resolution and brand_voice injection; BaseProvider._build_prompt brand_voice parameter with bounded BRAND VOICE block; double sanitization gate at model + prompt boundary; 126 tests passing).
+2026-02-24 03:57 UTC — Re-executed `09-04-PLAN.md` (Tasks 2+3: runtime encoder capability detection in RenderStage.__init__, _resolve_video_encoder hevc_nvenc->libx265 and h264_nvenc->libx264 fallback chains, _is_shortform_vertical gating, _apply_shortform_60fps_rife before branding/overlays, RifeBridge.uplift_fps stub; 24 new regression tests across TestEncoderCapabilityDetection, TestShortformVerticalDetection, TestForce60fpsShortformGating, TestLegacyPlatformUnaffectedByPhase9Options; 152 total render tests passing).
 
 ### Stopped at
 
-Completed 09-05-PLAN.md — Phase 9 plans 01, 02, 03, 04, and 05 complete; ready for 09-06.
+Re-executed 09-04-PLAN.md — Phase 9 plans 01, 02, 03, 04, and 05 complete; ready for 09-06.
 
 ### Resume file
 
