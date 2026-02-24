@@ -1,14 +1,14 @@
-"""AI Thumbnail Studio — dual-backend thumbnail generation service.
+"""AI Thumbnail Studio -- Gemini Vision single-backend thumbnail generation service.
 
-Backends (in priority order):
-  1. Imagen 4 GA via Vertex AI (``imagen-4.0-generate-001`` family)
-  2. Local FLUX.1 Schnell (FP8/INT8 quantised, 16 GB VRAM)
+Backend:
+  Gemini Vision via google.genai SDK (``gemini-2.5-flash-image`` for generation,
+  ``gemini-3-pro-image-preview`` for compositional auditing).
 
-Both backends are optional.  If neither is available thumbnail generation
-is skipped gracefully with a warning logged.  The service is cache-aware:
-each unique ``(prompt, model, seed)`` combination is hashed and the result
-is persisted to ``output/thumbnails/<hash>.jpg`` so identical runs avoid
-repeated billing / model-load overhead.
+The backend is optional.  If the GEMINI_API_KEY environment variable is not set
+or the google-genai SDK is not installed, thumbnail generation is skipped
+gracefully with a warning logged.  The service is cache-aware: each unique
+``(prompt, model, seed)`` combination is hashed and the result is persisted to
+``output/thumbnails/<hash>.jpg`` so identical runs avoid repeated billing.
 
 After generation, the service can apply optional branding overlays
 (logo + ``thumbnail_border``) through the FFmpeg toolkit ``overlay_image``
@@ -29,8 +29,6 @@ Usage::
 from __future__ import annotations
 
 import hashlib
-import importlib
-import importlib.util
 import os
 import shutil
 from dataclasses import dataclass, field
@@ -46,19 +44,9 @@ logger = get_logger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 
-# Imagen 4 GA model IDs (Vertex AI)
-IMAGEN4_MODEL_STANDARD = "imagen-4.0-generate-001"
-IMAGEN4_MODEL_FAST = "imagen-4.0-fast-generate-001"
-IMAGEN4_MODEL_ULTRA = "imagen-4.0-ultra-generate-001"
-
-# FLUX.1 Schnell HuggingFace model ID
-FLUX_SCHNELL_MODEL_ID = "black-forest-labs/FLUX.1-schnell"
-
-# VRAM preflight: require at least this many GiB free before loading FLUX
-FLUX_MIN_FREE_VRAM_GIB = 14.0
-
-# Default number of inference steps for FLUX Schnell (4 = <10s generation)
-FLUX_DEFAULT_STEPS = 4
+# Gemini Vision model IDs (google.genai SDK)
+GEMINI_VISION_FLASH = "gemini-2.5-flash-image"  # Image generation (GA)
+GEMINI_VISION_PRO = "gemini-3-pro-image-preview"  # Vision audit / prompt engineering (Preview)
 
 # Default output dimensions
 DEFAULT_WIDTH = 1280
@@ -76,8 +64,7 @@ CACHE_DIR_NAME = "thumbnails"
 class ThumbnailBackend(str, Enum):
     """Which backend was used or is preferred."""
 
-    IMAGEN4 = "imagen4"
-    FLUX = "flux"
+    GEMINI = "gemini"
     NONE = "none"
 
 
@@ -106,14 +93,12 @@ class ThumbnailRequest:
         images_per_prompt: How many images to generate per prompt.
         width: Output image width in pixels.
         height: Output image height in pixels.
-        model: Imagen 4 model variant.  Ignored when using FLUX fallback.
+        model: Gemini Vision model for image generation.
+        audit_model: Gemini Vision model for compositional auditing.
         seed: Optional deterministic seed for reproducible generations.
         branding_profile: Optional ``BrandingProfile`` instance.  When provided the
             logo and ``thumbnail_border`` are overlaid on each generated image via
             the FFmpeg toolkit.
-        project_id: Google Cloud project ID required for Vertex AI.  Falls back to
-            ``GOOGLE_CLOUD_PROJECT`` environment variable.
-        location: Vertex AI region (default: ``us-central1``).
     """
 
     prompts: list[str]
@@ -121,11 +106,10 @@ class ThumbnailRequest:
     images_per_prompt: int = 1
     width: int = DEFAULT_WIDTH
     height: int = DEFAULT_HEIGHT
-    model: str = IMAGEN4_MODEL_STANDARD
+    model: str = GEMINI_VISION_FLASH
+    audit_model: str = GEMINI_VISION_PRO
     seed: int | None = None
-    branding_profile: Any | None = None  # BrandingProfile — avoid circular import
-    project_id: str | None = None
-    location: str = "us-central1"
+    branding_profile: Any | None = None  # BrandingProfile -- avoid circular import
 
 
 @dataclass
@@ -161,7 +145,7 @@ class ThumbnailResult:
         total_generated: Number of new images generated (cache misses).
         total_cached: Number of images loaded from cache (cache hits).
         total_failed: Number of images that could not be produced.
-        degraded: True when the service fell back to an inferior backend or skipped.
+        degraded: True when the service fell back or skipped generation.
         degraded_reason: Human-readable explanation when degraded is True.
     """
 
@@ -213,328 +197,147 @@ def _cache_path(output_dir: Path, cache_key: str) -> Path:
 
 
 # ---------------------------------------------------------------------------
-# VRAM preflight
+# Backend availability check
 # ---------------------------------------------------------------------------
 
 
-def _free_vram_gib() -> float | None:
-    """Return free VRAM in GiB on the default CUDA device, or None if unavailable.
-
-    Returns ``None`` when:
-    - torch is not installed
-    - CUDA is unavailable on this machine
-    - Any torch error occurs during the query
-    """
-    try:
-        import torch  # type: ignore[import-not-found]
-
-        if not torch.cuda.is_available():
-            return None
-        mem_info: tuple[int, int] = torch.cuda.mem_get_info(device=0)
-        free_bytes = mem_info[0]
-        return float(free_bytes) / (1024**3)
-    except Exception:
-        return None
-
-
-def check_vram_preflight(min_free_gib: float = FLUX_MIN_FREE_VRAM_GIB) -> tuple[bool, str]:
-    """Verify that sufficient VRAM is available before loading FLUX.
-
-    Args:
-        min_free_gib: Minimum required free VRAM in GiB.
-
-    Returns:
-        Tuple of (ok: bool, message: str).  ``ok`` is True when VRAM is
-        sufficient.  ``message`` is an empty string on success or describes
-        the shortfall on failure.
-    """
-    free = _free_vram_gib()
-    if free is None:
-        return (
-            False,
-            "CUDA not available or torch not installed — cannot verify VRAM for FLUX",
-        )
-    if free < min_free_gib:
-        return (
-            False,
-            f"Insufficient VRAM for FLUX: {free:.1f} GiB free, {min_free_gib:.0f} GiB required",
-        )
-    return True, ""
-
-
-# ---------------------------------------------------------------------------
-# Backend availability checks
-# ---------------------------------------------------------------------------
-
-
-def _imagen4_available(project_id: str | None, location: str) -> tuple[bool, str]:
-    """Return (available, reason) for the Imagen 4 / Vertex AI backend.
+def _gemini_available() -> tuple[bool, str]:
+    """Return (available, reason) for the Gemini Vision backend.
 
     Checks:
-    1. ``google-cloud-aiplatform`` package is importable.
-    2. A GCP project ID is resolvable (parameter or ``GOOGLE_CLOUD_PROJECT`` env).
-    3. ``GOOGLE_APPLICATION_CREDENTIALS`` or Application Default Credentials are set
-       (we only check for the env-var here; runtime auth errors are caught per-call).
+    1. ``GEMINI_API_KEY`` environment variable is set and non-empty.
+    2. ``google.genai`` SDK is importable.
     """
+    api_key = os.environ.get("GEMINI_API_KEY", "")
+    if not api_key:
+        return False, "GEMINI_API_KEY not set -- Gemini Vision backend unavailable"
     try:
-        import google.cloud.aiplatform  # noqa: F401  # type: ignore[import-untyped]
+        from google import genai  # noqa: F401  # type: ignore[import-untyped]
     except ImportError:
-        return False, "google-cloud-aiplatform not installed (install [thumbnails] extra)"
-
-    resolved_project = project_id or os.environ.get("GOOGLE_CLOUD_PROJECT")
-    if not resolved_project:
-        return (
-            False,
-            ("GOOGLE_CLOUD_PROJECT env var or project_id not set — Imagen 4 backend unavailable"),
-        )
-
-    return True, ""
-
-
-def _flux_available() -> tuple[bool, str]:
-    """Return (available, reason) for the local FLUX.1 Schnell backend.
-
-    Checks that ``diffusers`` and at least one quantisation package
-    (``optimum-quanto`` or ``torchao``) are importable.
-    VRAM availability is checked separately in check_vram_preflight().
-    """
-    # Check diffusers
-    diffusers_spec = importlib.util.find_spec("diffusers")
-    if diffusers_spec is None:
-        return False, "diffusers not installed (install [thumbnails] extra)"
-
-    # Check quantisation library availability (optimum-quanto or torchao)
-    quanto_spec = importlib.util.find_spec("optimum.quanto")
-    torchao_spec = importlib.util.find_spec("torchao")
-    if quanto_spec is None and torchao_spec is None:
-        return (
-            False,
-            (
-                "Neither optimum-quanto nor torchao is installed "
-                "— FLUX quantised inference unavailable"
-            ),
-        )
-
+        return False, "google-genai not installed (install with: uv add google-genai)"
     return True, ""
 
 
 # ---------------------------------------------------------------------------
-# Imagen 4 generation
+# Gemini Vision image generation
 # ---------------------------------------------------------------------------
 
 
-def _generate_imagen4(
+def _generate_gemini(
     prompt: str,
     output_dir: Path,
     *,
-    model: str,
-    images_per_prompt: int,
-    width: int,
-    height: int,
-    seed: int | None,
-    project_id: str,
-    location: str,
+    model: str = GEMINI_VISION_FLASH,
+    aspect_ratio: str = "16:9",
+    seed: int | None = None,
 ) -> list[tuple[Path, bool]]:
-    """Generate images using Imagen 4 via Vertex AI.
+    """Generate images using Gemini Vision via google.genai SDK.
+
+    Uses ``client.models.generate_content()`` with
+    ``response_modalities=["TEXT", "IMAGE"]`` and an ``ImageConfig`` for
+    aspect ratio and output format.
+
+    Image bytes are accessed via ``part.inline_data.data`` (raw bytes) --
+    does NOT use ``part.as_image()`` which requires PIL.
 
     Args:
-        prompt: Text prompt.
-        output_dir: Directory to write output JPEG files.
-        model: Imagen 4 model variant.
-        images_per_prompt: How many images to request.
-        width: Target width.
-        height: Target height.
-        seed: Optional seed for determinism.
-        project_id: GCP project.
-        location: Vertex AI region.
+        prompt: Text prompt for image generation.
+        output_dir: Directory to write output image files.
+        model: Gemini model ID for image generation.
+        aspect_ratio: Aspect ratio string (e.g. "16:9").
+        seed: Optional deterministic seed.
 
     Returns:
         List of ``(path, cache_hit)`` tuples for each successfully saved image.
     """
-    from google.cloud import aiplatform
+    from google import genai  # type: ignore[import-untyped]
+    from google.genai import types  # type: ignore[import-untyped]
 
-    aiplatform.init(project=project_id, location=location)
+    api_key = os.environ.get("GEMINI_API_KEY", "")
+    client = genai.Client(api_key=api_key)
 
-    # Build the Vertex AI prediction service endpoint for Imagen
-    endpoint = f"projects/{project_id}/locations/{location}/publishers/google/models/{model}"
-    client = aiplatform.gapic.PredictionServiceClient(
-        client_options={"api_endpoint": f"{location}-aiplatform.googleapis.com"}
+    config = types.GenerateContentConfig(
+        response_modalities=["TEXT", "IMAGE"],
+        image_config=types.ImageConfig(
+            aspect_ratio=aspect_ratio,
+            image_size="2K",
+            output_mime_type="image/jpeg",
+        ),
+        seed=seed,
     )
 
-    instances = [{"prompt": prompt}]
-    parameters: dict[str, Any] = {
-        "sampleCount": images_per_prompt,
-        "aspectRatio": f"{width}:{height}",
-    }
-    if seed is not None:
-        parameters["seed"] = seed
-
-    import json as _json
-
-    from google.protobuf import (
-        json_format,
-        struct_pb2,
-    )
-
-    instances_pb = [json_format.ParseDict(inst, struct_pb2.Value()) for inst in instances]
-    parameters_pb = json_format.ParseDict(parameters, struct_pb2.Value())
-
-    response = client.predict(
-        endpoint=endpoint,
-        instances=instances_pb,
-        parameters=parameters_pb,
+    response = client.models.generate_content(
+        model=model,
+        contents=prompt,
+        config=config,
     )
 
     output_dir.mkdir(parents=True, exist_ok=True)
     results: list[tuple[Path, bool]] = []
 
-    predictions = list(response.predictions)
-    for idx, prediction in enumerate(predictions):
-        pred_dict = _json.loads(
-            json_format.MessageToJson(prediction, preserving_proto_field_name=True)
-        )
-        b64_data = pred_dict.get("bytesBase64Encoded") or pred_dict.get("imageBytes", "")
-        if not b64_data:
-            logger.warning("imagen4_empty_prediction", index=idx)
-            continue
+    if not response.parts:
+        logger.warning("gemini_no_parts_in_response", model=model)
+        return results
 
-        import base64
-
-        img_bytes = base64.b64decode(b64_data)
-        key = compute_cache_key(prompt, model, width, height, seed, idx)
-        out_path = _cache_path(output_dir, key)
-        out_path.write_bytes(img_bytes)
-        results.append((out_path, False))
-        logger.info("imagen4_image_saved", index=idx, path=str(out_path), size=len(img_bytes))
+    for i, part in enumerate(response.parts):
+        if part.inline_data is not None and part.inline_data.data:
+            img_bytes: bytes = part.inline_data.data
+            mime_type: str = part.inline_data.mime_type or "image/jpeg"
+            ext = "jpg" if "jpeg" in mime_type else "png"
+            out_path = output_dir / f"gen_{i}.{ext}"
+            out_path.write_bytes(img_bytes)
+            results.append((out_path, False))
+            logger.info(
+                "gemini_image_saved",
+                index=i,
+                path=str(out_path),
+                size=len(img_bytes),
+            )
 
     return results
 
 
 # ---------------------------------------------------------------------------
-# FLUX.1 Schnell generation
+# Gemini Vision audit (defined for future use -- not wired into generation)
 # ---------------------------------------------------------------------------
 
 
-def _unload_gpu_models() -> None:
-    """Release cached CUDA tensors to free VRAM before loading FLUX.
-
-    Calls ``torch.cuda.empty_cache()`` which returns memory held by the
-    PyTorch caching allocator.  Models must be explicitly deleted by callers
-    before this is meaningful.
-    """
-    try:
-        import torch  # type: ignore[import-not-found]
-
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            logger.info("flux_gpu_cache_cleared")
-    except Exception as exc:
-        logger.warning("flux_gpu_cache_clear_failed", error=str(exc))
-
-
-def _generate_flux(
-    prompt: str,
-    output_dir: Path,
+def _audit_with_gemini_pro(
+    image_path: Path,
+    audit_prompt: str,
     *,
-    images_per_prompt: int,
-    width: int,
-    height: int,
-    seed: int | None,
-    num_inference_steps: int = FLUX_DEFAULT_STEPS,
-) -> list[tuple[Path, bool]]:
-    """Generate images using local FLUX.1 Schnell with FP8/INT8 quantisation.
+    model: str = GEMINI_VISION_PRO,
+) -> str:
+    """Analyze an image and return the model's text response.
 
-    VRAM preflight must be called before this function.
+    Passes image bytes via ``types.Part.from_bytes()`` for vision analysis.
+    This function supports future compositional auditing but is not wired
+    into the generation flow yet.
 
     Args:
-        prompt: Text prompt.
-        output_dir: Directory to write output JPEG files.
-        images_per_prompt: How many images to generate.
-        width: Target width.
-        height: Target height.
-        seed: Optional deterministic seed.
-        num_inference_steps: Inference steps (default: 4 for Schnell).
+        image_path: Path to the image file to analyze.
+        audit_prompt: Text prompt describing the audit task.
+        model: Gemini model ID for vision analysis.
 
     Returns:
-        List of ``(path, cache_hit)`` tuples for each saved image.
+        The model's text response as a string.
     """
-    import torch  # type: ignore[import-not-found]
-    from diffusers import FluxPipeline  # type: ignore[import-not-found]
+    from google import genai  # type: ignore[import-untyped]
+    from google.genai import types  # type: ignore[import-untyped]
 
-    # Attempt FP8/INT8 quantisation — prefer optimum-quanto, fall back to torchao
-    quantisation_applied = False
-    try:
-        from optimum.quanto import (  # type: ignore[import-not-found]
-            freeze,
-            qfloat8,
-            quantize,
-        )
+    api_key = os.environ.get("GEMINI_API_KEY", "")
+    client = genai.Client(api_key=api_key)
 
-        _quanto_available = True
-    except ImportError:
-        _quanto_available = False
+    image_bytes = image_path.read_bytes()
+    suffix = image_path.suffix.lower()
+    mime_type = "image/jpeg" if suffix in (".jpg", ".jpeg") else "image/png"
 
-    logger.info(
-        "flux_loading_pipeline",
-        model=FLUX_SCHNELL_MODEL_ID,
-        quantisation="fp8/int8" if _quanto_available else "none",
+    image_part = types.Part.from_bytes(data=image_bytes, mime_type=mime_type)
+    response = client.models.generate_content(
+        model=model,
+        contents=[image_part, audit_prompt],  # type: ignore[arg-type]
     )
-
-    pipe = FluxPipeline.from_pretrained(
-        FLUX_SCHNELL_MODEL_ID,
-        torch_dtype=torch.bfloat16,
-    )
-
-    if _quanto_available:
-        # Quantise transformer and text encoder to FP8 to fit in 16 GB VRAM
-        from optimum.quanto import (  # type: ignore[import-not-found]
-            freeze,
-            qfloat8,
-            quantize,
-        )
-
-        quantize(pipe.transformer, weights=qfloat8)
-        freeze(pipe.transformer)
-        quantisation_applied = True
-
-    pipe = pipe.to("cuda")
-    logger.info(
-        "flux_pipeline_loaded",
-        quantised=quantisation_applied,
-    )
-
-    output_dir.mkdir(parents=True, exist_ok=True)
-    results: list[tuple[Path, bool]] = []
-
-    model_key = f"flux_schnell_{num_inference_steps}steps"
-
-    try:
-        for idx in range(images_per_prompt):
-            generator = None
-            if seed is not None:
-                generator = torch.Generator("cuda").manual_seed(seed + idx)
-
-            image = pipe(
-                prompt,
-                num_inference_steps=num_inference_steps,
-                guidance_scale=0.0,  # Schnell uses guidance_scale=0
-                generator=generator,
-                width=width,
-                height=height,
-            ).images[0]
-
-            key = compute_cache_key(prompt, model_key, width, height, seed, idx)
-            out_path = _cache_path(output_dir, key)
-            image.save(str(out_path), format="JPEG", quality=95)
-            results.append((out_path, False))
-            logger.info("flux_image_saved", index=idx, path=str(out_path))
-    finally:
-        # Always unload the pipeline to release VRAM regardless of success/failure
-        del pipe
-        _unload_gpu_models()
-        logger.info("flux_pipeline_unloaded")
-
-    return results
+    return response.text or ""
 
 
 # ---------------------------------------------------------------------------
@@ -613,12 +416,11 @@ def _apply_branding_overlay(
 
 
 class ThumbnailService:
-    """Dual-backend thumbnail generation service.
+    """Gemini Vision single-backend thumbnail generation service.
 
     Backend selection:
-    1. Try Imagen 4 GA via Vertex AI.
-    2. Fall back to local FLUX.1 Schnell when Vertex AI is unavailable.
-    3. Skip gracefully if neither backend is available, logging a warning.
+    1. Check if Gemini Vision is available (API key + SDK).
+    2. Skip gracefully if the backend is unavailable, logging a warning.
 
     The service is cache-aware: identical ``(prompt, model, width, height, seed)``
     combinations are cached to ``output_dir/<hash>.jpg`` and reused on
@@ -642,11 +444,10 @@ class ThumbnailService:
         """Execute thumbnail generation for all prompts in the request.
 
         Routing:
-        1. Check if Imagen 4 backend is available; use it if so.
-        2. If not, check FLUX availability + VRAM preflight; use it if ok.
-        3. If neither available, return degraded result with no artifacts.
+        1. Check if Gemini Vision backend is available; use it if so.
+        2. If not available, return degraded result with no artifacts.
 
-        Cache hits are detected before any API/model call and skip generation
+        Cache hits are detected before any API call and skip generation
         entirely.
 
         Args:
@@ -708,38 +509,18 @@ class ThumbnailService:
         request: ThumbnailRequest,
     ) -> tuple[ThumbnailBackend, str]:
         """Return the best available backend and a reason string."""
-        # Try Imagen 4 first
-        resolved_project = request.project_id or os.environ.get("GOOGLE_CLOUD_PROJECT")
-        imagen_ok, imagen_reason = _imagen4_available(resolved_project, request.location)
-        if imagen_ok:
-            return ThumbnailBackend.IMAGEN4, ""
+        gemini_ok, gemini_reason = _gemini_available()
+        if gemini_ok:
+            return ThumbnailBackend.GEMINI, ""
 
         self._logger.info(
-            "thumbnail_imagen4_unavailable",
-            reason=imagen_reason,
-        )
-
-        # Try FLUX fallback
-        flux_ok, flux_reason = _flux_available()
-        if flux_ok:
-            # Check VRAM before committing to FLUX
-            vram_ok, vram_reason = check_vram_preflight()
-            if vram_ok:
-                return ThumbnailBackend.FLUX, ""
-            self._logger.warning("thumbnail_flux_vram_insufficient", reason=vram_reason)
-            return (
-                ThumbnailBackend.NONE,
-                f"FLUX unavailable (VRAM): {vram_reason}",
-            )
-
-        self._logger.info(
-            "thumbnail_flux_unavailable",
-            reason=flux_reason,
+            "thumbnail_gemini_unavailable",
+            reason=gemini_reason,
         )
 
         return (
             ThumbnailBackend.NONE,
-            f"No thumbnail backend available. Imagen4: {imagen_reason}. FLUX: {flux_reason}.",
+            f"No thumbnail backend available. Gemini: {gemini_reason}.",
         )
 
     def _process_prompt(
@@ -750,7 +531,7 @@ class ThumbnailService:
         result: ThumbnailResult,
     ) -> None:
         """Generate (or load from cache) images for a single prompt."""
-        model_key = request.model if backend == ThumbnailBackend.IMAGEN4 else "flux_schnell"
+        model_key = request.model
 
         for idx in range(request.images_per_prompt):
             cache_key = compute_cache_key(
@@ -764,7 +545,7 @@ class ThumbnailService:
             cached = _cache_path(request.output_dir, cache_key)
 
             if cached.exists() and cached.stat().st_size > 0:
-                # Cache hit — skip generation
+                # Cache hit -- skip generation
                 artifact = ThumbnailArtifact(
                     path=cached,
                     prompt=prompt,
@@ -784,7 +565,7 @@ class ThumbnailService:
                     artifact = self._apply_branding(artifact, request.branding_profile)
                 continue
 
-            # Cache miss — generate
+            # Cache miss -- generate
             try:
                 pairs = self._run_backend(
                     prompt=prompt,
@@ -836,26 +617,12 @@ class ThumbnailService:
         single_index: int,
     ) -> list[tuple[Path, bool]]:
         """Dispatch to the selected backend for a single image."""
-        if backend == ThumbnailBackend.IMAGEN4:
-            resolved_project = request.project_id or os.environ.get("GOOGLE_CLOUD_PROJECT", "")
-            pairs = _generate_imagen4(
+        if backend == ThumbnailBackend.GEMINI:
+            pairs = _generate_gemini(
                 prompt=prompt,
                 output_dir=request.output_dir,
                 model=request.model,
-                images_per_prompt=1,
-                width=request.width,
-                height=request.height,
-                seed=(request.seed + single_index) if request.seed is not None else None,
-                project_id=resolved_project,
-                location=request.location,
-            )
-        elif backend == ThumbnailBackend.FLUX:
-            pairs = _generate_flux(
-                prompt=prompt,
-                output_dir=request.output_dir,
-                images_per_prompt=1,
-                width=request.width,
-                height=request.height,
+                aspect_ratio=f"{request.width}:{request.height}",
                 seed=(request.seed + single_index) if request.seed is not None else None,
             )
         else:

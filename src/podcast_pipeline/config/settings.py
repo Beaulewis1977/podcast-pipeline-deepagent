@@ -1024,21 +1024,21 @@ class ThumbnailGenerationConfig(BaseModel):
     Controls whether the ThumbnailService is invoked during the analyze stage
     to generate AI thumbnails from visual_description prompts extracted from
     the analysis payload.  Generation is opt-in and skipped gracefully when
-    neither Imagen 4 nor FLUX backends are available.
+    the Gemini Vision backend is unavailable.
     """
 
     enabled: bool = Field(
         default=False,
         description=(
             "When True, the analyze stage will attempt AI thumbnail generation "
-            "via Imagen 4 or local FLUX.1 Schnell for each thumbnail frame candidate."
+            "via Gemini Vision for each thumbnail frame candidate."
         ),
     )
     model: str = Field(
-        default="imagen-4.0-generate-001",
+        default="gemini-2.5-flash-image",
         description=(
-            "Imagen 4 model variant to use when the Vertex AI backend is active. "
-            "Ignored when falling back to local FLUX."
+            "Gemini Vision model ID for image generation. "
+            "Uses the google.genai SDK with GEMINI_API_KEY."
         ),
     )
     images_per_prompt: int = Field(
