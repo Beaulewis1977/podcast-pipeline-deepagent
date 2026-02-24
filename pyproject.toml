@@ -66,13 +66,8 @@ gpu = [
     "torchcodec>=0.10,<1",
 ]
 thumbnails = [
-    # Imagen 4 via Vertex AI — primary cloud backend
-    "google-cloud-aiplatform>=1.70.0,<2",
-    # Local FLUX.1 Schnell pipeline
-    "diffusers>=0.32.0,<1",
-    # FP8/INT8 quantisation for FLUX VRAM budget
-    # Note: optimum-quanto reached 0.2.7 as of 2026-02; >=0.2.5 is the verified floor
-    "optimum-quanto>=0.2.5,<1",
+    # Gemini Vision backend uses google-genai which is already in core deps.
+    # No additional packages needed.
 ]
 
 [project.scripts]
@@ -248,21 +243,12 @@ module = [
     "librosa.*",
     "cv2",
     "cv2.*",
-    # Optional thumbnail extras — Vertex AI, FLUX, quantisation libs
     # Google namespace packages: google and google.cloud are always present
-    # as namespace packages; aiplatform and protobuf may not have stubs
+    # as namespace packages; genai stubs may be incomplete
     "google",
     "google.cloud",
-    "google.cloud.aiplatform",
-    "google.cloud.aiplatform.*",
     "google.protobuf",
     "google.protobuf.*",
-    "diffusers",
-    "diffusers.*",
-    "optimum.quanto",
-    "optimum.quanto.*",
-    "torchao",
-    "torchao.*",
     "torch",
     "torch.*",
     "torchaudio",
@@ -271,10 +257,9 @@ module = [
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-# thumbnails.py uses lazy imports of optional [thumbnails] extras.
-# These modules may or may not be installed and are not part of the
-# base environment.  Disable strict import checking for this file so
-# the overall mypy invocation does not fail on missing optional deps.
+# thumbnails.py uses lazy imports of google.genai inside functions.
+# google-genai is a core dep (always installed), but mypy strictness
+# varies by environment.  Keep relaxed checking for this file.
 module = "podcast_pipeline.utils.thumbnails"
 ignore_missing_imports = true
 warn_unused_ignores = false
