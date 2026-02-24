@@ -183,3 +183,43 @@ class RifeBridge:
         generated = sorted(output_dir.glob("img*.png"))
         logger.info("rife_generated", count=len(generated), output_dir=str(output_dir))
         return generated
+
+    def uplift_fps(
+        self,
+        input_video: Path,
+        output_path: Path,
+        num_frames: int = 4,
+    ) -> None:
+        """Perform whole-video 30→60fps RIFE frame interpolation.
+
+        This is the Phase 9 entry point for ``force_60fps_shortform`` uplift.
+        Full implementation requires sequential per-frame-pair RIFE calls with
+        video extraction and reassembly; this stub raises ``NotImplementedError``
+        to signal that the uplift is not yet implemented at the video level.
+
+        Callers (``RenderStage._apply_shortform_60fps_rife``) handle the exception
+        gracefully and fall back to the original input video.
+
+        Parameters
+        ----------
+        input_video:
+            Source video to uplift.
+        output_path:
+            Destination path for the 60fps output video.
+        num_frames:
+            Number of RIFE bridge frames per original frame pair.
+
+        Raises
+        ------
+        NotImplementedError
+            Always — whole-video RIFE uplift is not yet implemented.
+        """
+        # NOTE: Future implementation should:
+        # 1. Extract all frames from input_video using FFmpeg
+        # 2. For each consecutive frame pair, call self.generate() to produce bridge frames
+        # 3. Interleave original + bridge frames in order
+        # 4. Re-encode into output_path at target_fps using FFmpeg concat demuxer
+        raise NotImplementedError(
+            "RifeBridge.uplift_fps: whole-video 30→60fps interpolation is not yet implemented. "
+            "Short-form RIFE uplift will gracefully fall back to original input."
+        )

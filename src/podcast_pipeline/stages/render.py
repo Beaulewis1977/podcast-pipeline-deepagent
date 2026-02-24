@@ -11,12 +11,19 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Literal
 
 from podcast_pipeline.config import Config, PlatformSpec, ThumbnailTargetSpec
+from podcast_pipeline.config.settings import (
+    AV1_CODECS,
+    H264_CODECS,
+    H265_CODECS,
+    SHORT_FORM_ASPECT_RATIOS,
+)
 from podcast_pipeline.models.edit_plan import EditPlan
 from podcast_pipeline.models.job import Job
 from podcast_pipeline.stages.base import Stage, StageResult
 from podcast_pipeline.stages.review import ReviewDecisions
 from podcast_pipeline.utils.editing import find_word_boundaries, snap_cut_range
 from podcast_pipeline.utils.ffmpeg import FFmpegError, get_video_info, run_ffmpeg, run_ffprobe
+from podcast_pipeline.utils.ffmpeg_toolkit import HardwareEncoderInfo, detect_hardware_encoders
 from podcast_pipeline.utils.logging import get_logger
 from podcast_pipeline.utils.noise_match import compute_noise_floor_correction, measure_rms_db
 from podcast_pipeline.utils.pose_match import scan_best_frame_pair
@@ -38,7 +45,7 @@ VIDEO_QUALITY_BITRATE_FACTOR = {
 }
 MAX_THUMBNAIL_EXPORTS = 4
 MIN_THUMBNAIL_OFFSET_SECONDS = 0.5
-PROFILE_LEVEL_CODECS = {"h264", "libx264", "h265", "hevc", "libx265"}
+PROFILE_LEVEL_CODECS = {"h264", "libx264", "h265", "hevc", "libx265", "h264_nvenc", "hevc_nvenc"}
 THUMBNAIL_COMPLIANCE_PLATFORMS = ("youtube", "spotify_video", "apple_video")
 _EPSILON = 1e-6
 
@@ -75,6 +82,15 @@ class RenderStage(Stage):
 
     def __init__(self, config: Config):
         super().__init__(config)
+        # Phase 9: Detect hardware encoder capabilities at startup.
+        # Results are cached process-wide via detect_hardware_encoders(use_cache=True).
+        # The MCP server pre-warms this cache on lifespan startup; here we just read it.
+        try:
+            self._hw_encoders: HardwareEncoderInfo = detect_hardware_encoders()
+        except Exception as exc:
+            # Encoder detection is best-effort — fall back to software-only capability.
+            self.logger.warning("hw_encoder_detection_failed", error=str(exc))
+            self._hw_encoders = HardwareEncoderInfo()  # all False / software defaults
 
     def run(self, job: Job, job_dir: Path) -> StageResult:
         """Execute render stage.
@@ -1602,6 +1618,37 @@ class RenderStage(Stage):
         """Render video export with aspect ratio conversion."""
         output_file = output_dir / f"final.{spec.container}"
 
+        # Phase 9: Resolve encoder — NVENC fallback chain runs at render time.
+        # RIFE 60fps uplift for short-form vertical exports runs BEFORE any overlay/caption
+        # burn-in so the interpolated frames are the base for subsequent filter operations.
+        resolved_encoder, encoder_extra_args = self._resolve_video_encoder(spec, platform)
+
+        # Phase 9: force_60fps_shortform — apply RIFE 30→60fps uplift to short-form
+        # vertical targets ONLY (9:16 aspect ratio). Long-form exports are never affected.
+        # This runs first — before any filter construction — so RIFE output is the base.
+        active_input = input_video
+        smoothing = self.config.smoothing
+        if (
+            smoothing.force_60fps_shortform
+            and smoothing.rife_enabled
+            and self._is_shortform_vertical(spec)
+        ):
+            uplifted = self._apply_shortform_60fps_rife(input_video, output_dir, platform)
+            if uplifted is not None:
+                active_input = uplifted
+                self.logger.info(
+                    "shortform_60fps_applied",
+                    platform=platform,
+                    source=str(input_video),
+                    uplifted=str(uplifted),
+                )
+        elif smoothing.force_60fps_shortform and not self._is_shortform_vertical(spec):
+            self.logger.debug(
+                "force_60fps_shortform_skipped_longform",
+                platform=platform,
+                aspect_ratio=spec.aspect_ratio,
+            )
+
         # Get source dimensions
         src_width = video_info.get("width", 1920)
         src_height = video_info.get("height", 1080)
@@ -1626,7 +1673,7 @@ class RenderStage(Stage):
             vf_filters,
             af_filters,
             transcript_words=transcript_words,
-            input_video=input_video,
+            input_video=active_input,
         )
 
         # Handle duration limits
@@ -1641,7 +1688,7 @@ class RenderStage(Stage):
             )
 
         # Build FFmpeg command
-        args = ["-i", str(input_video)]
+        args = ["-i", str(active_input)]
 
         # Duration limit
         args.extend(duration_args)
@@ -1658,21 +1705,39 @@ class RenderStage(Stage):
             if af_filters:
                 args.extend(["-af", ",".join(af_filters)])
 
-        # Video encoding
+        # Video encoding — use resolved encoder (NVENC/software fallback)
+        # encoder_extra_args may override pix_fmt for NVENC→libx265 fallback
+        effective_pix_fmt = spec.pix_fmt
+        if encoder_extra_args:
+            # When _resolve_video_encoder returns extra args (e.g. libx265 fallback),
+            # extract pix_fmt override so the -pix_fmt flag stays before codec-specific args.
+            try:
+                pf_idx = encoder_extra_args.index("-pix_fmt")
+                effective_pix_fmt = encoder_extra_args[pf_idx + 1]
+                # Remaining extra args after stripping pix_fmt pair
+                remaining_extra = encoder_extra_args[:pf_idx] + encoder_extra_args[pf_idx + 2 :]
+            except ValueError:
+                remaining_extra = encoder_extra_args
+        else:
+            remaining_extra = []
+
         args.extend(
             [
                 "-c:v",
-                spec.video_codec,
+                resolved_encoder,
                 "-preset",
                 spec.preset,
                 "-b:v",
                 spec.video_bitrate,
                 "-pix_fmt",
-                spec.pix_fmt,
+                effective_pix_fmt,
             ]
         )
 
-        codec_supports_profile_level = self._supports_profile_level_flags(spec.video_codec)
+        if remaining_extra:
+            args.extend(remaining_extra)
+
+        codec_supports_profile_level = self._supports_profile_level_flags(resolved_encoder)
         if codec_supports_profile_level and spec.video_profile:
             args.extend(["-profile:v", spec.video_profile])
         if codec_supports_profile_level and spec.video_level:
@@ -1682,9 +1747,16 @@ class RenderStage(Stage):
         if codec_supports_profile_level and spec.keyint_min is not None:
             args.extend(["-keyint_min", str(spec.keyint_min)])
 
-        # FPS if specified
-        if spec.fps:
-            args.extend(["-r", str(spec.fps)])
+        # FPS if specified (respect 60fps uplift for short-form when RIFE was applied)
+        target_fps = spec.fps
+        if (
+            smoothing.force_60fps_shortform
+            and self._is_shortform_vertical(spec)
+            and active_input != input_video
+        ):
+            target_fps = 60
+        if target_fps:
+            args.extend(["-r", str(target_fps)])
 
         # Audio encoding
         args.extend(
@@ -1730,13 +1802,161 @@ class RenderStage(Stage):
         """Return whether a codec supports profile/level and GOP cadence flags."""
         return video_codec.strip().lower() in PROFILE_LEVEL_CODECS
 
+    def _resolve_video_encoder(
+        self,
+        spec: PlatformSpec,
+        platform: str,
+    ) -> tuple[str, list[str]]:
+        """Resolve the actual FFmpeg encoder and extra args for a platform spec.
+
+        Applies the hardware fallback chain:
+        - hevc_nvenc preferred codec → NVENC HEVC (if GPU present) else libx265 software
+        - h264_nvenc preferred codec → NVENC H.264 (if GPU present) else libx264 software
+        - AV1 (libsvtav1) → software only; logs warning if unavailable (av1_experimental must be set)
+        - All other codecs → use spec.video_codec verbatim
+
+        Returns:
+            Tuple of (encoder_name, extra_args) where extra_args are codec-specific flags.
+        """
+        codec = (spec.video_codec or "libx264").strip().lower()
+        hw = self._hw_encoders
+
+        # HEVC 10-bit NVENC → libx265 fallback chain
+        if codec == "hevc_nvenc":
+            if hw.nvenc_hevc:
+                self.logger.info(
+                    "encoder_selected",
+                    platform=platform,
+                    encoder="hevc_nvenc",
+                    reason="nvenc_available",
+                )
+                return "hevc_nvenc", []
+            # Software fallback: translate NVENC pix_fmt (p010le) to x265 equivalent
+            pix_fmt = spec.pix_fmt.strip().lower()
+            x265_pix = "yuv420p10le" if pix_fmt == "p010le" else "yuv420p"
+            profile = spec.video_profile or "main"
+            x265_params = f"profile={profile}"
+            self.logger.info(
+                "encoder_fallback",
+                platform=platform,
+                requested="hevc_nvenc",
+                fallback="libx265",
+                pix_fmt=x265_pix,
+                reason="nvenc_unavailable",
+            )
+            return "libx265", ["-pix_fmt", x265_pix, "-x265-params", x265_params]
+
+        # H.264 NVENC → libx264 fallback chain
+        if codec == "h264_nvenc":
+            if hw.nvenc_h264:
+                self.logger.info(
+                    "encoder_selected",
+                    platform=platform,
+                    encoder="h264_nvenc",
+                    reason="nvenc_available",
+                )
+                return "h264_nvenc", []
+            self.logger.info(
+                "encoder_fallback",
+                platform=platform,
+                requested="h264_nvenc",
+                fallback="libx264",
+                reason="nvenc_unavailable",
+            )
+            return "libx264", []
+
+        # AV1 — software-only experimental path
+        if codec in AV1_CODECS:
+            if hw.software_av1:
+                self.logger.info(
+                    "encoder_selected",
+                    platform=platform,
+                    encoder=codec,
+                    reason="av1_experimental_enabled",
+                )
+            else:
+                self.logger.warning(
+                    "av1_encoder_unavailable",
+                    platform=platform,
+                    encoder=codec,
+                    action=(
+                        "libsvtav1 not found in FFmpeg build; install FFmpeg with SVT-AV1 support "
+                        "or switch to hevc_nvenc/libx265 for this platform."
+                    ),
+                )
+            return codec, []
+
+        # All other codecs (libx264, libx265, etc.) — verbatim
+        return codec, []
+
+    def _is_shortform_vertical(self, spec: PlatformSpec) -> bool:
+        """Return True when the platform spec targets a short-form vertical export (9:16).
+
+        Used to gate force_60fps_shortform RIFE uplift to TikTok/Reels/Shorts targets only.
+        Long-form exports (16:9, 1:1, etc.) are never affected.
+        """
+        return (spec.aspect_ratio or "").strip() in SHORT_FORM_ASPECT_RATIOS
+
+    def _apply_shortform_60fps_rife(
+        self,
+        input_video: Path,
+        output_dir: Path,
+        platform: str,
+    ) -> Path | None:
+        """Apply RIFE 30→60fps uplift for short-form vertical exports.
+
+        Returns path to the 60fps-uplifted video when successful, or None when
+        RIFE is unavailable/fails (render continues with original input).
+
+        This runs BEFORE branding/caption burn-in to ensure the interpolated
+        frames are the base for overlay operations.
+        """
+        smoothing = self.config.smoothing
+        rife = RifeBridge(script_path=smoothing.rife_script_path)
+
+        if not rife.available():
+            self.logger.warning(
+                "force_60fps_rife_unavailable",
+                platform=platform,
+                script_path=smoothing.rife_script_path,
+                action=(
+                    "Set smoothing.rife_script_path to a valid RIFE inference_img.py path "
+                    "to enable 60fps short-form uplift."
+                ),
+            )
+            return None
+
+        uplifted_path = output_dir / "_60fps_uplifted.mp4"
+        try:
+            rife.uplift_fps(
+                input_video,
+                uplifted_path,
+                num_frames=smoothing.rife_num_bridge_frames,
+            )
+            if uplifted_path.is_file() and uplifted_path.stat().st_size > 0:
+                self.logger.info(
+                    "force_60fps_uplift_complete",
+                    platform=platform,
+                    output=str(uplifted_path),
+                )
+                return uplifted_path
+        except Exception as exc:
+            self.logger.warning(
+                "force_60fps_uplift_failed",
+                platform=platform,
+                error=str(exc),
+            )
+        return None
+
     def _expected_probe_codec(self, configured_codec: str) -> str | None:
         """Map encoder names to ffprobe codec_name values for compliance checks."""
         normalized = configured_codec.strip().lower()
-        if normalized in {"h264", "libx264"}:
+        if normalized in H264_CODECS:
             return "h264"
-        if normalized in {"h265", "hevc", "libx265"}:
+        if normalized in H265_CODECS:
             return "hevc"
+        if normalized in AV1_CODECS:
+            return "av1"
         return None
 
     def _parse_numeric_probe_value(self, value: Any) -> float | None:
