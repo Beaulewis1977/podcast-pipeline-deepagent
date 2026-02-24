@@ -97,6 +97,9 @@ smoothing:
   # Phase 8 add-ons
   rife_enabled: false
   rife_script_path: ""
+  # Phase 9: explicit 30→60fps RIFE uplift for short-form vertical exports only (TikTok/Reels/Shorts)
+  # Requires rife_enabled: true and a valid rife_script_path. Long-form exports are never affected.
+  force_60fps_shortform: false
 
 # Thumbnail compliance constraints by selected export target
 # YouTube values reflect official custom thumbnail guidance.
@@ -308,3 +311,22 @@ platforms:
     fps: 30
     preset: medium
     pix_fmt: yuv420p
+
+  # YouTube Ultra - HEVC 10-bit 4K export (Phase 9 new default for "Ultra" quality tier).
+  # Runtime encoder selection: hevc_nvenc (GPU preferred) → libx265 (CPU fallback).
+  # Uses preset p7 for RTX 5060 Ti (avoids uhq+highbitdepth artifact regression).
+  # To opt-in to AV1 instead, set video_codec: libsvtav1 + av1_experimental: true.
+  youtube_ultra:
+    container: mp4
+    video_codec: hevc_nvenc
+    video_profile: main10
+    video_bitrate: 12M
+    audio_codec: aac
+    audio_bitrate: 320k
+    loudness_lufs: -14.0
+    width: 3840
+    height: 2160
+    aspect_ratio: "16:9"
+    fps: 30
+    preset: p7
+    pix_fmt: p010le

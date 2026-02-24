@@ -35,18 +35,26 @@ SUPPORTED_MODELS_BY_PROVIDER = {
 
 SERVICE_HOST_PATTERN = re.compile(r"^[A-Za-z0-9.-]+$")
 VIDEO_LEVEL_PATTERN = re.compile(r"^(?:[1-6](?:\.[0-2])?|1\.3)$")
-H264_CODECS = {"h264", "libx264"}
-H265_CODECS = {"h265", "hevc", "libx265"}
+H264_CODECS = {"h264", "libx264", "h264_nvenc"}
+H265_CODECS = {"h265", "hevc", "libx265", "hevc_nvenc"}
+AV1_CODECS = {"av1", "libsvtav1"}
 CODECS_WITH_PROFILE_LEVEL = H264_CODECS | H265_CODECS
 H264_PROFILES = {"baseline", "main", "high", "high10", "high422", "high444"}
 H265_PROFILES = {"main", "main10", "mainstillpicture"}
+# NVENC uses p010le for 10-bit HEVC; libx265 uses yuv420p10le
 PIX_FMT_BY_CODEC = {
     "h264": {"yuv420p", "yuv422p", "yuv444p"},
     "libx264": {"yuv420p", "yuv422p", "yuv444p"},
+    "h264_nvenc": {"yuv420p", "yuv422p", "yuv444p"},
     "h265": {"yuv420p", "yuv420p10le", "yuv422p10le", "yuv444p10le"},
     "hevc": {"yuv420p", "yuv420p10le", "yuv422p10le", "yuv444p10le"},
     "libx265": {"yuv420p", "yuv420p10le", "yuv422p10le", "yuv444p10le"},
+    "hevc_nvenc": {"yuv420p", "p010le"},
+    "av1": {"yuv420p", "yuv420p10le"},
+    "libsvtav1": {"yuv420p", "yuv420p10le"},
 }
+# Short-form vertical aspect ratios eligible for RIFE 60fps uplift
+SHORT_FORM_ASPECT_RATIOS = {"9:16"}
 THUMBNAIL_FORMATS = {"jpg", "jpeg", "png", "webp"}
 
 
@@ -303,6 +311,12 @@ class SmoothingConfig(BaseModel):
     rife_script_path: str = ""
     rife_fallback_to_xfade: bool = True
 
+    # Phase 9: Explicit 30→60fps RIFE uplift for short-form vertical exports.
+    # When True, applies RIFE 60fps interpolation ONLY to TikTok/Reels/Shorts targets
+    # (aspect_ratio="9:16").  Long-form exports are never affected regardless of this flag.
+    # Requires rife_enabled=True and a valid rife_script_path to have any effect.
+    force_60fps_shortform: bool = False
+
 
 class HLSConfig(BaseModel):
     """Typed HLS muxer configuration for provider hand-off artifacts."""
@@ -502,6 +516,8 @@ class PlatformSpec(BaseModel):
     hls: HLSConfig | None = None
     crop_mode: str = "center"  # center, top, bottom, smart
     audio_only: bool = False  # True for audio-only platforms
+    # Phase 9: AV1 is explicitly experimental and opt-in; never auto-activated
+    av1_experimental: bool = False
 
     @model_validator(mode="after")
     def validate_compliance_fields(self) -> Self:
@@ -550,6 +566,21 @@ class PlatformSpec(BaseModel):
             raise ValueError(
                 f"Invalid pix_fmt '{self.pix_fmt}' for codec '{self.video_codec}'. "
                 f"Expected one of: {allowed}"
+            )
+
+        # Reject hevc_nvenc + uhq + highbitdepth combination (known RTX artifacts).
+        # p7 preset must be used for 10-bit NVENC instead.
+        if codec == "hevc_nvenc" and pix_fmt == "p010le" and self.preset in {"uhq", "hq"}:
+            raise ValueError(
+                "hevc_nvenc with p010le (10-bit) should not use 'uhq' or 'hq' preset "
+                "due to known RTX artifacts. Use 'p7' or 'slow' instead."
+            )
+
+        # AV1 opt-in gate: av1_experimental must be True when using an AV1 codec.
+        if codec in AV1_CODECS and not self.av1_experimental:
+            raise ValueError(
+                f"AV1 codec '{self.video_codec}' requires av1_experimental=true. "
+                "AV1 output is experimental and must be explicitly enabled."
             )
 
         if self.keyint_min is not None and self.gop is None:
@@ -748,6 +779,28 @@ class PlatformSpecs(BaseModel):
             preset="medium",
         )
     )
+    # Phase 9: HEVC 10-bit "Ultra" quality profile — NEW DEFAULT for highest quality exports.
+    # Runtime encoder selection: hevc_nvenc (NVENC GPU) -> libx265 (CPU software fallback).
+    # The video_codec field here is the *preferred* codec; render stage resolves the actual
+    # encoder at runtime using detect_hardware_encoders().  Use preset "p7" (not "uhq") for
+    # RTX-5060-Ti compatibility (avoids uhq + highbitdepth artifact regression).
+    youtube_ultra: PlatformSpec = Field(
+        default_factory=lambda: PlatformSpec(
+            container="mp4",
+            video_codec="hevc_nvenc",
+            video_profile="main10",
+            video_bitrate="12M",
+            audio_codec="aac",
+            audio_bitrate="320k",
+            loudness_lufs=-14.0,
+            preset="p7",
+            width=3840,
+            height=2160,
+            aspect_ratio="16:9",
+            fps=30,
+            pix_fmt="p010le",
+        )
+    )
 
     @model_validator(mode="after")
     def validate_video_target_requirements(self) -> Self:
@@ -771,6 +824,21 @@ class PlatformSpecs(BaseModel):
                     f"{platform_name}: codec '{spec.video_codec}' does not support profile/level controls"
                 )
 
+        return self
+
+    @model_validator(mode="after")
+    def validate_hevc10_ultra_profiles(self) -> Self:
+        """Validate HEVC 10-bit Ultra profiles that are present on the spec object."""
+        ultra_spec = getattr(self, "youtube_ultra", None)
+        if ultra_spec is None:
+            return self
+        codec = (ultra_spec.video_codec or "").strip().lower()
+        if codec in H265_CODECS and ultra_spec.video_profile not in H265_PROFILES:
+            allowed = ", ".join(sorted(H265_PROFILES))
+            raise ValueError(
+                f"youtube_ultra: invalid video_profile '{ultra_spec.video_profile}' "
+                f"for HEVC codec. Expected one of: {allowed}"
+            )
         return self
 
 
@@ -842,6 +910,27 @@ class APIKeysConfig(BaseModel):
         )
 
 
+class BrandingConfig(BaseModel):
+    """Phase 9 branding profile configuration.
+
+    Controls which BrandingProfile is active for a job and where profile YAML
+    files are stored.  Both fields are optional so existing configs that do
+    not mention ``branding:`` continue to work without changes.
+    """
+
+    active_profile: str | None = Field(
+        default=None,
+        description=(
+            "Name of the active BrandingProfile (without .yaml extension). "
+            "Set to null / omit to run without branding."
+        ),
+    )
+    branding_dir: Path = Field(
+        default=Path("branding"),
+        description="Directory that holds branding/<name>.yaml profile files.",
+    )
+
+
 class Config(BaseModel):
     """Complete pipeline configuration."""
 
@@ -856,6 +945,7 @@ class Config(BaseModel):
     platforms: PlatformSpecs = Field(default_factory=PlatformSpecs)
     api_keys: APIKeysConfig = Field(default_factory=APIKeysConfig)
     service: ServiceConfig = Field(default_factory=ServiceConfig)
+    branding: BrandingConfig = Field(default_factory=BrandingConfig)
 
 
 def load_config(config_path: Path | None = None) -> Config:

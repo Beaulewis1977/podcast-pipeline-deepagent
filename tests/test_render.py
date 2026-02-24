@@ -2514,3 +2514,286 @@ class TestPhase8PassesDisabledRegression:
         assert result is not None
         assert result.startswith("volume=")
         assert "eval=frame" in result
+
+
+# ---------------------------------------------------------------------------
+# Phase 9 — HEVC 10-bit, AV1 experimental, NVENC fallback, force_60fps_shortform
+# ---------------------------------------------------------------------------
+
+
+class TestPlatformSpecHevc10bit:
+    """Tests for HEVC 10-bit platform profile validation (Phase 9)."""
+
+    def test_platform_spec_hevc_nvenc_main10_p010le_is_valid(self) -> None:
+        """hevc_nvenc + main10 + p010le is the canonical NVENC 10-bit HEVC combination."""
+        spec = PlatformSpec(
+            video_codec="hevc_nvenc",
+            video_profile="main10",
+            pix_fmt="p010le",
+            preset="p7",
+        )
+        assert spec.video_codec == "hevc_nvenc"
+        assert spec.video_profile == "main10"
+        assert spec.pix_fmt == "p010le"
+
+    def test_platform_spec_libx265_main10_yuv420p10le_is_valid(self) -> None:
+        """libx265 with main10 profile and yuv420p10le pix_fmt is valid for software fallback."""
+        spec = PlatformSpec(
+            video_codec="libx265",
+            video_profile="main10",
+            pix_fmt="yuv420p10le",
+            preset="slow",
+        )
+        assert spec.video_codec == "libx265"
+        assert spec.video_profile == "main10"
+        assert spec.pix_fmt == "yuv420p10le"
+
+    def test_platform_spec_hevc_nvenc_rejects_invalid_pix_fmt(self, tmp_path: Path) -> None:
+        """hevc_nvenc does not accept yuv420p10le — only yuv420p or p010le."""
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "\n".join(
+                [
+                    "platforms:",
+                    "  youtube_ultra:",
+                    "    video_codec: hevc_nvenc",
+                    "    video_profile: main10",
+                    "    pix_fmt: yuv420p10le",
+                    "    preset: p7",
+                ]
+            )
+        )
+
+        with pytest.raises(ValueError, match=r"pix_fmt|hevc_nvenc|youtube_ultra"):
+            load_config(config_path)
+
+    def test_platform_spec_hevc_nvenc_rejects_uhq_preset_with_p010le(self) -> None:
+        """hevc_nvenc + p010le + uhq preset is forbidden (known RTX artifact regression)."""
+        with pytest.raises(ValueError, match=r"uhq|p010le|hevc_nvenc"):
+            PlatformSpec(
+                video_codec="hevc_nvenc",
+                video_profile="main10",
+                pix_fmt="p010le",
+                preset="uhq",
+            )
+
+    def test_platform_spec_hevc_nvenc_rejects_hq_preset_with_p010le(self) -> None:
+        """hevc_nvenc + p010le + hq preset is also forbidden for RTX safety."""
+        with pytest.raises(ValueError, match=r"hq|p010le|hevc_nvenc"):
+            PlatformSpec(
+                video_codec="hevc_nvenc",
+                video_profile="main10",
+                pix_fmt="p010le",
+                preset="hq",
+            )
+
+    def test_platform_spec_hevc_nvenc_allows_p7_preset(self) -> None:
+        """p7 is the recommended RTX preset for 10-bit HEVC and must be accepted."""
+        spec = PlatformSpec(
+            video_codec="hevc_nvenc",
+            video_profile="main10",
+            pix_fmt="p010le",
+            preset="p7",
+        )
+        assert spec.preset == "p7"
+
+    def test_platform_spec_libx265_invalid_profile_rejected(self, tmp_path: Path) -> None:
+        """libx265 with an invalid HEVC profile must fail fast."""
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "\n".join(
+                [
+                    "platforms:",
+                    "  youtube_ultra:",
+                    "    video_codec: libx265",
+                    "    video_profile: high",
+                    "    pix_fmt: yuv420p10le",
+                    "    preset: slow",
+                ]
+            )
+        )
+
+        with pytest.raises(ValueError, match=r"video_profile|libx265|youtube_ultra"):
+            load_config(config_path)
+
+    def test_youtube_ultra_platform_spec_defaults_hevc10_nvenc(self) -> None:
+        """youtube_ultra default should express NVENC HEVC 10-bit intent."""
+        config = load_config()
+        spec = config.platforms.youtube_ultra
+
+        assert spec.video_codec == "hevc_nvenc"
+        assert spec.video_profile == "main10"
+        assert spec.pix_fmt == "p010le"
+        assert spec.preset == "p7"
+        assert spec.width == 3840
+        assert spec.height == 2160
+        assert spec.aspect_ratio == "16:9"
+
+    def test_youtube_ultra_yaml_override_to_software_x265(self, tmp_path: Path) -> None:
+        """Operators can override youtube_ultra to use libx265 software fallback explicitly."""
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "\n".join(
+                [
+                    "platforms:",
+                    "  youtube_ultra:",
+                    "    video_codec: libx265",
+                    "    video_profile: main10",
+                    "    pix_fmt: yuv420p10le",
+                    "    preset: slow",
+                ]
+            )
+        )
+
+        config = load_config(config_path)
+        spec = config.platforms.youtube_ultra
+
+        assert spec.video_codec == "libx265"
+        assert spec.video_profile == "main10"
+        assert spec.pix_fmt == "yuv420p10le"
+
+
+class TestPlatformSpecAv1Experimental:
+    """Tests for AV1 experimental opt-in gate (Phase 9)."""
+
+    def test_platform_spec_av1_requires_experimental_flag(self) -> None:
+        """AV1 codec without av1_experimental=True must be rejected at config validation."""
+        with pytest.raises(ValueError, match=r"av1_experimental|libsvtav1|AV1"):
+            PlatformSpec(
+                video_codec="libsvtav1",
+                pix_fmt="yuv420p",
+                preset="medium",
+            )
+
+    def test_platform_spec_av1_accepted_with_experimental_flag(self) -> None:
+        """AV1 with av1_experimental=True must be accepted — explicit operator opt-in."""
+        spec = PlatformSpec(
+            video_codec="libsvtav1",
+            pix_fmt="yuv420p",
+            preset="medium",
+            av1_experimental=True,
+        )
+        assert spec.video_codec == "libsvtav1"
+        assert spec.av1_experimental is True
+
+    def test_platform_spec_av1_yaml_without_flag_rejected(self, tmp_path: Path) -> None:
+        """AV1 codec in YAML without av1_experimental fails at config load."""
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "\n".join(
+                [
+                    "platforms:",
+                    "  youtube_ultra:",
+                    "    video_codec: libsvtav1",
+                    "    pix_fmt: yuv420p",
+                    "    preset: medium",
+                ]
+            )
+        )
+
+        with pytest.raises(ValueError, match=r"av1_experimental|libsvtav1|AV1"):
+            load_config(config_path)
+
+    def test_platform_spec_av1_yaml_with_flag_accepted(self, tmp_path: Path) -> None:
+        """AV1 codec in YAML with av1_experimental: true loads cleanly."""
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "\n".join(
+                [
+                    "platforms:",
+                    "  youtube_ultra:",
+                    "    video_codec: libsvtav1",
+                    "    pix_fmt: yuv420p",
+                    "    preset: medium",
+                    "    av1_experimental: true",
+                ]
+            )
+        )
+
+        config = load_config(config_path)
+        assert config.platforms.youtube_ultra.video_codec == "libsvtav1"
+        assert config.platforms.youtube_ultra.av1_experimental is True
+
+    def test_platform_spec_av1_experimental_defaults_false_for_non_av1(self) -> None:
+        """Non-AV1 codecs should default av1_experimental=False with no error."""
+        spec = PlatformSpec(video_codec="libx264")
+        assert spec.av1_experimental is False
+
+        spec2 = PlatformSpec(
+            video_codec="hevc_nvenc", video_profile="main10", pix_fmt="p010le", preset="p7"
+        )
+        assert spec2.av1_experimental is False
+
+    def test_platform_spec_av1_not_default_activated_in_standard_profiles(self) -> None:
+        """Standard platform profiles must not silently enable AV1."""
+        config = load_config()
+
+        for platform_name in (
+            "youtube",
+            "tiktok",
+            "instagram",
+            "linkedin",
+            "twitter",
+            "facebook",
+            "spotify_video",
+            "apple_video",
+        ):
+            spec = getattr(config.platforms, platform_name)
+            if not spec.audio_only:
+                assert spec.av1_experimental is False, (
+                    f"{platform_name} should not have av1_experimental=True"
+                )
+
+
+class TestSmoothingConfigForce60fps:
+    """Tests for SmoothingConfig.force_60fps_shortform (Phase 9)."""
+
+    def test_force_60fps_shortform_defaults_false(self) -> None:
+        """force_60fps_shortform must default to False — no silent 60fps uplift."""
+        from podcast_pipeline.config.settings import SmoothingConfig
+
+        config = SmoothingConfig()
+        assert config.force_60fps_shortform is False
+
+    def test_force_60fps_shortform_loaded_from_yaml(self, tmp_path: Path) -> None:
+        """force_60fps_shortform should load from YAML when explicitly set."""
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "\n".join(
+                [
+                    "smoothing:",
+                    "  force_60fps_shortform: true",
+                ]
+            )
+        )
+
+        config = load_config(config_path)
+        assert config.smoothing.force_60fps_shortform is True
+
+    def test_force_60fps_shortform_default_config_yaml_is_false(self) -> None:
+        """Default config.yaml must keep force_60fps_shortform=false."""
+        config = load_config()
+        assert config.smoothing.force_60fps_shortform is False
+
+    def test_force_60fps_shortform_coexists_with_phase8_rife_fields(self) -> None:
+        """force_60fps_shortform must coexist with existing Phase 8 RIFE fields."""
+        from podcast_pipeline.config.settings import SmoothingConfig
+
+        cfg = SmoothingConfig(
+            rife_enabled=True,
+            rife_script_path="/path/to/rife.py",
+            rife_fallback_to_xfade=True,
+            force_60fps_shortform=True,
+        )
+        assert cfg.rife_enabled is True
+        assert cfg.force_60fps_shortform is True
+
+    def test_force_60fps_shortform_disabled_when_all_phase8_disabled(self) -> None:
+        """Disabling all Phase 8/9 features must include force_60fps_shortform=False."""
+        from podcast_pipeline.config.settings import SmoothingConfig
+
+        cfg = SmoothingConfig(
+            rife_enabled=False,
+            force_60fps_shortform=False,
+        )
+        assert cfg.force_60fps_shortform is False
