@@ -1,9 +1,8 @@
-"""Tests for AI thumbnail generation service (09-09)."""
+"""Tests for AI thumbnail generation service (09-09, updated 09-11 Gemini Vision)."""
 
 from __future__ import annotations
 
 import os
-import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -99,7 +98,7 @@ class TestCacheKey:
 class TestCacheHit:
     """Cache hits avoid re-generation and billing."""
 
-    def test_cache_hit_returns_cached_artifact(self, tmp_output: Path):
+    def test_cache_hit_returns_cached_artifact(self, tmp_output: Path) -> None:
         from podcast_pipeline.utils.thumbnails import (
             ThumbnailRequest,
             ThumbnailService,
@@ -108,7 +107,7 @@ class TestCacheHit:
         )
 
         prompt = "podcast host on stage"
-        model = "imagen-4.0-generate-001"
+        model = "gemini-2.5-flash-image"
         key = compute_cache_key(prompt, model, 1280, 720, seed=None, index=0)
         cached_file = tmp_output / f"{key}.jpg"
         cached_file.write_bytes(b"FAKEJPEG")
@@ -123,13 +122,12 @@ class TestCacheHit:
 
         # Backend selection will fail (no credentials) but cache hit should
         # short-circuit before any backend call.
-        # Patch _select_backend to return IMAGEN4 to exercise cache path.
         from podcast_pipeline.utils.thumbnails import ThumbnailBackend
 
         with patch.object(
             service,
             "_select_backend",
-            return_value=(ThumbnailBackend.IMAGEN4, ""),
+            return_value=(ThumbnailBackend.GEMINI, ""),
         ):
             result = service.generate(request)
 
@@ -138,7 +136,7 @@ class TestCacheHit:
         assert result.artifacts[0].status == ThumbnailStatus.CACHED
         assert result.artifacts[0].cache_hit is True
 
-    def test_empty_cache_file_triggers_regeneration(self, tmp_output: Path):
+    def test_empty_cache_file_triggers_regeneration(self, tmp_output: Path) -> None:
         """A zero-byte cache file must not be treated as a valid cache hit."""
         from podcast_pipeline.utils.thumbnails import (
             ThumbnailBackend,
@@ -148,10 +146,10 @@ class TestCacheHit:
         )
 
         prompt = "empty cache test"
-        model = "imagen-4.0-generate-001"
+        model = "gemini-2.5-flash-image"
         key = compute_cache_key(prompt, model, 1280, 720, seed=None, index=0)
         empty_file = tmp_output / f"{key}.jpg"
-        empty_file.write_bytes(b"")  # zero-byte — should NOT be treated as cache hit
+        empty_file.write_bytes(b"")  # zero-byte -- should NOT be treated as cache hit
 
         service = ThumbnailService()
         request = ThumbnailRequest(prompts=[prompt], output_dir=tmp_output)
@@ -166,7 +164,7 @@ class TestCacheHit:
             patch.object(
                 service,
                 "_select_backend",
-                return_value=(ThumbnailBackend.IMAGEN4, ""),
+                return_value=(ThumbnailBackend.GEMINI, ""),
             ),
             patch.object(service, "_run_backend", side_effect=fake_run_backend),
         ):
@@ -183,16 +181,14 @@ class TestCacheHit:
 
 
 class TestBackendSelection:
-    """Backend routing respects availability and fallback order."""
+    """Backend routing respects Gemini availability."""
 
-    def test_imagen4_selected_when_credentials_available(self, tmp_output: Path):
+    def test_gemini_selected_when_api_key_available(self, tmp_output: Path) -> None:
         from podcast_pipeline.utils.thumbnails import ThumbnailBackend, ThumbnailService
 
-        with (
-            patch(
-                "podcast_pipeline.utils.thumbnails._imagen4_available",
-                return_value=(True, ""),
-            ),
+        with patch(
+            "podcast_pipeline.utils.thumbnails._gemini_available",
+            return_value=(True, ""),
         ):
             service = ThumbnailService()
             from podcast_pipeline.utils.thumbnails import ThumbnailRequest
@@ -200,50 +196,18 @@ class TestBackendSelection:
             request = ThumbnailRequest(
                 prompts=["test"],
                 output_dir=tmp_output,
-                project_id="my-project",
             )
             backend, reason = service._select_backend(request)
 
-        assert backend == ThumbnailBackend.IMAGEN4
+        assert backend == ThumbnailBackend.GEMINI
         assert reason == ""
 
-    def test_flux_fallback_when_imagen4_unavailable(self, tmp_output: Path):
+    def test_none_backend_when_gemini_unavailable(self, tmp_output: Path) -> None:
         from podcast_pipeline.utils.thumbnails import ThumbnailBackend, ThumbnailService
 
-        with (
-            patch(
-                "podcast_pipeline.utils.thumbnails._imagen4_available",
-                return_value=(False, "no project"),
-            ),
-            patch(
-                "podcast_pipeline.utils.thumbnails._flux_available",
-                return_value=(True, ""),
-            ),
-            patch(
-                "podcast_pipeline.utils.thumbnails.check_vram_preflight",
-                return_value=(True, ""),
-            ),
-        ):
-            service = ThumbnailService()
-            from podcast_pipeline.utils.thumbnails import ThumbnailRequest
-
-            request = ThumbnailRequest(prompts=["test"], output_dir=tmp_output)
-            backend, _reason = service._select_backend(request)
-
-        assert backend == ThumbnailBackend.FLUX
-
-    def test_none_backend_when_both_unavailable(self, tmp_output: Path):
-        from podcast_pipeline.utils.thumbnails import ThumbnailBackend, ThumbnailService
-
-        with (
-            patch(
-                "podcast_pipeline.utils.thumbnails._imagen4_available",
-                return_value=(False, "no creds"),
-            ),
-            patch(
-                "podcast_pipeline.utils.thumbnails._flux_available",
-                return_value=(False, "diffusers missing"),
-            ),
+        with patch(
+            "podcast_pipeline.utils.thumbnails._gemini_available",
+            return_value=(False, "GEMINI_API_KEY not set"),
         ):
             service = ThumbnailService()
             from podcast_pipeline.utils.thumbnails import ThumbnailRequest
@@ -254,32 +218,6 @@ class TestBackendSelection:
         assert backend == ThumbnailBackend.NONE
         assert "No thumbnail backend" in reason
 
-    def test_none_backend_when_flux_vram_insufficient(self, tmp_output: Path):
-        from podcast_pipeline.utils.thumbnails import ThumbnailBackend, ThumbnailService
-
-        with (
-            patch(
-                "podcast_pipeline.utils.thumbnails._imagen4_available",
-                return_value=(False, "no project"),
-            ),
-            patch(
-                "podcast_pipeline.utils.thumbnails._flux_available",
-                return_value=(True, ""),
-            ),
-            patch(
-                "podcast_pipeline.utils.thumbnails.check_vram_preflight",
-                return_value=(False, "only 8 GiB free"),
-            ),
-        ):
-            service = ThumbnailService()
-            from podcast_pipeline.utils.thumbnails import ThumbnailRequest
-
-            request = ThumbnailRequest(prompts=["test"], output_dir=tmp_output)
-            backend, reason = service._select_backend(request)
-
-        assert backend == ThumbnailBackend.NONE
-        assert "VRAM" in reason
-
 
 # ---------------------------------------------------------------------------
 # Graceful degradation when no backend available
@@ -289,22 +227,16 @@ class TestBackendSelection:
 class TestDegradedMode:
     """Service skips gracefully when no backend is available."""
 
-    def test_no_backend_returns_degraded_result(self, tmp_output: Path):
+    def test_no_backend_returns_degraded_result(self, tmp_output: Path) -> None:
         from podcast_pipeline.utils.thumbnails import (
             ThumbnailBackend,
             ThumbnailRequest,
             ThumbnailService,
         )
 
-        with (
-            patch(
-                "podcast_pipeline.utils.thumbnails._imagen4_available",
-                return_value=(False, "missing creds"),
-            ),
-            patch(
-                "podcast_pipeline.utils.thumbnails._flux_available",
-                return_value=(False, "no diffusers"),
-            ),
+        with patch(
+            "podcast_pipeline.utils.thumbnails._gemini_available",
+            return_value=(False, "GEMINI_API_KEY not set"),
         ):
             service = ThumbnailService()
             result = service.generate(
@@ -318,118 +250,44 @@ class TestDegradedMode:
 
 
 # ---------------------------------------------------------------------------
-# VRAM preflight tests
+# Gemini availability checks
 # ---------------------------------------------------------------------------
 
 
-class TestVramPreflight:
-    """VRAM preflight raises explicit diagnostics before loading FLUX."""
+class TestGeminiAvailability:
+    """Gemini Vision backend availability diagnostics."""
 
-    def test_vram_ok_when_sufficient(self):
-        from podcast_pipeline.utils.thumbnails import check_vram_preflight
+    def test_unavailable_when_api_key_missing(self) -> None:
+        from podcast_pipeline.utils.thumbnails import _gemini_available
 
-        with patch("podcast_pipeline.utils.thumbnails._free_vram_gib", return_value=16.0):
-            ok, msg = check_vram_preflight(min_free_gib=14.0)
+        env = os.environ.copy()
+        env.pop("GEMINI_API_KEY", None)
+        with patch.dict(os.environ, env, clear=True):
+            ok, reason = _gemini_available()
+
+        assert ok is False
+        assert "GEMINI_API_KEY" in reason
+
+    def test_unavailable_when_sdk_missing(self) -> None:
+        from podcast_pipeline.utils.thumbnails import _gemini_available
+
+        with (
+            patch.dict(os.environ, {"GEMINI_API_KEY": "test-key"}),
+            patch.dict("sys.modules", {"google": None, "google.genai": None}),
+        ):
+            ok, reason = _gemini_available()
+
+        assert ok is False
+        assert "google-genai" in reason
+
+    def test_available_when_key_and_sdk_present(self) -> None:
+        from podcast_pipeline.utils.thumbnails import _gemini_available
+
+        with patch.dict(os.environ, {"GEMINI_API_KEY": "test-key-123"}):
+            ok, reason = _gemini_available()
 
         assert ok is True
-        assert msg == ""
-
-    def test_vram_fail_when_insufficient(self):
-        from podcast_pipeline.utils.thumbnails import check_vram_preflight
-
-        with patch("podcast_pipeline.utils.thumbnails._free_vram_gib", return_value=6.0):
-            ok, msg = check_vram_preflight(min_free_gib=14.0)
-
-        assert ok is False
-        assert "6.0 GiB free" in msg
-
-    def test_vram_fail_when_cuda_unavailable(self):
-        from podcast_pipeline.utils.thumbnails import check_vram_preflight
-
-        with patch("podcast_pipeline.utils.thumbnails._free_vram_gib", return_value=None):
-            ok, msg = check_vram_preflight()
-
-        assert ok is False
-        assert "CUDA" in msg or "torch" in msg
-
-    def test_vram_fail_when_torch_missing(self):
-        from podcast_pipeline.utils.thumbnails import check_vram_preflight
-
-        with patch("podcast_pipeline.utils.thumbnails._free_vram_gib", return_value=None):
-            ok, _msg = check_vram_preflight()
-
-        assert ok is False
-
-
-# ---------------------------------------------------------------------------
-# Imagen 4 availability checks
-# ---------------------------------------------------------------------------
-
-
-class TestImagen4Availability:
-    """Imagen 4 backend routing diagnostics."""
-
-    def test_unavailable_when_package_missing(self):
-        from podcast_pipeline.utils.thumbnails import _imagen4_available
-
-        with patch.dict(sys.modules, {"google.cloud.aiplatform": None}):
-            ok, _reason = _imagen4_available("my-project", "us-central1")
-
-        assert ok is False
-
-    def test_unavailable_when_no_project(self):
-        """Missing project ID makes Imagen 4 unavailable."""
-        from podcast_pipeline.utils.thumbnails import _imagen4_available
-
-        # Remove env var to simulate missing project
-        env_backup = os.environ.pop("GOOGLE_CLOUD_PROJECT", None)
-        try:
-            mock_aiplatform = MagicMock()
-            with patch.dict(sys.modules, {"google.cloud.aiplatform": mock_aiplatform}):
-                ok, reason = _imagen4_available(None, "us-central1")
-        finally:
-            if env_backup is not None:
-                os.environ["GOOGLE_CLOUD_PROJECT"] = env_backup
-
-        assert ok is False
-        assert "GOOGLE_CLOUD_PROJECT" in reason or "project_id" in reason
-
-
-# ---------------------------------------------------------------------------
-# FLUX availability checks
-# ---------------------------------------------------------------------------
-
-
-class TestFluxAvailability:
-    """FLUX.1 Schnell backend routing diagnostics."""
-
-    def test_unavailable_when_diffusers_missing(self):
-        from podcast_pipeline.utils.thumbnails import _flux_available
-
-        with patch(
-            "podcast_pipeline.utils.thumbnails.importlib.util.find_spec",
-            side_effect=lambda name: None,  # nothing found
-        ):
-            ok, reason = _flux_available()
-
-        assert ok is False
-        assert "diffusers" in reason
-
-    def test_available_when_diffusers_and_quanto_present(self):
-        from podcast_pipeline.utils.thumbnails import _flux_available
-
-        def _fake_find_spec(name: str) -> MagicMock | None:
-            if name in ("diffusers", "optimum.quanto"):
-                return MagicMock()
-            return None
-
-        with patch(
-            "podcast_pipeline.utils.thumbnails.importlib.util.find_spec",
-            side_effect=_fake_find_spec,
-        ):
-            ok, _reason = _flux_available()
-
-        assert ok is True
+        assert reason == ""
 
 
 # ---------------------------------------------------------------------------
@@ -440,7 +298,7 @@ class TestFluxAvailability:
 class TestBrandingOverlay:
     """Overlay integration uses toolkit overlay_image operation."""
 
-    def test_overlay_skipped_when_no_logo(self, tmp_output: Path, fake_branding: MagicMock):
+    def test_overlay_skipped_when_no_logo(self, tmp_output: Path, fake_branding: MagicMock) -> None:
         from podcast_pipeline.utils.thumbnails import _apply_branding_overlay
 
         fake_branding.logo_path = None
@@ -449,12 +307,12 @@ class TestBrandingOverlay:
 
         result = _apply_branding_overlay(src, fake_branding)
 
-        # No logo — original path returned unchanged
+        # No logo -- original path returned unchanged
         assert result == src
 
     def test_overlay_skipped_when_logo_missing_on_disk(
         self, tmp_output: Path, fake_branding: MagicMock
-    ):
+    ) -> None:
         from podcast_pipeline.utils.thumbnails import _apply_branding_overlay
 
         fake_branding.logo_path = tmp_output / "nonexistent_logo.png"
@@ -467,7 +325,7 @@ class TestBrandingOverlay:
 
     def test_overlay_calls_toolkit_when_logo_exists(
         self, tmp_output: Path, fake_branding: MagicMock
-    ):
+    ) -> None:
         from podcast_pipeline.utils.thumbnails import _apply_branding_overlay
 
         # Create a fake logo file
@@ -495,7 +353,7 @@ class TestBrandingOverlay:
 
     def test_service_applies_branding_on_cache_hit(
         self, tmp_output: Path, fake_branding: MagicMock
-    ):
+    ) -> None:
         """Branding overlay is applied even to cache-hit images."""
         from podcast_pipeline.utils.thumbnails import (
             ThumbnailBackend,
@@ -505,12 +363,12 @@ class TestBrandingOverlay:
         )
 
         prompt = "cache hit with branding"
-        model = "imagen-4.0-generate-001"
+        model = "gemini-2.5-flash-image"
         key = compute_cache_key(prompt, model, 1280, 720, seed=None, index=0)
         cached = tmp_output / f"{key}.jpg"
         cached.write_bytes(b"FAKEJPEG")
 
-        fake_branding.logo_path = None  # no logo → overlay skipped
+        fake_branding.logo_path = None  # no logo -> overlay skipped
 
         service = ThumbnailService()
         request = ThumbnailRequest(
@@ -519,7 +377,7 @@ class TestBrandingOverlay:
             branding_profile=fake_branding,
         )
 
-        with patch.object(service, "_select_backend", return_value=(ThumbnailBackend.IMAGEN4, "")):
+        with patch.object(service, "_select_backend", return_value=(ThumbnailBackend.GEMINI, "")):
             result = service.generate(request)
 
         assert result.total_cached == 1
@@ -535,7 +393,7 @@ class TestBrandingOverlay:
 class TestPromptTruncation:
     """More than 5 prompts are silently truncated."""
 
-    def test_more_than_5_prompts_truncated(self, tmp_output: Path):
+    def test_more_than_5_prompts_truncated(self, tmp_output: Path) -> None:
         from podcast_pipeline.utils.thumbnails import (
             ThumbnailBackend,
             ThumbnailRequest,
@@ -549,7 +407,7 @@ class TestPromptTruncation:
             patch.object(
                 service,
                 "_select_backend",
-                return_value=(ThumbnailBackend.IMAGEN4, ""),
+                return_value=(ThumbnailBackend.GEMINI, ""),
             ),
             patch.object(service, "_process_prompt") as mock_process,
         ):
@@ -567,7 +425,7 @@ class TestPromptTruncation:
 class TestArtifactMetadata:
     """Generated artifact metadata is correctly populated."""
 
-    def test_generated_artifact_has_correct_backend(self, tmp_output: Path):
+    def test_generated_artifact_has_correct_backend(self, tmp_output: Path) -> None:
         from podcast_pipeline.utils.thumbnails import (
             ThumbnailBackend,
             ThumbnailRequest,
@@ -585,18 +443,18 @@ class TestArtifactMetadata:
             patch.object(
                 service,
                 "_select_backend",
-                return_value=(ThumbnailBackend.FLUX, ""),
+                return_value=(ThumbnailBackend.GEMINI, ""),
             ),
             patch.object(service, "_run_backend", return_value=[(dummy_path, False)]),
         ):
             result = service.generate(request)
 
         assert result.total_generated == 1
-        assert result.artifacts[0].backend == ThumbnailBackend.FLUX
+        assert result.artifacts[0].backend == ThumbnailBackend.GEMINI
         assert result.artifacts[0].status == ThumbnailStatus.GENERATED
         assert result.artifacts[0].cache_hit is False
 
-    def test_failed_artifact_records_error_message(self, tmp_output: Path):
+    def test_failed_artifact_records_error_message(self, tmp_output: Path) -> None:
         from podcast_pipeline.utils.thumbnails import (
             ThumbnailBackend,
             ThumbnailRequest,
@@ -611,7 +469,7 @@ class TestArtifactMetadata:
             patch.object(
                 service,
                 "_select_backend",
-                return_value=(ThumbnailBackend.IMAGEN4, ""),
+                return_value=(ThumbnailBackend.GEMINI, ""),
             ),
             patch.object(
                 service,
@@ -627,14 +485,14 @@ class TestArtifactMetadata:
 
 
 # ---------------------------------------------------------------------------
-# Integration regressions — cache, failover, and overlay continuity
+# Integration regressions -- cache, overlay, and degradation continuity
 # ---------------------------------------------------------------------------
 
 
 class TestIntegrationRegressions:
-    """Integration regressions protecting cache hits, backend failover, and overlay continuity."""
+    """Integration regressions protecting cache hits, overlay continuity, and degradation."""
 
-    def test_cache_hit_skips_backend_invocation_entirely(self, tmp_output: Path):
+    def test_cache_hit_skips_backend_invocation_entirely(self, tmp_output: Path) -> None:
         """A valid cache file must prevent _run_backend from being called at all."""
         from podcast_pipeline.utils.thumbnails import (
             ThumbnailBackend,
@@ -644,7 +502,7 @@ class TestIntegrationRegressions:
         )
 
         prompt = "cached integration test prompt"
-        model = "imagen-4.0-generate-001"
+        model = "gemini-2.5-flash-image"
         key = compute_cache_key(prompt, model, 1280, 720, seed=None, index=0)
         cached = tmp_output / f"{key}.jpg"
         cached.write_bytes(b"FAKEJPEG_CACHED")
@@ -660,55 +518,20 @@ class TestIntegrationRegressions:
             patch.object(
                 service,
                 "_select_backend",
-                return_value=(ThumbnailBackend.IMAGEN4, ""),
+                return_value=(ThumbnailBackend.GEMINI, ""),
             ),
             patch.object(service, "_run_backend", side_effect=_spy_run_backend),
         ):
             result = service.generate(ThumbnailRequest(prompts=[prompt], output_dir=tmp_output))
 
-        # _run_backend must NOT be called — cache hit short-circuits generation
+        # _run_backend must NOT be called -- cache hit short-circuits generation
         assert backend_calls == []
         assert result.total_cached == 1
         assert result.total_generated == 0
 
-    def test_backend_failover_imagen4_to_flux_on_explicit_routing(self, tmp_output: Path):
-        """Service routes to FLUX when Imagen4 is unavailable and FLUX is ready."""
-        from podcast_pipeline.utils.thumbnails import (
-            ThumbnailBackend,
-            ThumbnailRequest,
-            ThumbnailService,
-        )
-
-        service = ThumbnailService()
-        dummy_path = tmp_output / "dummy.jpg"
-        dummy_path.write_bytes(b"FLUX_GENERATED")
-
-        with (
-            patch(
-                "podcast_pipeline.utils.thumbnails._imagen4_available",
-                return_value=(False, "no credentials"),
-            ),
-            patch(
-                "podcast_pipeline.utils.thumbnails._flux_available",
-                return_value=(True, ""),
-            ),
-            patch(
-                "podcast_pipeline.utils.thumbnails.check_vram_preflight",
-                return_value=(True, ""),
-            ),
-            patch.object(service, "_run_backend", return_value=[(dummy_path, False)]),
-        ):
-            result = service.generate(
-                ThumbnailRequest(prompts=["failover test"], output_dir=tmp_output)
-            )
-
-        assert result.backend_used == ThumbnailBackend.FLUX
-        assert result.total_generated == 1
-        assert result.degraded is False
-
     def test_overlay_applied_after_generation_not_just_cache_hits(
         self, tmp_output: Path, fake_branding: MagicMock
-    ):
+    ) -> None:
         """Branding overlay should fire for freshly generated images, not only cache hits."""
         from podcast_pipeline.utils.thumbnails import (
             ThumbnailBackend,
@@ -735,7 +558,7 @@ class TestIntegrationRegressions:
             patch.object(
                 service,
                 "_select_backend",
-                return_value=(ThumbnailBackend.IMAGEN4, ""),
+                return_value=(ThumbnailBackend.GEMINI, ""),
             ),
             patch.object(service, "_run_backend", return_value=[(dummy_path, False)]),
             patch.object(service, "_apply_branding", side_effect=_spy_apply_branding),
@@ -750,7 +573,7 @@ class TestIntegrationRegressions:
 
         assert len(branding_calls) == 1
 
-    def test_all_generation_failures_sets_degraded_result(self, tmp_output: Path):
+    def test_all_generation_failures_sets_degraded_result(self, tmp_output: Path) -> None:
         """When every generation attempt fails, the result should be marked degraded."""
         from podcast_pipeline.utils.thumbnails import (
             ThumbnailBackend,
@@ -764,7 +587,7 @@ class TestIntegrationRegressions:
             patch.object(
                 service,
                 "_select_backend",
-                return_value=(ThumbnailBackend.IMAGEN4, ""),
+                return_value=(ThumbnailBackend.GEMINI, ""),
             ),
             patch.object(
                 service,
@@ -781,7 +604,7 @@ class TestIntegrationRegressions:
         assert result.total_failed == 2
         assert result.total_generated == 0
 
-    def test_cache_and_generation_in_same_run_count_independently(self, tmp_output: Path):
+    def test_cache_and_generation_in_same_run_count_independently(self, tmp_output: Path) -> None:
         """When some prompts are cached and others generate, counts must be independent."""
         from podcast_pipeline.utils.thumbnails import (
             ThumbnailBackend,
@@ -791,7 +614,7 @@ class TestIntegrationRegressions:
             compute_cache_key,
         )
 
-        model = "imagen-4.0-generate-001"
+        model = "gemini-2.5-flash-image"
         cached_prompt = "cached prompt"
         new_prompt = "new prompt"
 
@@ -808,7 +631,7 @@ class TestIntegrationRegressions:
             patch.object(
                 service,
                 "_select_backend",
-                return_value=(ThumbnailBackend.IMAGEN4, ""),
+                return_value=(ThumbnailBackend.GEMINI, ""),
             ),
             patch.object(service, "_run_backend", return_value=[(new_path, False)]),
         ):

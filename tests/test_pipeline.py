@@ -577,11 +577,11 @@ class TestAnalyzeStageAIThumbnailGeneration:
                 ThumbnailArtifact(
                     path=ai_img,
                     prompt=description,
-                    backend=ThumbnailBackend.IMAGEN4,
+                    backend=ThumbnailBackend.GEMINI,
                     status=ThumbnailStatus.GENERATED,
                 )
             ],
-            backend_used=ThumbnailBackend.IMAGEN4,
+            backend_used=ThumbnailBackend.GEMINI,
             total_generated=1,
         )
 
