@@ -2797,3 +2797,327 @@ class TestSmoothingConfigForce60fps:
             force_60fps_shortform=False,
         )
         assert cfg.force_60fps_shortform is False
+
+
+# ---------------------------------------------------------------------------
+# Phase 9 — Runtime encoder capability and fallback regression tests
+# ---------------------------------------------------------------------------
+
+
+class TestEncoderCapabilityDetection:
+    """Regression tests for _resolve_video_encoder NVENC detection branches and fallback."""
+
+    def _make_stage_with_hw(self, **hw_flags: bool) -> RenderStage:
+        """Create a RenderStage with injected HardwareEncoderInfo capability flags."""
+        from podcast_pipeline.utils.ffmpeg_toolkit import HardwareEncoderInfo
+
+        config = load_config()
+        stage = RenderStage(config)
+        stage._hw_encoders = HardwareEncoderInfo(**hw_flags)
+        return stage
+
+    # --- hevc_nvenc -> libx265 fallback chain ---
+
+    def test_encoder_capability_hevc_nvenc_selects_nvenc_when_gpu_present(self) -> None:
+        """When nvenc_hevc=True, _resolve_video_encoder must select hevc_nvenc directly."""
+        stage = self._make_stage_with_hw(nvenc_hevc=True)
+        spec = PlatformSpec(
+            video_codec="hevc_nvenc",
+            video_profile="main10",
+            pix_fmt="p010le",
+            preset="p7",
+        )
+        encoder, extra_args = stage._resolve_video_encoder(spec, "youtube_ultra")
+
+        assert encoder == "hevc_nvenc"
+        assert extra_args == []
+
+    def test_encoder_capability_hevc_nvenc_fallback_to_libx265_when_no_gpu(self) -> None:
+        """When nvenc_hevc=False, hevc_nvenc request must fall back to libx265."""
+        stage = self._make_stage_with_hw(nvenc_hevc=False)
+        spec = PlatformSpec(
+            video_codec="hevc_nvenc",
+            video_profile="main10",
+            pix_fmt="p010le",
+            preset="p7",
+        )
+        encoder, extra_args = stage._resolve_video_encoder(spec, "youtube_ultra")
+
+        assert encoder == "libx265"
+        # Extra args must override pix_fmt from p010le to yuv420p10le for software x265
+        assert "-pix_fmt" in extra_args
+        pf_idx = extra_args.index("-pix_fmt")
+        assert extra_args[pf_idx + 1] == "yuv420p10le"
+        # Profile should be passed as x265-params
+        assert any("profile=" in arg for arg in extra_args)
+
+    def test_encoder_fallback_x265_uses_yuv420p_when_pix_fmt_is_yuv420p(self) -> None:
+        """hevc_nvenc fallback with yuv420p source must keep yuv420p (not upgrade to 10-bit)."""
+        stage = self._make_stage_with_hw(nvenc_hevc=False)
+        spec = PlatformSpec(
+            video_codec="hevc_nvenc",
+            video_profile="main",
+            pix_fmt="yuv420p",
+            preset="medium",
+        )
+        encoder, extra_args = stage._resolve_video_encoder(spec, "youtube_ultra")
+
+        assert encoder == "libx265"
+        pf_idx = extra_args.index("-pix_fmt")
+        assert extra_args[pf_idx + 1] == "yuv420p"  # NOT 10-bit
+
+    # --- h264_nvenc -> libx264 fallback chain ---
+
+    def test_encoder_capability_h264_nvenc_selects_nvenc_when_gpu_present(self) -> None:
+        """When nvenc_h264=True, h264_nvenc spec must select hardware encoder."""
+        stage = self._make_stage_with_hw(nvenc_h264=True)
+        spec = PlatformSpec(video_codec="h264_nvenc")
+        encoder, extra_args = stage._resolve_video_encoder(spec, "youtube")
+
+        assert encoder == "h264_nvenc"
+        assert extra_args == []
+
+    def test_encoder_capability_h264_nvenc_fallback_to_libx264_when_no_gpu(self) -> None:
+        """When nvenc_h264=False, h264_nvenc request must fall back to libx264."""
+        stage = self._make_stage_with_hw(nvenc_h264=False)
+        spec = PlatformSpec(video_codec="h264_nvenc")
+        encoder, extra_args = stage._resolve_video_encoder(spec, "youtube")
+
+        assert encoder == "libx264"
+        assert extra_args == []
+
+    # --- AV1 experimental path ---
+
+    def test_encoder_capability_av1_with_software_support_logs_and_proceeds(self) -> None:
+        """AV1 codec with software_av1=True must be returned verbatim (no fallback)."""
+        stage = self._make_stage_with_hw(software_av1=True)
+        spec = PlatformSpec(
+            video_codec="libsvtav1",
+            pix_fmt="yuv420p",
+            preset="medium",
+            av1_experimental=True,
+        )
+        encoder, extra_args = stage._resolve_video_encoder(spec, "youtube_ultra")
+
+        assert encoder == "libsvtav1"
+        assert extra_args == []
+
+    def test_encoder_capability_av1_without_software_support_returns_codec_anyway(
+        self,
+    ) -> None:
+        """AV1 codec with software_av1=False logs a warning but still returns the codec."""
+        stage = self._make_stage_with_hw(software_av1=False)
+        spec = PlatformSpec(
+            video_codec="libsvtav1",
+            pix_fmt="yuv420p",
+            preset="medium",
+            av1_experimental=True,
+        )
+        encoder, extra_args = stage._resolve_video_encoder(spec, "youtube_ultra")
+
+        # Encoder is still returned with warning logged — caller decides whether to fail or warn
+        assert encoder == "libsvtav1"
+        assert extra_args == []
+
+    # --- Standard codecs: verbatim pass-through ---
+
+    def test_encoder_capability_libx264_passes_through_unchanged(self) -> None:
+        """libx264 must always pass through without hardware lookup."""
+        stage = self._make_stage_with_hw()
+        spec = PlatformSpec(video_codec="libx264")
+        encoder, extra_args = stage._resolve_video_encoder(spec, "youtube")
+
+        assert encoder == "libx264"
+        assert extra_args == []
+
+    def test_encoder_capability_libx265_passes_through_unchanged_even_with_gpu(self) -> None:
+        """Explicit libx265 must bypass the NVENC fallback chain entirely."""
+        stage = self._make_stage_with_hw(nvenc_hevc=True)  # GPU available but spec says software
+        spec = PlatformSpec(
+            video_codec="libx265",
+            video_profile="main10",
+            pix_fmt="yuv420p10le",
+            preset="slow",
+        )
+        encoder, extra_args = stage._resolve_video_encoder(spec, "youtube_ultra")
+
+        # Explicitly configured libx265 must NOT be upgraded to hevc_nvenc
+        assert encoder == "libx265"
+        assert extra_args == []
+
+
+class TestShortformVerticalDetection:
+    """Regression tests for _is_shortform_vertical platform spec detection."""
+
+    def test_shortform_vertical_detects_tiktok_9_16_aspect(self) -> None:
+        """TikTok (9:16) must be identified as short-form vertical."""
+        config = load_config()
+        stage = RenderStage(config)
+
+        tiktok_spec = PlatformSpec(width=1080, height=1920, aspect_ratio="9:16", max_duration=60)
+        assert stage._is_shortform_vertical(tiktok_spec) is True
+
+    def test_shortform_vertical_detects_instagram_9_16_aspect(self) -> None:
+        """Instagram Reels (9:16) must also be identified as short-form vertical."""
+        config = load_config()
+        stage = RenderStage(config)
+
+        instagram_spec = PlatformSpec(width=1080, height=1920, aspect_ratio="9:16", max_duration=90)
+        assert stage._is_shortform_vertical(instagram_spec) is True
+
+    def test_shortform_vertical_rejects_youtube_16_9(self) -> None:
+        """YouTube (16:9) must NOT be treated as short-form vertical."""
+        config = load_config()
+        stage = RenderStage(config)
+
+        youtube_spec = PlatformSpec(width=1920, height=1080, aspect_ratio="16:9")
+        assert stage._is_shortform_vertical(youtube_spec) is False
+
+    def test_shortform_vertical_rejects_linkedin_square(self) -> None:
+        """LinkedIn square (1:1) must NOT trigger short-form uplift."""
+        config = load_config()
+        stage = RenderStage(config)
+
+        linkedin_spec = PlatformSpec(width=1080, height=1080, aspect_ratio="1:1")
+        assert stage._is_shortform_vertical(linkedin_spec) is False
+
+    def test_shortform_vertical_rejects_youtube_ultra_16_9(self) -> None:
+        """youtube_ultra (16:9 4K) must NOT be treated as short-form vertical."""
+        config = load_config()
+        stage = RenderStage(config)
+
+        ultra_spec = PlatformSpec(
+            video_codec="hevc_nvenc",
+            video_profile="main10",
+            pix_fmt="p010le",
+            preset="p7",
+            width=3840,
+            height=2160,
+            aspect_ratio="16:9",
+        )
+        assert stage._is_shortform_vertical(ultra_spec) is False
+
+    def test_shortform_vertical_handles_missing_aspect_ratio(self) -> None:
+        """A spec with no aspect_ratio must not be treated as short-form vertical."""
+        config = load_config()
+        stage = RenderStage(config)
+
+        spec = PlatformSpec(width=1920, height=1080)  # aspect_ratio=None
+        assert stage._is_shortform_vertical(spec) is False
+
+
+class TestForce60fpsShortformGating:
+    """Regression tests: force_60fps_shortform only affects 9:16 targets, never long-form."""
+
+    def test_force_60fps_tiktok_and_instagram_are_shortform_targets(self) -> None:
+        """TikTok and Instagram spec aspect ratios confirm they are short-form vertical targets."""
+        config = load_config()
+        stage = RenderStage(config)
+
+        assert stage._is_shortform_vertical(config.platforms.tiktok) is True
+        assert stage._is_shortform_vertical(config.platforms.instagram) is True
+
+    def test_force_60fps_longform_exports_always_skipped(self) -> None:
+        """_is_shortform_vertical returns False for all non-9:16 platform specs."""
+        config = load_config()
+        stage = RenderStage(config)
+
+        longform_platforms = ["youtube", "facebook", "twitter", "linkedin", "youtube_ultra"]
+        for platform_name in longform_platforms:
+            spec = getattr(config.platforms, platform_name, None)
+            if spec is None or spec.audio_only:
+                continue
+            assert stage._is_shortform_vertical(spec) is False, (
+                f"{platform_name} should not be treated as short-form vertical"
+            )
+
+    def test_force_60fps_rife_unavailable_returns_none(self, tmp_path: Path) -> None:
+        """When RIFE script path is empty, _apply_shortform_60fps_rife returns None."""
+        config = load_config()
+        config.smoothing.rife_script_path = ""  # No RIFE configured
+        stage = RenderStage(config)
+
+        input_video = tmp_path / "input.mp4"
+        input_video.write_bytes(b"fake")
+        output_dir = tmp_path / "out"
+        output_dir.mkdir()
+
+        result = stage._apply_shortform_60fps_rife(input_video, output_dir, "tiktok")
+        assert result is None  # Graceful fallback when RIFE unavailable
+
+    def test_force_60fps_default_config_does_not_affect_any_platform(self) -> None:
+        """With force_60fps_shortform=False (default), no platform is marked for RIFE uplift."""
+        config = load_config()
+        assert config.smoothing.force_60fps_shortform is False
+
+        stage = RenderStage(config)
+        # Gate condition: smoothing.force_60fps_shortform AND rife_enabled AND is_shortform_vertical
+        # First check in gate fails immediately — no platforms are processed
+        # Confirm: even shortform platforms won't receive uplift
+        tiktok_spec = config.platforms.tiktok
+        # Gate = False (force_60fps_shortform off) -> no uplift regardless
+        gate_passes = (
+            config.smoothing.force_60fps_shortform
+            and config.smoothing.rife_enabled
+            and stage._is_shortform_vertical(tiktok_spec)
+        )
+        assert gate_passes is False
+
+
+class TestLegacyPlatformUnaffectedByPhase9Options:
+    """Regression suite: enabling Phase 9 options must not affect legacy platform exports."""
+
+    def test_youtube_spec_unchanged_when_phase9_hevc_configured(self) -> None:
+        """YouTube spec must remain H.264 even when youtube_ultra HEVC is configured."""
+        config = load_config()
+        youtube = config.platforms.youtube
+
+        assert youtube.video_codec == "libx264"
+        assert youtube.pix_fmt == "yuv420p"
+        assert youtube.av1_experimental is False
+
+    def test_tiktok_spec_fps_unchanged_when_force_60fps_disabled(self) -> None:
+        """TikTok spec must remain at 30fps when force_60fps_shortform=False."""
+        config = load_config()
+        assert config.smoothing.force_60fps_shortform is False
+
+        tiktok = config.platforms.tiktok
+        assert tiktok.video_codec == "libx264"
+        assert tiktok.fps == 30  # Stays at 30fps - no silent uplift
+
+    def test_spotify_video_and_apple_video_unchanged_by_hevc_addition(self) -> None:
+        """Compliance video platforms (spotify_video, apple_video) must remain H.264."""
+        config = load_config()
+
+        for platform_name in ("spotify_video", "apple_video"):
+            spec = getattr(config.platforms, platform_name)
+            assert spec.video_codec == "libx264", f"{platform_name} codec changed unexpectedly"
+            assert spec.av1_experimental is False
+            assert spec.pix_fmt == "yuv420p"
+
+    def test_audio_only_platforms_completely_unaffected_by_phase9(self) -> None:
+        """Audio-only platforms (spotify, apple) must be completely unaffected."""
+        config = load_config()
+
+        spotify = config.platforms.spotify
+        apple = config.platforms.apple
+
+        assert spotify.audio_only is True
+        assert apple.audio_only is True
+        assert spotify.av1_experimental is False
+        assert apple.av1_experimental is False
+
+    def test_resolve_encoder_with_default_libx264_unaffected_by_hevc_capability(self) -> None:
+        """libx264 encoder must be selected unchanged regardless of GPU HEVC capability."""
+        from podcast_pipeline.utils.ffmpeg_toolkit import HardwareEncoderInfo
+
+        config = load_config()
+        stage = RenderStage(config)
+        # Even with full NVENC capability, libx264 spec stays as-is
+        stage._hw_encoders = HardwareEncoderInfo(nvenc_h264=True, nvenc_hevc=True)
+
+        spec = config.platforms.youtube  # libx264 spec
+        encoder, extra_args = stage._resolve_video_encoder(spec, "youtube")
+
+        assert encoder == "libx264"
+        assert extra_args == []
