@@ -13,6 +13,13 @@ from podcast_pipeline.models.analysis import (
     ThumbnailCandidate,
     ViralClip,
 )
+from podcast_pipeline.models.branding import (
+    BrandingProfile,
+    CaptionStyle,
+    PlatformBrandingOverride,
+    ThumbnailBorder,
+    _sanitize_brand_voice,
+)
 from podcast_pipeline.models.job import Job, StageStatus
 from podcast_pipeline.models.transcript import FillerCut, Segment, Word
 
@@ -367,3 +374,214 @@ class TestThumbnailCandidate:
         assert candidate.viral_style == ""
         assert candidate.virality_score_source == "unspecified"
         assert candidate.recommendation_signal == ""
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# BrandingProfile model tests
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+class TestBrandingProfile:
+    """Tests for BrandingProfile model and sub-models."""
+
+    def test_branding_profile_minimal_required_fields(self) -> None:
+        """BrandingProfile with only profile_name should use safe defaults."""
+        profile = BrandingProfile(profile_name="My Kit")
+        assert profile.profile_name == "My Kit"
+        assert profile.brand_voice == ""
+        assert profile.logo_path is None
+        assert profile.logo_placement == "top_right"
+        assert profile.logo_opacity == pytest.approx(0.8)
+        assert profile.highlight_color == "#FFFF00"
+        assert profile.platform_overrides == {}
+
+    def test_branding_profile_full_fields_round_trips(self) -> None:
+        """BrandingProfile serialises and deserialises all fields without loss."""
+        profile = BrandingProfile(
+            profile_name="neon_viral",
+            brand_voice="Bold, provocative Gen Z energy.",
+            logo_placement="top_right",
+            logo_opacity=0.9,
+            caption_style=CaptionStyle(color="#FFFFFF", size=52, shadow=True),
+            highlight_color="#FF4500",
+            bg_padding="15%",
+            thumbnail_border=ThumbnailBorder(color="#00FF00", width=20),
+        )
+        dumped = profile.model_dump()
+        reloaded = BrandingProfile.model_validate(dumped)
+        assert reloaded.profile_name == "neon_viral"
+        assert reloaded.highlight_color == "#FF4500"
+        assert reloaded.thumbnail_border.color == "#00FF00"
+        assert reloaded.caption_style.size == 52
+
+    def test_branding_profile_blank_name_rejected(self) -> None:
+        """BrandingProfile rejects blank profile_name."""
+        with pytest.raises(ValidationError):
+            BrandingProfile(profile_name="   ")
+
+    def test_branding_profile_invalid_hex_color_rejected(self) -> None:
+        """BrandingProfile rejects malformed highlight_color."""
+        with pytest.raises(ValidationError):
+            BrandingProfile(profile_name="bad", highlight_color="red")
+
+        with pytest.raises(ValidationError):
+            BrandingProfile(profile_name="bad", highlight_color="#ZZZZZZ")
+
+    def test_branding_profile_logo_opacity_out_of_range_rejected(self) -> None:
+        """BrandingProfile rejects logo_opacity outside [0, 1]."""
+        with pytest.raises(ValidationError):
+            BrandingProfile(profile_name="bad", logo_opacity=1.5)
+
+        with pytest.raises(ValidationError):
+            BrandingProfile(profile_name="bad", logo_opacity=-0.1)
+
+
+class TestBrandVoiceSanitization:
+    """Tests for brand_voice sanitization: control char stripping and max length."""
+
+    def test_sanitize_brand_voice_strips_control_chars(self) -> None:
+        """Control characters must be removed from brand_voice."""
+        raw = "Bold\x00Gen Z\x01Energy\x1f!"
+        result = _sanitize_brand_voice(raw)
+        assert "\x00" not in result
+        assert "\x01" not in result
+        assert "\x1f" not in result
+        assert "Bold" in result
+        assert "Energy" in result
+
+    def test_sanitize_brand_voice_truncates_at_max_length(self) -> None:
+        """brand_voice must be capped at BRAND_VOICE_MAX_CHARS (2000)."""
+        from podcast_pipeline.models.branding import BRAND_VOICE_MAX_CHARS
+
+        long_text = "x" * (BRAND_VOICE_MAX_CHARS + 500)
+        result = _sanitize_brand_voice(long_text)
+        assert len(result) <= BRAND_VOICE_MAX_CHARS
+
+    def test_sanitize_brand_voice_preserves_clean_text(self) -> None:
+        """Normal printable text must be preserved by sanitization."""
+        clean = "Professional, credible, audience-appropriate. Use data-driven storytelling."
+        result = _sanitize_brand_voice(clean)
+        assert result == clean
+
+    def test_branding_profile_auto_sanitizes_brand_voice_on_construction(self) -> None:
+        """BrandingProfile constructor sanitizes brand_voice automatically."""
+        profile = BrandingProfile(
+            profile_name="sanitize_test",
+            brand_voice="Good text\x00with null bytes\x1b[31mANSI",
+        )
+        assert "\x00" not in profile.brand_voice
+        assert "\x1b" not in profile.brand_voice
+        assert "Good text" in profile.brand_voice
+
+
+class TestPlatformOverrides:
+    """Tests for BrandingProfile.platform_overrides and merge behaviour."""
+
+    def _make_base_profile(self) -> BrandingProfile:
+        return BrandingProfile(
+            profile_name="base_profile",
+            brand_voice="Professional tone.",
+            logo_placement="top_right",
+            logo_opacity=0.8,
+            caption_style=CaptionStyle(color="#FFFFFF", size=48),
+            highlight_color="#FFFF00",
+            bg_padding="0%",
+            thumbnail_border=ThumbnailBorder(color="#000000", width=5),
+            platform_overrides={
+                "tiktok": PlatformBrandingOverride(
+                    logo_placement="bottom_left",
+                    logo_opacity=0.6,
+                    highlight_color="#FF0000",
+                    bg_padding="15%",
+                ),
+            },
+        )
+
+    def test_platform_overrides_merge_applies_only_set_fields(self) -> None:
+        """Merge must apply override fields but keep base defaults for unset fields."""
+        profile = self._make_base_profile()
+        resolved = profile.resolved_for_platform("tiktok")
+
+        assert resolved.logo_placement == "bottom_left"
+        assert resolved.logo_opacity == pytest.approx(0.6)
+        assert resolved.highlight_color == "#FF0000"
+        assert resolved.bg_padding == "15%"
+        # Unset override fields preserve base values.
+        assert resolved.caption_style.color == "#FFFFFF"
+        assert resolved.thumbnail_border.color == "#000000"
+
+    def test_platform_overrides_no_override_returns_base(self) -> None:
+        """resolved_for_platform returns base values when no override exists."""
+        profile = self._make_base_profile()
+        resolved = profile.resolved_for_platform("youtube")
+
+        assert resolved.logo_placement == "top_right"
+        assert resolved.logo_opacity == pytest.approx(0.8)
+        assert resolved.highlight_color == "#FFFF00"
+
+    def test_platform_overrides_resolved_profile_has_empty_overrides(self) -> None:
+        """Resolved profile should always have empty platform_overrides."""
+        profile = self._make_base_profile()
+        resolved = profile.resolved_for_platform("tiktok")
+        assert resolved.platform_overrides == {}
+
+    def test_platform_overrides_base_unchanged_after_resolve(self) -> None:
+        """Resolving for a platform must not mutate the base profile."""
+        profile = self._make_base_profile()
+        _ = profile.resolved_for_platform("tiktok")
+
+        assert profile.logo_placement == "top_right"
+        assert "tiktok" in profile.platform_overrides
+
+    def test_platform_overrides_caption_style_override_applied(self) -> None:
+        """Caption style override merges onto base caption when present."""
+        profile = BrandingProfile(
+            profile_name="caption_test",
+            caption_style=CaptionStyle(color="#FFFFFF", size=48),
+            platform_overrides={
+                "instagram": PlatformBrandingOverride(
+                    caption_style=CaptionStyle(color="#FF4500", size=60, bold=True),
+                ),
+            },
+        )
+        resolved = profile.resolved_for_platform("instagram")
+        assert resolved.caption_style.color == "#FF4500"
+        assert resolved.caption_style.size == 60
+        assert resolved.caption_style.bold is True
+
+    def test_platform_overrides_empty_key_rejected(self) -> None:
+        """platform_overrides with blank key strings must be rejected."""
+        with pytest.raises(ValidationError):
+            BrandingProfile(
+                profile_name="bad_key",
+                platform_overrides={"": PlatformBrandingOverride()},
+            )
+
+
+class TestBrandingProfileSerializationContract:
+    """Tests for YAML-safe serialization round-trips."""
+
+    def test_branding_profile_model_dump_produces_serialisable_types(self) -> None:
+        """model_dump(mode='json') should produce JSON-serialisable types only."""
+        import json
+
+        profile = BrandingProfile(
+            profile_name="serial_test",
+            brand_voice="Test voice.",
+            platform_overrides={
+                "tiktok": PlatformBrandingOverride(logo_opacity=0.5),
+            },
+        )
+        dumped = profile.model_dump(mode="json")
+        # Should not raise.
+        serialized = json.dumps(dumped)
+        assert "serial_test" in serialized
+
+    def test_branding_profile_with_logo_path_serializes_path(self) -> None:
+        """BrandingProfile with logo_path serialises the Path to a string."""
+        profile = BrandingProfile(
+            profile_name="logo_test",
+            logo_path=Path("branding/assets/logo.png"),
+        )
+        dumped = profile.model_dump(mode="json")
+        assert dumped["logo_path"] == "branding/assets/logo.png"
