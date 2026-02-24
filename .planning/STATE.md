@@ -2,27 +2,27 @@
 
 **Last updated:** 2026-02-24
 **Current phase:** Phase 9 — Automated Branding, Captions, and Multi-Track Sync (in progress)
-**Overall progress:** Phase 9 plan 03/10 complete; 54 plans completed overall
+**Overall progress:** Phase 9 plan 05/10 complete; 56 plans completed overall
 
 ## Project Reference
 
 See: `.planning/PROJECT.md`
 
 **Core value:** Turn raw podcast recording into multi-platform content without editing software or manual copywriting.
-**Current focus:** Phase 9 in progress — 09-01 (FFmpeg toolkit), 09-02 (FastMCP dev server), and 09-03 (Claude provider) complete.
+**Current focus:** Phase 9 in progress — 09-01 (FFmpeg toolkit), 09-02 (FastMCP dev server), 09-03 (Claude provider), 09-04 (HEVC/AV1 codec config), and 09-05 (BrandingProfile model) complete.
 
 ## Current Position
 
 ```text
-Phase:    9 (in progress — 3/10 plans complete)
-Plan:     09-03 complete; 54 completed overall
-Status:   Phase 9 in progress — FFmpeg toolkit, FastMCP dev server, and Claude analysis provider complete
-Last activity: 2026-02-24 - Completed 09-03-PLAN.md (Claude provider: tool_use schema, config wiring, 44 tests)
+Phase:    9 (in progress — 5/10 plans complete)
+Plan:     09-05 complete; 56 completed overall
+Status:   Phase 9 in progress — FFmpeg toolkit, FastMCP dev server, Claude provider, HEVC/AV1 codec config, and BrandingProfile complete
+Last activity: 2026-02-24 - Completed 09-05-PLAN.md (BrandingProfile, YAML serialization, platform overrides, brand_voice prompt injection, 126 tests)
 
-Progress: [██████████████████████████████] 54/61 plans complete (Phase 9 ongoing)
+Progress: [██████████████████████████████] 56/61 plans complete (Phase 9 ongoing)
 ```
 
-**Current Phase:** Phase 9 — Automated Branding, Captions, and Multi-Track Sync (3/10 plans complete)
+**Current Phase:** Phase 9 — Automated Branding, Captions, and Multi-Track Sync (5/10 plans complete)
 
 ## Phase Status
 
@@ -38,13 +38,13 @@ Progress: [███████████████████████
 | 6.1 | Video Marketing Copy Parity + Thumbnail Visual Selection MVP | Complete (verified) | 5/5 | 100% |
 | 7 | Smooth Editing & Filler Word Control | Complete (verified 2026-02-21) | 4/4 | 100% |
 | 8 | Intelligent Cut Quality | Complete (verified 2026-02-21) | 6/6 | 100% |
-| 9 | Automated Branding, Captions, and Multi-Track Sync | In progress | 3/10 | 30% |
+| 9 | Automated Branding, Captions, and Multi-Track Sync | In progress | 5/10 | 50% |
 
 ## Performance Metrics
 
 | Metric | Value |
 |--------|-------|
-| Plans completed | 54/61 |
+| Plans completed | 56/61 |
 | Requirements done | 35/83 (21 partial) |
 | Phases complete | 8/8 (Phase 9 in progress) |
 | Estimated completion | In progress |
@@ -184,6 +184,11 @@ Progress: [███████████████████████
 | SUPPORTED_CLAUDE_MODELS = {claude-sonnet-4-6, claude-haiku-4-5, claude-opus-4-6} in settings.py | Explicit model registry enforces valid model selection at config validation time | 2026-02-24 |
 | AnalyzeStage.__init__ dispatches on provider name string (gemini/kimi/claude) for primary + fallback | Provider-dispatch pattern scales to new providers without duplicating initialization logic | 2026-02-24 |
 | Implicit Kimi fallback preserved when fallback_provider=None and primary_provider != 'kimi' and KIMI_API_KEY present | Maintains backward compatibility for existing configs that relied on automatic Kimi fallback | 2026-02-24 |
+| BrandingProfile.resolved_for_platform() returns new instance with empty platform_overrides | Resolved profiles are flat and cannot be re-resolved; signals downstream consumers | 2026-02-24 |
+| brand_voice sanitized twice: at BrandingProfile construction and at prompt boundary in BaseProvider | Defense in depth for user-supplied text injected into LLM prompts | 2026-02-24 |
+| brand_voice injected via transcript["brand_voice"] dict key rather than direct provider method parameter | Keeps provider analyze() signatures unchanged across all provider types | 2026-02-24 |
+| BRAND VOICE block positioned after role statement, before TRANSCRIPT section in provider prompt | Frames copy direction without competing with JSON schema at prompt end | 2026-02-24 |
+| load_active_profile() returns None when profile is unconfigured or file missing | All stages treat None as no-branding gracefully without branching | 2026-02-24 |
 
 ### Roadmap Evolution
 
@@ -322,16 +327,20 @@ Progress: [███████████████████████
 - 2026-02-24: Completed 09-01-PLAN.md (FFmpeg media toolkit — 14 typed operations, 5 operation groups, structured error model, HLS packaging)
 - 2026-02-24: Completed 09-02-PLAN.md (FastMCP dev server: 14 MCP tools, lifespan hardware-encoder cache, .mcp.json stdio config, 28 tests)
 - 2026-02-24: Completed 09-03-PLAN.md (Claude provider: tool_use schema contract, config wiring, analyze-stage dispatch, 44 regression tests)
+- 2026-02-24: Completed 09-04-PLAN.md (HEVC 10-bit/NVENC youtube_ultra spec, AV1 experimental gating, force_60fps_shortform toggle, runtime encoder fallback chain + RIFE uplift stub in render)
+- 2026-02-24: Completed 09-05-PLAN.md (BrandingProfile typed model, YAML serialization, platform override merge, BrandingConfig wired into Config, brand_voice prompt injection in BaseProvider)
+- 2026-02-24: Completed 09-04-PLAN.md (HEVC 10-bit/NVENC/AV1 platform config, youtube_ultra spec, force_60fps_shortform toggle, runtime encoder fallback chain in render stage)
+- 2026-02-24: Completed 09-05-PLAN.md (BrandingProfile typed model, YAML serialization, platform override merge, BrandingConfig in settings, brand_voice prompt injection with double sanitization, 126 tests)
 
 ## Session Continuity
 
 ### Last session
 
-2026-02-24 04:05 UTC — Completed `09-03-PLAN.md` (ClaudeProvider with tool_use schema-constrained structured output; anthropic>=0.80.0 added; 'claude' registered in SUPPORTED_MODEL_PROVIDERS with 3 models; APIKeysConfig.anthropic field + ANTHROPIC_API_KEY env var; AnalyzeStage provider-dispatch init; 44 tests covering parse paths, retry semantics, credential absence, and fallback continuation).
+2026-02-24 03:55 UTC — Completed `09-05-PLAN.md` (BrandingProfile typed model with brand_voice, logo, caption, thumbnail border, platform overrides; utils/branding.py load/save/resolve/load_active_profile; BrandingConfig in Config; AnalyzeStage branding resolution and brand_voice injection; BaseProvider._build_prompt brand_voice parameter with bounded BRAND VOICE block; double sanitization gate at model + prompt boundary; 126 tests passing).
 
 ### Stopped at
 
-Completed 09-03-PLAN.md — Phase 9 plans 01, 02, and 03 complete; ready for 09-04.
+Completed 09-05-PLAN.md — Phase 9 plans 01, 02, 03, 04, and 05 complete; ready for 09-06.
 
 ### Resume file
 
@@ -339,4 +348,4 @@ None
 
 ---
 
-*State updated: 2026-02-24 (09-02 complete — FastMCP server: 14 MCP tools, .mcp.json, 28 tests, isolation boundaries verified)*
+*State updated: 2026-02-24 (09-05 complete — BrandingProfile model, YAML serialization, platform overrides, brand_voice prompt injection, 126 tests)*
