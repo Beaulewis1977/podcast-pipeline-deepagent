@@ -218,6 +218,118 @@ def test_provider_thumbnail_contract_requires_recommendation_signal() -> None:
     )
 
 
+# ---------------------------------------------------------------------------
+# brand_voice prompt injection tests
+# ---------------------------------------------------------------------------
+
+
+def test_provider_prompt_includes_brand_voice_block_when_provided() -> None:
+    """Prompt should contain BRAND VOICE block when brand_voice argument is non-empty."""
+    provider = _PromptTestProvider()
+    prompt = provider._build_prompt(
+        {"text": "A transcript excerpt"},
+        brand_voice="Bold, energetic Gen Z tone.",
+    )
+    assert "BRAND VOICE" in prompt
+    assert "Bold, energetic Gen Z tone." in prompt
+
+
+def test_provider_prompt_excludes_brand_voice_block_when_absent() -> None:
+    """Prompt must not contain BRAND VOICE block when brand_voice is None."""
+    provider = _PromptTestProvider()
+    prompt = provider._build_prompt({"text": "A transcript excerpt"})
+    assert "BRAND VOICE" not in prompt
+
+
+def test_provider_prompt_excludes_brand_voice_block_when_empty_string() -> None:
+    """Prompt must not contain BRAND VOICE block when brand_voice is an empty string."""
+    provider = _PromptTestProvider()
+    prompt = provider._build_prompt({"text": "A transcript excerpt"}, brand_voice="")
+    assert "BRAND VOICE" not in prompt
+
+
+def test_provider_prompt_brand_voice_injected_from_transcript_dict() -> None:
+    """brand_voice embedded in transcript dict should be injected into the prompt."""
+    provider = _PromptTestProvider()
+    transcript = {"text": "A transcript excerpt", "brand_voice": "Authoritative, data-driven tone."}
+    prompt = provider._build_prompt(transcript)
+    assert "BRAND VOICE" in prompt
+    assert "Authoritative, data-driven tone." in prompt
+
+
+def test_provider_prompt_explicit_brand_voice_takes_priority_over_transcript_key() -> None:
+    """Explicit brand_voice argument must override brand_voice embedded in transcript dict."""
+    provider = _PromptTestProvider()
+    transcript = {"text": "A transcript excerpt", "brand_voice": "From transcript."}
+    prompt = provider._build_prompt(transcript, brand_voice="Explicit override voice.")
+    assert "Explicit override voice." in prompt
+    # The transcript-embedded brand_voice should NOT appear since explicit arg wins.
+    assert "From transcript." not in prompt
+
+
+def test_provider_build_brand_voice_block_strips_control_chars() -> None:
+    """_build_brand_voice_block must strip control characters from injected text."""
+    raw = "Bold\x00Gen Z\x01Energy\x1f!"
+    block = _PromptTestProvider._build_brand_voice_block(raw)
+    assert "\x00" not in block
+    assert "\x01" not in block
+    assert "\x1f" not in block
+    assert "Bold" in block
+    assert "Energy" in block
+
+
+def test_provider_build_brand_voice_block_truncates_at_max_length() -> None:
+    """_build_brand_voice_block must truncate brand_voice to _BRAND_VOICE_PROMPT_MAX_CHARS."""
+    from podcast_pipeline.providers.base import _BRAND_VOICE_PROMPT_MAX_CHARS
+
+    long_text = "x" * (_BRAND_VOICE_PROMPT_MAX_CHARS + 500)
+    block = _PromptTestProvider._build_brand_voice_block(long_text)
+    # The block wraps the text in header lines so its total length is >max, but the
+    # sanitized text payload inside must be <= max.
+    assert len(block) <= _BRAND_VOICE_PROMPT_MAX_CHARS + 100  # allow header overhead
+    assert "x" * (_BRAND_VOICE_PROMPT_MAX_CHARS + 1) not in block
+
+
+def test_provider_build_brand_voice_block_returns_empty_for_none() -> None:
+    """_build_brand_voice_block must return empty string when brand_voice is None."""
+    block = _PromptTestProvider._build_brand_voice_block(None)
+    assert block == ""
+
+
+def test_provider_build_brand_voice_block_returns_empty_for_blank_string() -> None:
+    """_build_brand_voice_block must return empty string when brand_voice is blank."""
+    block = _PromptTestProvider._build_brand_voice_block("   ")
+    assert block == ""
+
+
+def test_provider_brand_voice_block_positioned_before_transcript_section() -> None:
+    """BRAND VOICE block must appear before the TRANSCRIPT section in the prompt."""
+    provider = _PromptTestProvider()
+    prompt = provider._build_prompt(
+        {"text": "A transcript excerpt"},
+        brand_voice="Test voice directive.",
+    )
+    brand_voice_pos = prompt.find("BRAND VOICE")
+    transcript_pos = prompt.find("TRANSCRIPT:")
+    assert brand_voice_pos != -1
+    assert transcript_pos != -1
+    assert brand_voice_pos < transcript_pos
+
+
+def test_provider_brand_voice_block_positioned_before_json_schema() -> None:
+    """BRAND VOICE block must appear before the JSON schema instruction."""
+    provider = _PromptTestProvider()
+    prompt = provider._build_prompt(
+        {"text": "A transcript excerpt"},
+        brand_voice="Schema-safe directive.",
+    )
+    brand_voice_pos = prompt.find("BRAND VOICE")
+    json_schema_pos = prompt.find("Provide your analysis as JSON")
+    assert brand_voice_pos != -1
+    assert json_schema_pos != -1
+    assert brand_voice_pos < json_schema_pos
+
+
 def test_provider_parse_accepts_thumbnail_virality_metadata_fields() -> None:
     """Provider parse path should preserve thumbnail virality metadata fields."""
     payload = _valid_analysis_payload()

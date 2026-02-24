@@ -1,11 +1,18 @@
 """Base provider protocol and error types."""
 
 import json
+import unicodedata
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
 from podcast_pipeline.models.analysis import AnalysisResult
+
+# Maximum number of characters of brand_voice injected into any single prompt.
+# Even though BrandingProfile already sanitizes at model construction time,
+# this secondary gate prevents a stale or manually-constructed brand_voice string
+# from bleeding past the prompt boundary.
+_BRAND_VOICE_PROMPT_MAX_CHARS = 2000
 
 
 class ProviderError(Exception):
@@ -103,8 +110,23 @@ class BaseProvider(ABC):
         self,
         transcript: dict[str, Any],
         trend_context: dict[str, Any] | None = None,
+        brand_voice: str | None = None,
     ) -> str:
-        """Build the analysis prompt."""
+        """Build the analysis prompt.
+
+        Args:
+            transcript: Transcript dict (must have a ``"text"`` key).
+            trend_context: Optional trend research context dict injected into
+                the TREND CONTEXT block.  Falls back to
+                ``transcript["trend_context"]`` when not provided.
+            brand_voice: Optional brand persona / tone instruction text.
+                When non-empty the text is sanitized a second time (control
+                chars stripped, truncated to :data:`_BRAND_VOICE_PROMPT_MAX_CHARS`)
+                and prepended as a bounded ``BRAND VOICE`` block **before** the
+                JSON schema instruction.  This ensures the brand voice can
+                influence copy tone without overriding or replacing the
+                structured-output contract.
+        """
         transcript_text = str(transcript.get("text", ""))[:10000]  # Limit length
         resolved_trend_context = trend_context
         if resolved_trend_context is None:
@@ -113,10 +135,18 @@ class BaseProvider(ABC):
                 resolved_trend_context = raw_context
         trend_context_block = self._build_trend_context_block(resolved_trend_context)
 
+        # Resolve brand_voice: explicit parameter takes priority, then transcript key.
+        resolved_brand_voice = brand_voice
+        if resolved_brand_voice is None:
+            raw_voice = transcript.get("brand_voice")
+            if isinstance(raw_voice, str):
+                resolved_brand_voice = raw_voice
+        brand_voice_block = self._build_brand_voice_block(resolved_brand_voice)
+
         return f"""You are a professional podcast editor and marketing strategist.
 
 Analyze this podcast video and transcript to provide editing suggestions and marketing content.
-
+{brand_voice_block}
 TRANSCRIPT:
 {transcript_text}
 
@@ -249,6 +279,59 @@ Identify:
 4. Platform-specific marketing copy for ALL listed platform keys
 
 Return ONLY valid JSON, no other text."""
+
+    @staticmethod
+    def _build_brand_voice_block(brand_voice: str | None) -> str:
+        """Build the BRAND VOICE instruction block for prompt injection.
+
+        The block is injected **after** the role statement and **before** the
+        TRANSCRIPT section so it frames copy direction without competing with
+        the structured-output JSON schema at the end of the prompt.
+
+        A secondary sanitization pass is applied here so that a brand_voice
+        string that was not constructed through ``BrandingProfile`` (e.g. from
+        tests or manual callers) is still safe.
+
+        Returns an empty string when ``brand_voice`` is None or blank so the
+        no-branding path produces an identical prompt to the previous version.
+        """
+        if not brand_voice:
+            return ""
+
+        sanitized = BaseProvider._sanitize_prompt_brand_voice(brand_voice)
+        if not sanitized:
+            return ""
+
+        return f"\nBRAND VOICE (apply to all copy and clip selection):\n{sanitized}\n"
+
+    @staticmethod
+    def _sanitize_prompt_brand_voice(text: str) -> str:
+        """Strip control characters and truncate brand_voice for prompt safety.
+
+        This mirrors the sanitization already applied in
+        ``BrandingProfile.sanitize_brand_voice`` but runs a second time at the
+        prompt-construction boundary so that callers that bypass the model
+        (e.g. direct ``_build_prompt`` calls in tests) still produce safe
+        output.
+
+        Args:
+            text: Raw or previously-sanitized brand_voice string.
+
+        Returns:
+            Sanitized, truncated string.  Empty string if nothing remains after
+            stripping.
+        """
+        cleaned_chars: list[str] = []
+        for char in text:
+            category = unicodedata.category(char)
+            if category in {"Cc", "Cs"}:
+                if cleaned_chars and cleaned_chars[-1] != " ":
+                    cleaned_chars.append(" ")
+            else:
+                cleaned_chars.append(char)
+
+        cleaned = "".join(cleaned_chars).strip()
+        return cleaned[:_BRAND_VOICE_PROMPT_MAX_CHARS]
 
     @staticmethod
     def _build_trend_context_block(trend_context: dict[str, Any] | None) -> str:

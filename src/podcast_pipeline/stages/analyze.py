@@ -160,6 +160,11 @@ class AnalyzeStage(Stage):
                 provider_transcript = dict(transcript_data)
                 if trend_context is not None:
                     provider_transcript["trend_context"] = trend_context
+                # Inject sanitized brand_voice when a branding profile is active.
+                # Providers extract this from the transcript dict in _build_prompt.
+                brand_voice = self._resolve_brand_voice_for_analysis()
+                if brand_voice:
+                    provider_transcript["brand_voice"] = brand_voice
                 result = provider.analyze(proxy_path, provider_transcript)
                 used_provider = provider.name
                 used_model = getattr(provider, "model", "unknown")
@@ -556,6 +561,18 @@ class AnalyzeStage(Stage):
             seen.add(value)
             normalized.append(value)
         return normalized
+
+    def _resolve_brand_voice_for_analysis(self) -> str:
+        """Return the sanitized brand_voice string for the active profile, or empty string.
+
+        Uses the base profile's brand_voice (not platform-specific) since the
+        analysis stage operates before export-target selection.  An empty string
+        is returned when no branding profile is configured so downstream
+        callers can treat it as a no-op without branching.
+        """
+        if self._active_branding is None:
+            return ""
+        return self._active_branding.sanitized_brand_voice()
 
     def resolve_branding_for_platform(self, platform: str) -> BrandingProfile | None:
         """Return a resolved BrandingProfile for ``platform``, or None when unconfigured.
