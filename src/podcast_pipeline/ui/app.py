@@ -2342,25 +2342,209 @@ def render_brand_studio() -> None:
 
 
 def _render_brand_studio_create_form(branding_dir: Path) -> None:
-    """Render the 'create new profile' form."""
+    """Render the full 'create new profile' form with all branding controls."""
     st.markdown("#### Create New Branding Profile")
+
     new_name = st.text_input(
         "Profile Name",
-        key="brand_studio_new_name",
+        key="brand_new_name",
         placeholder="e.g. neon-viral",
         help="Letters, digits, hyphens, and underscores only.",
     )
-    new_voice = st.text_area(
-        "Brand Voice",
-        key="brand_studio_new_voice",
-        height=100,
-        max_chars=2000,
-        placeholder="Describe your brand personality and tone...",
-    )
 
+    # ── Brand Voice ──────────────────────────────────────────────────────────
+    with st.expander("Brand Voice", expanded=True):
+        new_voice = st.text_area(
+            "Brand Voice Instructions",
+            key="brand_new_voice",
+            height=120,
+            max_chars=2000,
+            placeholder="Describe your brand personality and tone...",
+            help="Creative persona and tone instructions injected into AI prompts.",
+        )
+        st.caption(f"{len(new_voice)}/2000 characters")
+
+    # ── Visual Assets ────────────────────────────────────────────────────────
+    with st.expander("Visual Assets", expanded=False):
+        assets_dir = branding_dir / "assets"
+        assets_dir.mkdir(parents=True, exist_ok=True)
+
+        new_logo_upload = st.file_uploader(
+            "Upload Logo",
+            type=["png", "svg", "jpg", "jpeg"],
+            key="brand_new_logo_upload",
+            help="Upload a logo file (PNG/SVG/JPG).",
+        )
+        new_logo_path_val = ""
+        if new_logo_upload is not None:
+            dest = assets_dir / new_logo_upload.name
+            dest.write_bytes(new_logo_upload.getvalue())
+            new_logo_path_val = str(dest)
+        new_logo_path = st.text_input(
+            "Logo Path",
+            value=new_logo_path_val,
+            key="brand_new_logo_path",
+            help="Path to logo image. Auto-filled when you upload above.",
+        )
+
+        new_logo_placement = st.selectbox(
+            "Logo Placement",
+            options=["top_left", "top_right", "bottom_left", "bottom_right", "center"],
+            index=1,
+            key="brand_new_logo_placement",
+        )
+        new_logo_opacity = st.slider(
+            "Logo Opacity",
+            min_value=0.0,
+            max_value=1.0,
+            value=0.8,
+            step=0.05,
+            key="brand_new_logo_opacity",
+        )
+
+        new_font_upload = st.file_uploader(
+            "Upload Font",
+            type=["ttf", "otf", "woff", "woff2"],
+            key="brand_new_font_upload",
+            help="Upload a font file for captions (TTF/OTF).",
+        )
+        new_font_path_val = ""
+        if new_font_upload is not None:
+            dest = assets_dir / new_font_upload.name
+            dest.write_bytes(new_font_upload.getvalue())
+            new_font_path_val = str(dest)
+        new_font_path = st.text_input(
+            "Font Path",
+            value=new_font_path_val,
+            key="brand_new_font_path",
+            help="Path to custom font. Auto-filled when you upload above.",
+        )
+
+    # ── Caption Style ────────────────────────────────────────────────────────
+    with st.expander("Caption Style", expanded=False):
+        cap_c1, cap_c2 = st.columns(2)
+        with cap_c1:
+            new_caption_color = st.color_picker(
+                "Caption Color",
+                value="#FFFFFF",
+                key="brand_new_caption_color",
+            )
+        with cap_c2:
+            new_highlight_color = st.color_picker(
+                "Highlight Color",
+                value="#FFFF00",
+                key="brand_new_highlight_color",
+            )
+        new_caption_size = st.slider(
+            "Caption Size",
+            min_value=8,
+            max_value=256,
+            value=48,
+            key="brand_new_caption_size",
+        )
+        sc1, sc2, sc3 = st.columns(3)
+        with sc1:
+            new_caption_shadow = st.checkbox("Shadow", value=True, key="brand_new_shadow")
+        with sc2:
+            new_caption_bold = st.checkbox("Bold", value=False, key="brand_new_bold")
+        with sc3:
+            new_caption_italic = st.checkbox("Italic", value=False, key="brand_new_italic")
+        new_caption_font = st.text_input(
+            "Caption Font Family",
+            value="",
+            key="brand_new_caption_font",
+            help="Font family name for captions. Leave empty for default.",
+        )
+        # Preview swatch
+        st.markdown(
+            f'<div style="background:#222;padding:12px 16px;border-radius:6px;'
+            f"color:{new_caption_color};font-size:{min(new_caption_size, 48)}px;"
+            f"font-weight:{'bold' if new_caption_bold else 'normal'};"
+            f"font-style:{'italic' if new_caption_italic else 'normal'};"
+            f'text-shadow:{"2px 2px 4px rgba(0,0,0,0.8)" if new_caption_shadow else "none"}">'
+            f"Sample Caption Preview</div>",
+            unsafe_allow_html=True,
+        )
+
+    # ── Thumbnail Border ─────────────────────────────────────────────────────
+    with st.expander("Thumbnail Border", expanded=False):
+        tb_c1, tb_c2 = st.columns(2)
+        with tb_c1:
+            new_tb_color = st.color_picker(
+                "Border Color",
+                value="#000000",
+                key="brand_new_tb_color",
+            )
+        with tb_c2:
+            new_tb_width = st.slider(
+                "Border Width (px)",
+                min_value=0,
+                max_value=200,
+                value=10,
+                key="brand_new_tb_width",
+            )
+        new_bg_padding = st.text_input(
+            "Background Padding",
+            value="0%",
+            key="brand_new_bg_padding",
+            help="CSS-style padding (e.g. '5%', '20px').",
+        )
+
+    # ── Sound Kit ────────────────────────────────────────────────────────────
+    with st.expander("Sound Kit", expanded=False):
+        new_intro_upload = st.file_uploader(
+            "Upload Intro Stinger",
+            type=["wav", "flac", "mp3"],
+            key="brand_new_intro_upload",
+        )
+        new_intro_val = ""
+        if new_intro_upload is not None:
+            dest = assets_dir / new_intro_upload.name
+            dest.write_bytes(new_intro_upload.getvalue())
+            new_intro_val = str(dest)
+        new_intro_sound = st.text_input(
+            "Intro Stinger Path",
+            value=new_intro_val,
+            key="brand_new_intro_sound",
+        )
+
+        new_trans_upload = st.file_uploader(
+            "Upload Transition Sound",
+            type=["wav", "flac", "mp3"],
+            key="brand_new_trans_upload",
+        )
+        new_trans_val = ""
+        if new_trans_upload is not None:
+            dest = assets_dir / new_trans_upload.name
+            dest.write_bytes(new_trans_upload.getvalue())
+            new_trans_val = str(dest)
+        new_transition_sound = st.text_input(
+            "Transition Sound Path",
+            value=new_trans_val,
+            key="brand_new_trans_sound",
+        )
+
+        new_outro_upload = st.file_uploader(
+            "Upload Outro Stinger",
+            type=["wav", "flac", "mp3"],
+            key="brand_new_outro_upload",
+        )
+        new_outro_val = ""
+        if new_outro_upload is not None:
+            dest = assets_dir / new_outro_upload.name
+            dest.write_bytes(new_outro_upload.getvalue())
+            new_outro_val = str(dest)
+        new_outro_sound = st.text_input(
+            "Outro Stinger Path",
+            value=new_outro_val,
+            key="brand_new_outro_sound",
+        )
+
+    # ── Action buttons ───────────────────────────────────────────────────────
+    st.divider()
     col_save, col_cancel = st.columns([1, 3])
     with col_save:
-        if st.button("Save Profile", key="brand_studio_save_new"):
+        if st.button("Create Profile", key="brand_studio_save_new", type="primary"):
             if not new_name or not new_name.strip():
                 st.error("Profile name is required.")
                 return
@@ -2368,6 +2552,29 @@ def _render_brand_studio_create_form(branding_dir: Path) -> None:
                 profile = BrandingProfile(
                     profile_name=new_name.strip(),
                     brand_voice=new_voice.strip(),
+                    logo_path=Path(new_logo_path) if new_logo_path.strip() else None,
+                    logo_placement=new_logo_placement,
+                    logo_opacity=new_logo_opacity,
+                    font_path=Path(new_font_path) if new_font_path.strip() else None,
+                    caption_style=CaptionStyle(
+                        color=new_caption_color,
+                        size=new_caption_size,
+                        shadow=new_caption_shadow,
+                        bold=new_caption_bold,
+                        italic=new_caption_italic,
+                        font=new_caption_font,
+                    ),
+                    highlight_color=new_highlight_color,
+                    bg_padding=new_bg_padding,
+                    thumbnail_border=ThumbnailBorder(
+                        color=new_tb_color,
+                        width=new_tb_width,
+                    ),
+                    intro_sound=Path(new_intro_sound) if new_intro_sound.strip() else None,
+                    transition_sound=(
+                        Path(new_transition_sound) if new_transition_sound.strip() else None
+                    ),
+                    outro_sound=Path(new_outro_sound) if new_outro_sound.strip() else None,
                 )
                 save_profile(profile, branding_dir, overwrite=False)
                 st.session_state.pop("_brand_studio_creating", None)
