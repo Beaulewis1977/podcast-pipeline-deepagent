@@ -5,11 +5,19 @@ pipeline runs in ``asyncio`` tasks. It persists runtime metadata
 (pid, started_at, heartbeat, last_known_stage) to a ``runtime.json``
 file under each job directory for crash/restart reconciliation and
 guards against duplicate concurrent runs for the same job ID.
+
+Phase 9 adds :class:`GPULease` — a shared semaphore-based context
+manager that serializes GPU-heavy workloads (FLUX thumbnail generation
+and NVENC encoding) across concurrent jobs to prevent VRAM contention
+crashes on single-GPU machines.
 """
 
 import asyncio
 import json
 import os
+import threading
+from collections.abc import Generator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -22,6 +30,119 @@ logger = get_logger(__name__)
 
 HEARTBEAT_INTERVAL_SECONDS = 5.0
 RUN_TIMEOUT_SECONDS = 1800.0
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# GPU Lease — cross-job serialization of GPU-heavy workloads
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+class GPULease:
+    """Semaphore-based context manager for serializing GPU-heavy operations.
+
+    FLUX thumbnail generation and NVENC-heavy encoding stages must not run
+    concurrently across different jobs on a single-GPU machine.  The
+    ``GPULease`` wraps a :class:`threading.Semaphore` with ``permits=1``
+    so that at most one GPU-heavy workload is active at any time.
+
+    Same-job stages already execute sequentially (the pipeline processes
+    stages in order), so the lease only gates concurrent **cross-job**
+    GPU operations.
+
+    Usage::
+
+        gpu_lease = GPULease()  # created once on Supervisor
+
+        with gpu_lease.acquire(job_id="job-42", operation="flux_thumbnail"):
+            # run GPU-heavy work
+            ...
+
+    The lease is non-blocking for the **same** job if it already holds it;
+    different jobs block until the lease is released.
+    """
+
+    def __init__(self, permits: int = 1) -> None:
+        self._semaphore = threading.Semaphore(permits)
+        self._lock = threading.Lock()
+        self._holder_job_id: str | None = None
+        self._holder_operation: str | None = None
+
+    @property
+    def holder_job_id(self) -> str | None:
+        """Return the job_id currently holding the GPU lease, or None."""
+        with self._lock:
+            return self._holder_job_id
+
+    @property
+    def holder_operation(self) -> str | None:
+        """Return the operation name of the current lease holder."""
+        with self._lock:
+            return self._holder_operation
+
+    def is_held(self) -> bool:
+        """Return True if the GPU lease is currently held by any job."""
+        with self._lock:
+            return self._holder_job_id is not None
+
+    @contextmanager
+    def acquire(
+        self,
+        job_id: str,
+        operation: str = "gpu",
+        timeout: float | None = None,
+    ) -> Generator[None, None, None]:
+        """Acquire the GPU lease for a job.
+
+        Args:
+            job_id: Identifier of the job requesting GPU access.
+            operation: Descriptive name of the GPU operation (for logging).
+            timeout: Maximum seconds to wait.  ``None`` = wait indefinitely.
+
+        Yields:
+            Control once the lease is acquired.
+
+        Raises:
+            TimeoutError: If the lease cannot be acquired within ``timeout``.
+        """
+        logger.info(
+            "gpu_lease_requested",
+            job_id=job_id,
+            operation=operation,
+        )
+
+        if timeout is not None:
+            acquired = self._semaphore.acquire(timeout=timeout)
+        else:
+            # Block indefinitely until the semaphore is available.
+            acquired = self._semaphore.acquire(blocking=True)
+
+        if not acquired:
+            raise TimeoutError(
+                f"GPU lease not acquired within {timeout}s for job {job_id} ({operation})"
+            )
+
+        with self._lock:
+            self._holder_job_id = job_id
+            self._holder_operation = operation
+
+        logger.info(
+            "gpu_lease_acquired",
+            job_id=job_id,
+            operation=operation,
+        )
+
+        try:
+            yield
+        finally:
+            with self._lock:
+                self._holder_job_id = None
+                self._holder_operation = None
+            self._semaphore.release()
+            logger.info(
+                "gpu_lease_released",
+                job_id=job_id,
+                operation=operation,
+            )
 
 
 class RuntimeMeta:
@@ -118,6 +239,9 @@ class Supervisor:
         self.run_timeout_seconds = run_timeout_seconds
         # job_id -> asyncio.Task
         self._active: dict[str, asyncio.Task[None]] = {}
+        # Phase 9: shared GPU lease for cross-job serialization of
+        # FLUX thumbnail generation and NVENC encoding workloads.
+        self.gpu_lease = GPULease()
 
     # ------------------------------------------------------------------
     # Public API
