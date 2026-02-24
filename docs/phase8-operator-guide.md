@@ -92,7 +92,6 @@ fillers:
 | Model | Transport | Notes |
 |-------|-----------|-------|
 | `gemini-2.5-flash-lite` | `google.genai` | **Default** — fast, cheap, correct routing |
-| `claude-haiku-4-5` | Anthropic | Alternative fast model |
 
 **Forbidden (reasoning/CoT) models — DO NOT USE:**
 
@@ -107,8 +106,10 @@ Setting `llm_triage_model` to any of the above will cause triage to run orders o
 magnitude slower and cost significantly more per job.
 
 **Transport dispatch:** Gemini model names are routed via `google.genai`.  All other
-model names fall back to the OpenAI-compatible transport.  Make sure the correct API
-key is configured in your `.env` (`GOOGLE_API_KEY` for Gemini models).
+model names fall back to the OpenAI-compatible transport (set `OPENAI_API_KEY` in `.env`).
+Make sure the correct API key is configured (`GOOGLE_API_KEY` for Gemini models).
+Claude/Anthropic models are **not supported** — they do not share the OpenAI transport
+and will fail at runtime.
 
 LLM triage runs on unprotected hedge words only.  Disfluencies and protected words
 are never sent to the LLM.
@@ -151,7 +152,7 @@ smoothing:
 
 When `silero-vad` is not installed, this pass silently skips (returns 0ms extension).
 
-**Optional dep install:**
+**Optional dependency install:**
 
 ```bash
 uv sync --extra gpu
@@ -249,7 +250,7 @@ python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_
 
 **Expected output for RTX 5060 Ti:**
 
-```
+```text
 True (12, 0)
 ```
 
@@ -265,7 +266,7 @@ separately.  It is not a Python package.
 ### Clone the repository
 
 ```bash
-git clone https://github.com/hzwer/ECCV2022-RIFE /opt/practical-rife
+git clone https://github.com/hzwer/Practical_RIFE /opt/practical-rife
 cd /opt/practical-rife
 pip install -r requirements.txt
 ```
@@ -286,7 +287,7 @@ smoothing:
 
 ### Directory layout expected
 
-```
+```text
 /opt/practical-rife/
 ├── inference_img.py      # <-- rife_script_path points here
 ├── train_log/
@@ -307,7 +308,7 @@ python scripts/smoke_test_gpu_rife.py
 
 **Expected output (success):**
 
-```
+```text
 GPU: NVIDIA GeForce RTX 5060 Ti, capability: 12.0, CUDA: 12.8
 RIFE generated 4 bridge frames in /tmp/.../rife_out
 RIFE OK

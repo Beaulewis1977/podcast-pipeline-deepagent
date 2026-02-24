@@ -291,11 +291,14 @@ class TranscribeStage(Stage):
                         phrase_len = 2
                         # Determine category for multi-word phrase
                         category = self._filler_category(phrase_str, hedge_set, custom_set)
-                        # Pause timing uses raw word timestamps (before padding)
-                        pause_before_ms = (word.start - words[i - 1].end) * 1000 if i > 0 else 0.0
+                        # Pause timing uses raw word timestamps (before padding).
+                        # Clamped to 0 to handle overlapping timestamps from the ASR model.
+                        pause_before_ms = (
+                            max(0.0, (word.start - words[i - 1].end) * 1000) if i > 0 else 0.0
+                        )
                         next_idx = i + phrase_len
                         pause_after_ms = (
-                            (words[next_idx].start - next_word.end) * 1000
+                            max(0.0, (words[next_idx].start - next_word.end) * 1000)
                             if next_idx < len(words)
                             else 0.0
                         )
@@ -331,10 +334,15 @@ class TranscribeStage(Stage):
                     if duration_ms >= min_duration_ms:
                         # Determine category for single word
                         category = self._filler_category(word_text, hedge_set, custom_set)
-                        # Pause timing uses raw word timestamps (before padding)
-                        pause_before_ms = (word.start - words[i - 1].end) * 1000 if i > 0 else 0.0
+                        # Pause timing uses raw word timestamps (before padding).
+                        # Clamped to 0 to handle overlapping timestamps from the ASR model.
+                        pause_before_ms = (
+                            max(0.0, (word.start - words[i - 1].end) * 1000) if i > 0 else 0.0
+                        )
                         pause_after_ms = (
-                            (words[i + 1].start - word.end) * 1000 if i + 1 < len(words) else 0.0
+                            max(0.0, (words[i + 1].start - word.end) * 1000)
+                            if i + 1 < len(words)
+                            else 0.0
                         )
                         # Context window
                         context_before = " ".join(w.word for w in words[max(0, i - context_n) : i])

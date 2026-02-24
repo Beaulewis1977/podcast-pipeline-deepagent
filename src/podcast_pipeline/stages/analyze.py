@@ -677,7 +677,7 @@ class AnalyzeStage(Stage):
             )
 
             return str(viral_path.relative_to(job_dir))
-        except Exception as e:
+        except (OSError, ValueError, AttributeError, TypeError, KeyError) as e:
             self.logger.warning("viral_signals_failed", error=str(e))
             return None
 
@@ -690,7 +690,7 @@ class AnalyzeStage(Stage):
             triage_path.write_text(json.dumps([r.model_dump() for r in results], indent=2))
             self.logger.info("triage_complete", results=len(results))
             return str(triage_path.relative_to(job_dir))
-        except Exception as e:
+        except (OSError, json.JSONDecodeError, ValueError, RuntimeError) as e:
             self.logger.warning("triage_failed", error=str(e))
             return None
 
@@ -871,7 +871,7 @@ class AnalyzeStage(Stage):
                     batch_candidates=batch_candidates,
                     model=model,
                 )
-            except Exception as exc:
+            except (OSError, ValueError, RuntimeError, AttributeError) as exc:
                 self.logger.warning(
                     "triage_batch_failed",
                     batch_start=batch_start,

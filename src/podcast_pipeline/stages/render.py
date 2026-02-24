@@ -2113,7 +2113,12 @@ class RenderStage(Stage):
                 filter_parts.append(f"movie={safe_path}:s=dv[{bridge_video_label}]")
                 # Bridge clips are video-only (-an); generate silent audio
                 # matching the bridge duration for the audio concat.
-                bridge_dur = 0.1  # negligible bridge duration
+                bridge_info = get_video_info(rife_clip)
+                bridge_dur = float(bridge_info.get("duration") or 0.0)
+                if bridge_dur <= _EPSILON:
+                    # Fallback: estimate from num_bridge_frames / fps.
+                    fps_guess = float(bridge_info.get("fps") or 30)
+                    bridge_dur = smoothing.rife_num_bridge_frames / fps_guess
                 filter_parts.append(f"aevalsrc=0:d={bridge_dur:.3f}[{bridge_audio_label}]")
                 filter_parts.append(
                     f"[{audio_label}][{bridge_audio_label}][{next_audio}]"
@@ -2123,8 +2128,8 @@ class RenderStage(Stage):
                     f"[{video_label}][{bridge_video_label}][{next_video}]"
                     f"concat=n=3:v=1:a=0[{join_label_video}]"
                 )
-                audio_duration += next_duration  # bridge duration is negligible
-                video_duration += next_duration
+                audio_duration += bridge_dur + next_duration
+                video_duration += bridge_dur + next_duration
             elif apply_content_audio and crossfade_s > _EPSILON:
                 filter_parts.append(
                     f"[{audio_label}][{next_audio}]"
@@ -2365,8 +2370,9 @@ class RenderStage(Stage):
                     # Only process content-cut joins.
                     continue
 
-                left_end = keep_ranges[join_idx][1]
-                right_start = keep_ranges[join_idx + 1][0]
+                # Use updated_ranges so prior join adjustments are reflected.
+                left_seg_start, left_end = updated_ranges[join_idx]
+                right_start, right_end = updated_ranges[join_idx + 1]
 
                 # Extract frames: tail of left segment and head of right segment.
                 left_dir = tmp / f"join{join_idx}_left"
@@ -2374,18 +2380,18 @@ class RenderStage(Stage):
                 left_dir.mkdir()
                 right_dir.mkdir()
 
-                left_start_extract = max(left_end - window_frames / fps, 0.0)
+                left_start_extract = max(left_end - window_frames / fps, left_seg_start)
                 self._extract_frames(
                     video_path,
                     left_start_extract,
-                    min(window_frames / fps, left_end),
+                    min(window_frames / fps, left_end - left_start_extract),
                     left_dir,
                     window_frames,
                 )
                 self._extract_frames(
                     video_path,
                     right_start,
-                    window_frames / fps,
+                    min(window_frames / fps, right_end - right_start),
                     right_dir,
                     window_frames,
                 )
@@ -2424,10 +2430,7 @@ class RenderStage(Stage):
 
                 if len(right_frames) > 1:
                     right_frame_offset = best_right_idx / fps
-                    new_right_start = min(
-                        right_start + right_frame_offset,
-                        keep_ranges[join_idx + 1][1],
-                    )
+                    new_right_start = min(right_start + right_frame_offset, right_end)
                     right_seg = updated_ranges[join_idx + 1]
                     updated_ranges[join_idx + 1] = (new_right_start, right_seg[1])
 
