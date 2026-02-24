@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-02-24
 **Current phase:** Phase 9.12 — Streamlit UI Gap Closure
-**Overall progress:** Phase 9 complete (11/11 plans); 64 plans completed overall; Phase 9.12 plan 2/3 complete
+**Overall progress:** Phase 9 complete (11/11 plans); 65 plans completed overall; Phase 9.12 complete (3/3 plans)
 
 ## Project Reference
 
@@ -15,14 +15,14 @@ See: `.planning/PROJECT.md`
 
 ```text
 Phase:    9.12 (Streamlit UI Gap Closure)
-Plan:     02/03 complete — 09.12-02 Settings provider select + Production sidebar caption/sync controls
-Status:   Executing — 2 plans done, 1 remaining
-Last activity: 2026-02-24 - Completed 09.12-02-PLAN.md (GAP-1/GAP-3A/GAP-3B/GAP-4 UI closures)
+Plan:     03/03 complete — 09.12-03 Split sound kit controls + Brand Studio file uploaders
+Status:   Complete — all 3 plans done, all 7 UI gaps closed
+Last activity: 2026-02-24 - Completed 09.12-03-PLAN.md (GAP-5A/GAP-6A UI closures)
 
-Progress: [██████████████████████████████] 64/65 plans complete
+Progress: [██████████████████████████████] 65/65 plans complete
 ```
 
-**Current Phase:** Phase 9.12 — Streamlit UI Gap Closure (2/3 plans complete)
+**Current Phase:** Phase 9.12 — Streamlit UI Gap Closure (3/3 plans complete)
 
 ## Phase Status
 
@@ -39,13 +39,13 @@ Progress: [███████████████████████
 | 7 | Smooth Editing & Filler Word Control | Complete (verified 2026-02-21) | 4/4 | 100% |
 | 8 | Intelligent Cut Quality | Complete (verified 2026-02-21) | 6/6 | 100% |
 | 9 | Automated Branding, Captions, and Multi-Track Sync | Complete (verified 2026-02-24) | 11/11 | 100% |
-| 9.12 | Streamlit UI Gap Closure | In progress | 2/3 | 67% |
+| 9.12 | Streamlit UI Gap Closure | Complete | 3/3 | 100% |
 
 ## Performance Metrics
 
 | Metric | Value |
 |--------|-------|
-| Plans completed | 64/65 |
+| Plans completed | 65/65 |
 | Requirements done | 35/83 (21 partial) |
 | Phases complete | 9/9 |
 | Estimated completion | All phases complete |
@@ -211,6 +211,9 @@ Progress: [███████████████████████
 | Provider selectbox mutates config.models.provider in session state only — no config.yaml write | App never writes config files; st.caption explains how to persist permanently via env var or config.yaml | 2026-02-24 |
 | _ASPECT_RATIO_OPTIONS defined at module level (not inside render function) | Avoids Streamlit lambda closure issues on reruns; format_func lambda safely indexes module-level list | 2026-02-24 |
 | Caption aspect ratio cleared to None when captions_enabled is False | Prevents stale override value from silently applying when captions are re-enabled — UI intent is always explicit | 2026-02-24 |
+| Enable Stingers maps to decisions.sound_kit_enabled (existing render-wired field) | Render stage uses sound_kit_enabled to gate _mix_stingers; stingers checkbox directly controls existing render behavior | 2026-02-24 |
+| Enable Auto-Ducking maps to decisions.auto_duck_enabled — UI persistence only | Render-side granular ducking control deferred; current _mix_stingers always applies ducking when stingers present | 2026-02-24 |
+| Brand Studio file uploaders use branding_dir function parameter (not get_config()) | Avoids redundant config load inside Visual Assets expander; branding_dir already passed to _render_brand_studio_editor | 2026-02-24 |
 
 ### Roadmap Evolution
 
@@ -360,16 +363,17 @@ Progress: [███████████████████████
 - 2026-02-24: Phase 9.12 added — Streamlit UI Gap Closure (closes all 7 gaps; awaiting planning)
 - 2026-02-24: Completed 09.12-01-PLAN.md (GAP-7 render wiring: decisions.captions_enabled/sound_kit_enabled/branding_profile_name now gate render passes; youtube_ultra registered; caption_aspect_ratio and auto_duck_enabled fields added; 6 regression tests)
 - 2026-02-24: Completed 09.12-02-PLAN.md (GAP-1/3A/3B/4: Settings provider selectbox for Claude/Gemini/Kimi; Anthropic API key status in Settings; caption aspect ratio selectbox in Production sidebar; sync artifact offset+confidence metrics display; slider range +/-5000ms; 1034 tests passing)
+- 2026-02-24: Completed 09.12-03-PLAN.md (GAP-5A/6A: Split sound kit into Enable Stingers + Enable Auto-Ducking checkboxes; logo/font file uploaders in Brand Studio Visual Assets; 1041 tests passing; Phase 9.12 complete)
 
 ## Session Continuity
 
 ### Last session
 
-2026-02-24 — Phase 9.12 execution continued. Completed 09.12-02 (GAP-1/3A/3B/4 UI closures: Settings provider select + Production sidebar caption/sync controls).
+2026-02-24 — Phase 9.12 execution completed. Completed 09.12-03 (GAP-5A/6A: split sound kit controls + Brand Studio file uploaders). All 7 UI gaps are now closed. Phase 9.12 is complete (3/3 plans done).
 
 ### Stopped at
 
-Completed 09.12-02-PLAN.md — next step is 09.12-03 (sound kit UI wiring + auto-duck toggle).
+Completed 09.12-03-PLAN.md — Phase 9.12 is fully complete. All UI gaps (GAP-1 through GAP-7) are closed.
 
 ### Resume file
 
