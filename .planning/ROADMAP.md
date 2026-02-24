@@ -381,10 +381,10 @@ Plans run in 4 execution waves:
 
 ### Phase 9: Automated Branding, Captions, and Multi-Track Sync
 
-**Goal:** Transform the pipeline from a "Cutter" into a "Fully Branded Production Suite" — delivering dynamic BrandingProfile data model + brand voice injection, automated ASS caption engine with word-level highlighting, bounded cross-correlation multi-track audio sync, production sound kits with auto-ducking, AI thumbnail studio (Imagen 4 + local FLUX.1 Schnell), HEVC 10-bit NVENC export profiles, Claude as an analysis provider, FFmpeg media toolkit (14 tools), developer-mode FFmpeg MCP server, and Streamlit Brand Studio UI — without breaking existing Phase 7/8 smoothing and filler-control contracts.
+**Goal:** Transform the pipeline from a "Cutter" into a "Fully Branded Production Suite" — delivering dynamic BrandingProfile data model + brand voice injection, automated ASS caption engine with word-level highlighting, bounded cross-correlation multi-track audio sync, production sound kits with auto-ducking, AI thumbnail studio (Gemini Vision), HEVC 10-bit NVENC export profiles, Claude as an analysis provider, FFmpeg media toolkit (14 tools), developer-mode FFmpeg MCP server, and Streamlit Brand Studio UI — without breaking existing Phase 7/8 smoothing and filler-control contracts.
 **Depends on:** Phase 8
-**Status:** In progress
-**Plans:** 11 plans
+**Status:** Complete (verified 2026-02-24)
+**Plans:** 11/11 complete
 
 **Scope / Requirements:**
 - Build FFmpeg media toolkit (`utils/ffmpeg_toolkit.py`) — 14 typed tools across 5 groups (Probe, Encode, Filter, Edit, Package) with Pydantic I/O models
@@ -395,9 +395,9 @@ Plans run in 4 execution waves:
 - Create ASS caption generator (`utils/captions.py`) from `transcribe/word_alignment.json` with per-word color highlights and per-aspect-ratio safe-zone templates (16:9, 9:16, 1:1); burn-in via `libass`
 - Implement bounded cross-correlation audio sync (`utils/sync.py`) — downsample to 8 kHz mono, 60 s window, `scipy.signal.correlate`, `librosa.resample`; write offset to job manifest; add Streamlit ±5000 ms manual fallback slider
 - Implement production sound kits — intro/transition/outro stingers from `branding/sounds/`; FFmpeg `sidechaincompress` auto-ducking (attack 5 ms, release 200 ms, ratio 4:1, threshold −30 dB)
-- Build AI Thumbnail Studio (`utils/thumbnails.py`) — Imagen 4 GA via Vertex AI (prompt-hash cache) + local FLUX.1 Schnell FP8/INT8 quantised (`optimum-quanto` / `torchao`) with VRAM preflight; auto-branding overlay via `overlay_image` toolkit tool
+- Build AI Thumbnail Studio (`utils/thumbnails.py`) — Gemini Vision (`gemini-2.5-flash-image`) via google.genai SDK with prompt-hash cache; auto-branding overlay via `overlay_image` toolkit tool
 - Add Streamlit "Brand Studio" tab (profile CRUD, logo/font upload, brand voice text area) and "Production" sidebar (caption stylist, thumbnail gallery, audio mixer with sync slider and auto-duck toggle)
-- Add `scipy>=1.14.0` as core dep; `fastmcp>=2.0.0` as `[dev]`; `google-cloud-aiplatform>=1.70.0` + `diffusers>=0.32.0` + `optimum-quanto>=0.3.0` as `[thumbnails]`
+- Add `scipy>=1.14.0` as core dep; `fastmcp>=2.0.0` as `[dev]`; `[thumbnails]` group emptied (google-genai is core dep)
 
 **Success Criteria:**
 1. All 14 FFmpeg toolkit tools pass unit tests; no regressions in existing `utils/ffmpeg.py` callers
@@ -408,21 +408,21 @@ Plans run in 4 execution waves:
 6. ASS file generated from test transcript; FFmpeg burns it onto video; word highlighting renders for all 3 aspect ratios
 7. Two test audio tracks with clap sync within ±10 ms automatically; manual slider offsets correctly; low-confidence warning on missing clap
 8. Rendered video has intro music with auto-ducking; transition whoosh at cut boundaries; outro fades correctly
-9. Imagen 4 generates 4 thumbnails from AI prompts (cached on rerun); FLUX.1 generates without OOM on 16 GB; branding applied
+9. Gemini Vision generates thumbnails from AI prompts (cached on rerun); branding applied
 10. Brand Studio tab creates/saves/loads profiles; full pipeline demo: raw → synced → cut → branded → captioned → multi-platform export
 
 Plans:
-- [ ] 09-01-PLAN.md — FFmpeg media toolkit (14 tools, 5 groups) + unit tests + existing-callers regression locking
-- [ ] 09-02-PLAN.md — FastMCP developer server (all 14 tools, lifespan HW cache, stdio transport, `.mcp.json` config)
-- [ ] 09-03-PLAN.md — Claude analysis provider (Anthropic SDK, protocol conformance, API key config, test suite parity)
-- [ ] 09-04-PLAN.md — HEVC 10-bit NVENC profiles + software `libx265` fallback + AV1 experimental toggle + codec regressions
-- [ ] 09-05-PLAN.md — BrandingProfile model + brand voice prompt injection + platform-override merge + config wiring
-- [ ] 09-06-PLAN.md — ASS caption generator (word-level highlights, aspect-ratio safe-zone templates, libass burn-in regressions)
-- [ ] 09-07-PLAN.md — Bounded cross-correlation audio sync + Streamlit manual offset slider + job-manifest offset persistence
-- [ ] 09-08-PLAN.md — Production sound kits (stingers, auto-ducking sidechaincompress, branding/sounds/ library)
-- [ ] 09-09-PLAN.md — AI Thumbnail Studio (Imagen 4 + FLUX.1 Schnell FP8/INT8, VRAM preflight, auto-branding overlay, `[thumbnails]` extras)
-- [ ] 09-10-PLAN.md — Streamlit Brand Studio tab + Production sidebar + full end-to-end pipeline demo integration
-- [ ] 09-11-PLAN.md — Gemini Vision model pivot: replace Imagen 4 / FLUX.1 with exclusive Gemini Vision thumbnail generation
+- [x] 09-01-PLAN.md — FFmpeg media toolkit (14 tools, 5 groups) + unit tests + existing-callers regression locking
+- [x] 09-02-PLAN.md — FastMCP developer server (all 14 tools, lifespan HW cache, stdio transport, `.mcp.json` config)
+- [x] 09-03-PLAN.md — Claude analysis provider (Anthropic SDK, protocol conformance, API key config, test suite parity)
+- [x] 09-04-PLAN.md — HEVC 10-bit NVENC profiles + software `libx265` fallback + AV1 experimental toggle + codec regressions
+- [x] 09-05-PLAN.md — BrandingProfile model + brand voice prompt injection + platform-override merge + config wiring
+- [x] 09-06-PLAN.md — ASS caption generator (word-level highlights, aspect-ratio safe-zone templates, libass burn-in regressions)
+- [x] 09-07-PLAN.md — Bounded cross-correlation audio sync + Streamlit manual offset slider + job-manifest offset persistence
+- [x] 09-08-PLAN.md — Production sound kits (stingers, auto-ducking sidechaincompress, branding/sounds/ library)
+- [x] 09-09-PLAN.md — AI Thumbnail Studio (Gemini Vision single-backend, prompt-hash cache, auto-branding overlay)
+- [x] 09-10-PLAN.md — Streamlit Brand Studio tab + Production sidebar + full end-to-end pipeline demo integration
+- [x] 09-11-PLAN.md — Gemini Vision model pivot: replace Imagen 4 / FLUX.1 with exclusive Gemini Vision thumbnail generation
 
 **Details:**
 Plans run in 6 execution waves:
@@ -441,9 +441,7 @@ Plans run in 6 execution waves:
 | `anthropic` | `>=0.80.0` | — | Claude analysis provider |
 | `scipy` | `>=1.14.0` | — | Cross-correlation for audio sync |
 | `fastmcp` | `>=2.0.0` | `[dev]` | MCP server for FFmpeg toolkit |
-| `google-cloud-aiplatform` | `>=1.70.0` | `[thumbnails]` | Imagen 4 via Vertex AI |
-| `diffusers` | `>=0.32.0` | `[thumbnails]` | Local FLUX.1 Schnell inference |
-| `optimum-quanto` | `>=0.3.0` | `[thumbnails]` | FP8/INT8 quantisation |
+| `google-genai` | `>=1.0.0` | — (core) | Gemini Vision thumbnail generation (already installed) |
 
 ---
 
