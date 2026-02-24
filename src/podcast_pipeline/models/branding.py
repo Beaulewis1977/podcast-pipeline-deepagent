@@ -170,6 +170,42 @@ class BrandingProfile(BaseModel):
     # ── Per-platform overrides ───────────────────────────────────────────────
     platform_overrides: dict[str, PlatformBrandingOverride] = Field(default_factory=dict)
 
+    # ── Sound kit ────────────────────────────────────────────────────────────
+    # Optional: resolved sound kit paths for intro/transition/outro stingers.
+    # When None the branding profile carries no sound assets; consumers check
+    # before calling _mix_stingers().  Paths are stored as the profile YAML
+    # author supplied them (relative to branding_dir or absolute) and are
+    # resolved at render time by audio_mix helpers.
+    intro_sound: Path | None = Field(
+        default=None,
+        description=(
+            "Optional intro stinger audio file (WAV/FLAC/MP3). "
+            "Played at the very start of the rendered video. "
+            "Missing files degrade gracefully — a warning is logged and the stinger is skipped."
+        ),
+    )
+    transition_sound: Path | None = Field(
+        default=None,
+        description=(
+            "Optional transition whoosh audio file. "
+            "Played at every content-cut boundary in the edit plan."
+        ),
+    )
+    outro_sound: Path | None = Field(
+        default=None,
+        description=(
+            "Optional outro theme audio file. "
+            "Faded in during the last 5 seconds of the rendered video."
+        ),
+    )
+
+    @property
+    def has_sound_kit(self) -> bool:
+        """Return True if at least one sound asset path is configured."""
+        return any(
+            p is not None for p in (self.intro_sound, self.transition_sound, self.outro_sound)
+        )
+
     # ──────────────────────────────────────────────────────────────
     # Validators
     # ──────────────────────────────────────────────────────────────

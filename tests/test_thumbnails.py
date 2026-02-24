@@ -624,3 +624,204 @@ class TestArtifactMetadata:
         assert result.total_failed == 1
         assert "API quota exceeded" in result.artifacts[0].error
         assert result.artifacts[0].status == ThumbnailStatus.FAILED
+
+
+# ---------------------------------------------------------------------------
+# Integration regressions — cache, failover, and overlay continuity
+# ---------------------------------------------------------------------------
+
+
+class TestIntegrationRegressions:
+    """Integration regressions protecting cache hits, backend failover, and overlay continuity."""
+
+    def test_cache_hit_skips_backend_invocation_entirely(self, tmp_output: Path):
+        """A valid cache file must prevent _run_backend from being called at all."""
+        from podcast_pipeline.utils.thumbnails import (
+            ThumbnailBackend,
+            ThumbnailRequest,
+            ThumbnailService,
+            compute_cache_key,
+        )
+
+        prompt = "cached integration test prompt"
+        model = "imagen-4.0-generate-001"
+        key = compute_cache_key(prompt, model, 1280, 720, seed=None, index=0)
+        cached = tmp_output / f"{key}.jpg"
+        cached.write_bytes(b"FAKEJPEG_CACHED")
+
+        service = ThumbnailService()
+        backend_calls: list[object] = []
+
+        def _spy_run_backend(*args: object, **kwargs: object) -> list[object]:
+            backend_calls.append((args, kwargs))
+            return []
+
+        with (
+            patch.object(
+                service,
+                "_select_backend",
+                return_value=(ThumbnailBackend.IMAGEN4, ""),
+            ),
+            patch.object(service, "_run_backend", side_effect=_spy_run_backend),
+        ):
+            result = service.generate(ThumbnailRequest(prompts=[prompt], output_dir=tmp_output))
+
+        # _run_backend must NOT be called — cache hit short-circuits generation
+        assert backend_calls == []
+        assert result.total_cached == 1
+        assert result.total_generated == 0
+
+    def test_backend_failover_imagen4_to_flux_on_explicit_routing(self, tmp_output: Path):
+        """Service routes to FLUX when Imagen4 is unavailable and FLUX is ready."""
+        from podcast_pipeline.utils.thumbnails import (
+            ThumbnailBackend,
+            ThumbnailRequest,
+            ThumbnailService,
+        )
+
+        service = ThumbnailService()
+        dummy_path = tmp_output / "dummy.jpg"
+        dummy_path.write_bytes(b"FLUX_GENERATED")
+
+        with (
+            patch(
+                "podcast_pipeline.utils.thumbnails._imagen4_available",
+                return_value=(False, "no credentials"),
+            ),
+            patch(
+                "podcast_pipeline.utils.thumbnails._flux_available",
+                return_value=(True, ""),
+            ),
+            patch(
+                "podcast_pipeline.utils.thumbnails.check_vram_preflight",
+                return_value=(True, ""),
+            ),
+            patch.object(service, "_run_backend", return_value=[(dummy_path, False)]),
+        ):
+            result = service.generate(
+                ThumbnailRequest(prompts=["failover test"], output_dir=tmp_output)
+            )
+
+        assert result.backend_used == ThumbnailBackend.FLUX
+        assert result.total_generated == 1
+        assert result.degraded is False
+
+    def test_overlay_applied_after_generation_not_just_cache_hits(
+        self, tmp_output: Path, fake_branding: MagicMock
+    ):
+        """Branding overlay should fire for freshly generated images, not only cache hits."""
+        from podcast_pipeline.utils.thumbnails import (
+            ThumbnailBackend,
+            ThumbnailRequest,
+            ThumbnailService,
+        )
+
+        service = ThumbnailService()
+        dummy_path = tmp_output / "generated.jpg"
+        dummy_path.write_bytes(b"GENERATED_CONTENT")
+
+        # Logo exists so overlay should be attempted
+        logo = tmp_output / "logo.png"
+        logo.write_bytes(b"PNGDATA")
+        fake_branding.logo_path = logo
+
+        branding_calls: list[object] = []
+
+        def _spy_apply_branding(artifact: object, profile: object) -> object:
+            branding_calls.append(artifact)
+            return artifact  # return unchanged
+
+        with (
+            patch.object(
+                service,
+                "_select_backend",
+                return_value=(ThumbnailBackend.IMAGEN4, ""),
+            ),
+            patch.object(service, "_run_backend", return_value=[(dummy_path, False)]),
+            patch.object(service, "_apply_branding", side_effect=_spy_apply_branding),
+        ):
+            service.generate(
+                ThumbnailRequest(
+                    prompts=["overlay test"],
+                    output_dir=tmp_output,
+                    branding_profile=fake_branding,
+                )
+            )
+
+        assert len(branding_calls) == 1
+
+    def test_all_generation_failures_sets_degraded_result(self, tmp_output: Path):
+        """When every generation attempt fails, the result should be marked degraded."""
+        from podcast_pipeline.utils.thumbnails import (
+            ThumbnailBackend,
+            ThumbnailRequest,
+            ThumbnailService,
+        )
+
+        service = ThumbnailService()
+
+        with (
+            patch.object(
+                service,
+                "_select_backend",
+                return_value=(ThumbnailBackend.IMAGEN4, ""),
+            ),
+            patch.object(
+                service,
+                "_run_backend",
+                side_effect=RuntimeError("API error"),
+            ),
+        ):
+            result = service.generate(
+                ThumbnailRequest(prompts=["fail1", "fail2"], output_dir=tmp_output)
+            )
+
+        assert result.degraded is True
+        assert "failed" in result.degraded_reason.lower()
+        assert result.total_failed == 2
+        assert result.total_generated == 0
+
+    def test_cache_and_generation_in_same_run_count_independently(self, tmp_output: Path):
+        """When some prompts are cached and others generate, counts must be independent."""
+        from podcast_pipeline.utils.thumbnails import (
+            ThumbnailBackend,
+            ThumbnailRequest,
+            ThumbnailService,
+            ThumbnailStatus,
+            compute_cache_key,
+        )
+
+        model = "imagen-4.0-generate-001"
+        cached_prompt = "cached prompt"
+        new_prompt = "new prompt"
+
+        # Pre-seed cache for first prompt only
+        key = compute_cache_key(cached_prompt, model, 1280, 720, seed=None, index=0)
+        cached_file = tmp_output / f"{key}.jpg"
+        cached_file.write_bytes(b"CACHED_JPEG")
+
+        service = ThumbnailService()
+        new_path = tmp_output / "new.jpg"
+        new_path.write_bytes(b"NEW_JPEG")
+
+        with (
+            patch.object(
+                service,
+                "_select_backend",
+                return_value=(ThumbnailBackend.IMAGEN4, ""),
+            ),
+            patch.object(service, "_run_backend", return_value=[(new_path, False)]),
+        ):
+            result = service.generate(
+                ThumbnailRequest(
+                    prompts=[cached_prompt, new_prompt],
+                    output_dir=tmp_output,
+                    model=model,
+                )
+            )
+
+        assert result.total_cached == 1
+        assert result.total_generated == 1
+        statuses = {a.status for a in result.artifacts}
+        assert ThumbnailStatus.CACHED in statuses
+        assert ThumbnailStatus.GENERATED in statuses

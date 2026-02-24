@@ -910,6 +910,85 @@ class APIKeysConfig(BaseModel):
         )
 
 
+class DuckingConfig(BaseModel):
+    """Phase 9 sidechain auto-ducking parameters for sound stingers.
+
+    Controls how speech tracks duck music/stingers via FFmpeg sidechaincompress.
+    Defaults are tuned to standard podcasting values — conservatively
+    transparent: speech remains intelligible at all trigger points.
+    """
+
+    enabled: bool = True
+    # Sidechain compression parameters (all with podcasting-safe defaults)
+    attack_ms: float = Field(default=5.0, ge=0.1, le=500.0)
+    release_ms: float = Field(default=200.0, ge=10.0, le=5000.0)
+    ratio: float = Field(default=4.0, ge=1.0, le=20.0)
+    threshold_db: float = Field(default=-30.0, le=0.0)
+    # Stinger volume relative to voice track before ducking is applied
+    stinger_volume_db: float = Field(default=-12.0, le=0.0)
+
+
+class SoundKitConfig(BaseModel):
+    """Phase 9 production sound-kit configuration.
+
+    Defines per-brand audio assets (intro stinger, transition whoosh, outro)
+    and the canonical audio normalization policy applied to stingers before
+    they enter the ducking filtergraph.
+
+    All asset paths are optional.  When a path is absent or the file does not
+    exist the pipeline logs a warning and skips that stinger — base exports
+    are never blocked by missing optional sound assets.
+    """
+
+    # ── Sound asset paths (relative to branding_dir or absolute) ────────────
+    intro_path: Path | None = Field(
+        default=None,
+        description="Intro stinger WAV played at the very start of the render.",
+    )
+    transition_path: Path | None = Field(
+        default=None,
+        description="Transition whoosh WAV played at content-cut boundaries.",
+    )
+    outro_path: Path | None = Field(
+        default=None,
+        description="Outro theme WAV faded in during the last 5 seconds.",
+    )
+
+    # ── Canonical stinger normalization policy ───────────────────────────────
+    # Stingers are probed and re-encoded to this canonical working format
+    # (via ffprobe + aresample/aformat) before entering the ducking chain.
+    # This prevents VBR/container timing quirks from destabilising the
+    # sidechaincompress filtergraph.
+    canonical_sample_rate: int = Field(default=48000, ge=8000, le=192000)
+    canonical_channels: int = Field(default=2, ge=1, le=8)
+    canonical_sample_fmt: str = Field(default="fltp")
+
+    # ── Ducking policy ──────────────────────────────────────────────────────
+    ducking: DuckingConfig = Field(default_factory=DuckingConfig)
+
+    # ── Outro fade-in window ─────────────────────────────────────────────────
+    outro_trigger_s: float = Field(
+        default=5.0,
+        ge=0.5,
+        le=60.0,
+        description="Seconds from end of video at which the outro stinger begins.",
+    )
+
+    @field_validator("canonical_sample_fmt")
+    @classmethod
+    def validate_sample_fmt(cls, value: str) -> str:
+        """Restrict sample format to common FFmpeg planar/packed PCM values."""
+        allowed = {"u8", "s16", "s32", "flt", "dbl", "u8p", "s16p", "s32p", "fltp", "dblp"}
+        normalized = value.strip().lower()
+        if normalized not in allowed:
+            allowed_str = ", ".join(sorted(allowed))
+            raise ValueError(
+                f"canonical_sample_fmt '{value}' is not a recognised FFmpeg sample format. "
+                f"Expected one of: {allowed_str}"
+            )
+        return normalized
+
+
 class CaptionConfig(BaseModel):
     """Phase 9 caption burn-in settings.
 
@@ -939,6 +1018,39 @@ class CaptionConfig(BaseModel):
     )
 
 
+class ThumbnailGenerationConfig(BaseModel):
+    """Phase 9 AI thumbnail generation configuration.
+
+    Controls whether the ThumbnailService is invoked during the analyze stage
+    to generate AI thumbnails from visual_description prompts extracted from
+    the analysis payload.  Generation is opt-in and skipped gracefully when
+    neither Imagen 4 nor FLUX backends are available.
+    """
+
+    enabled: bool = Field(
+        default=False,
+        description=(
+            "When True, the analyze stage will attempt AI thumbnail generation "
+            "via Imagen 4 or local FLUX.1 Schnell for each thumbnail frame candidate."
+        ),
+    )
+    model: str = Field(
+        default="imagen-4.0-generate-001",
+        description=(
+            "Imagen 4 model variant to use when the Vertex AI backend is active. "
+            "Ignored when falling back to local FLUX."
+        ),
+    )
+    images_per_prompt: int = Field(
+        default=1,
+        ge=1,
+        le=4,
+        description="Number of images to generate per thumbnail prompt (1-4).",
+    )
+    width: int = Field(default=1280, ge=64, description="Generated thumbnail width in pixels.")
+    height: int = Field(default=720, ge=64, description="Generated thumbnail height in pixels.")
+
+
 class BrandingConfig(BaseModel):
     """Phase 9 branding profile configuration.
 
@@ -958,9 +1070,17 @@ class BrandingConfig(BaseModel):
         default=Path("branding"),
         description="Directory that holds branding/<name>.yaml profile files.",
     )
+    sound_kit: SoundKitConfig = Field(
+        default_factory=SoundKitConfig,
+        description="Production sound-kit (stingers and ducking config) for this job.",
+    )
     captions: CaptionConfig = Field(
         default_factory=CaptionConfig,
         description="Caption burn-in settings (word-level ASS subtitle generation).",
+    )
+    thumbnail_generation: ThumbnailGenerationConfig = Field(
+        default_factory=ThumbnailGenerationConfig,
+        description="AI thumbnail generation settings for the analyze stage.",
     )
 
 

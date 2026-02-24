@@ -3121,3 +3121,362 @@ class TestLegacyPlatformUnaffectedByPhase9Options:
 
         assert encoder == "libx264"
         assert extra_args == []
+
+
+class TestCaptionBurnIn:
+    """Tests for _burn_captions integration — Task 2 (09-06) and Task 3 regression coverage."""
+
+    def _make_stage_with_captions(self, enabled: bool = True) -> RenderStage:
+        """Return a RenderStage with caption burn-in enabled/disabled."""
+        config = load_config()
+        config.branding.captions.enabled = enabled
+        return RenderStage(config)
+
+    def test_caption_burn_missing_alignment_raises_runtime_error(self, tmp_path: Path) -> None:
+        """_burn_captions must raise RuntimeError when word_alignment.json is absent."""
+        stage = self._make_stage_with_captions(enabled=True)
+        spec = load_config().platforms.youtube
+
+        video_path = tmp_path / "output" / "youtube" / "final.mp4"
+        video_path.parent.mkdir(parents=True, exist_ok=True)
+        video_path.write_bytes(b"video")
+        output_dir = video_path.parent
+        # No transcribe/ directory — alignment artifact is absent.
+
+        with pytest.raises(RuntimeError, match=r"word_alignment\.json"):
+            stage._burn_captions(
+                video_path=video_path,
+                output_dir=output_dir,
+                job_dir=tmp_path,
+                platform="youtube",
+                spec=spec,
+            )
+
+    def test_caption_burn_produces_captioned_output_file(self, tmp_path: Path, monkeypatch) -> None:
+        """_burn_captions must return a captioned video path when alignment exists."""
+        import json as _json
+
+        stage = self._make_stage_with_captions(enabled=True)
+        spec = load_config().platforms.youtube
+
+        # Create word_alignment.json artifact.
+        transcribe_dir = tmp_path / "transcribe"
+        transcribe_dir.mkdir(parents=True)
+        word_data = {
+            "words": [
+                {"word": "hello", "start": 0.0, "end": 0.5},
+                {"word": "world", "start": 0.6, "end": 1.1},
+            ]
+        }
+        (transcribe_dir / "word_alignment.json").write_text(_json.dumps(word_data))
+
+        video_path = tmp_path / "output" / "youtube" / "final.mp4"
+        video_path.parent.mkdir(parents=True, exist_ok=True)
+        video_path.write_bytes(b"video")
+        output_dir = video_path.parent
+
+        def _fake_ffmpeg(args: list[str]) -> None:
+            """Simulate FFmpeg by writing the output file."""
+            out = Path(args[-1])
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_bytes(b"captioned-video")
+
+        monkeypatch.setattr("podcast_pipeline.stages.render.run_ffmpeg", _fake_ffmpeg)
+
+        result = stage._burn_captions(
+            video_path=video_path,
+            output_dir=output_dir,
+            job_dir=tmp_path,
+            platform="youtube",
+            spec=spec,
+        )
+
+        assert result is not None
+        assert result.exists()
+        assert result.name.startswith("captioned")
+
+    def test_caption_burn_ffmpeg_uses_ass_filter(self, tmp_path: Path, monkeypatch) -> None:
+        """_burn_captions must pass the ass= filter to FFmpeg for libass rendering."""
+        import json as _json
+
+        stage = self._make_stage_with_captions(enabled=True)
+        spec = load_config().platforms.youtube
+
+        transcribe_dir = tmp_path / "transcribe"
+        transcribe_dir.mkdir(parents=True)
+        (transcribe_dir / "word_alignment.json").write_text(
+            _json.dumps({"words": [{"word": "test", "start": 0.0, "end": 0.5}]})
+        )
+
+        video_path = tmp_path / "output" / "youtube" / "final.mp4"
+        video_path.parent.mkdir(parents=True, exist_ok=True)
+        video_path.write_bytes(b"video")
+        output_dir = video_path.parent
+
+        captured_args: list[list[str]] = []
+
+        def _capture_ffmpeg(args: list[str]) -> None:
+            captured_args.append(list(args))
+            out = Path(args[-1])
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_bytes(b"captioned")
+
+        monkeypatch.setattr("podcast_pipeline.stages.render.run_ffmpeg", _capture_ffmpeg)
+
+        stage._burn_captions(
+            video_path=video_path,
+            output_dir=output_dir,
+            job_dir=tmp_path,
+            platform="youtube",
+            spec=spec,
+        )
+
+        assert captured_args, "run_ffmpeg should have been called"
+        args = captured_args[0]
+        assert "-vf" in args
+        vf_idx = args.index("-vf")
+        assert "ass=" in args[vf_idx + 1]
+
+    def test_caption_burn_unsupported_aspect_ratio_returns_none(self, tmp_path: Path) -> None:
+        """_burn_captions must return None and log warning for unsupported ratios."""
+        import json as _json
+
+        stage = self._make_stage_with_captions(enabled=True)
+        spec = PlatformSpec(
+            container="mp4",
+            video_codec="libx264",
+            video_bitrate="4M",
+            audio_codec="aac",
+            audio_bitrate="128k",
+            pix_fmt="yuv420p",
+            aspect_ratio="4:3",  # not in SUPPORTED_ASPECT_RATIOS
+        )
+
+        transcribe_dir = tmp_path / "transcribe"
+        transcribe_dir.mkdir(parents=True)
+        (transcribe_dir / "word_alignment.json").write_text(
+            _json.dumps({"words": [{"word": "hi", "start": 0.0, "end": 0.3}]})
+        )
+
+        video_path = tmp_path / "output" / "custom" / "final.mp4"
+        video_path.parent.mkdir(parents=True, exist_ok=True)
+        video_path.write_bytes(b"video")
+        output_dir = video_path.parent
+
+        result = stage._burn_captions(
+            video_path=video_path,
+            output_dir=output_dir,
+            job_dir=tmp_path,
+            platform="custom",
+            spec=spec,
+        )
+
+        # Unsupported ratio should produce None, not an exception.
+        assert result is None
+
+    def test_caption_burn_ffmpeg_failure_raises_runtime_error(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """FFmpeg libass failure must surface as RuntimeError with actionable message."""
+        import json as _json
+
+        stage = self._make_stage_with_captions(enabled=True)
+        spec = load_config().platforms.youtube
+
+        transcribe_dir = tmp_path / "transcribe"
+        transcribe_dir.mkdir(parents=True)
+        (transcribe_dir / "word_alignment.json").write_text(
+            _json.dumps({"words": [{"word": "hi", "start": 0.0, "end": 0.3}]})
+        )
+
+        video_path = tmp_path / "output" / "youtube" / "final.mp4"
+        video_path.parent.mkdir(parents=True, exist_ok=True)
+        video_path.write_bytes(b"video")
+        output_dir = video_path.parent
+
+        def _fail_ffmpeg(_args: list[str]) -> None:
+            raise FFmpegError("libass not found")
+
+        monkeypatch.setattr("podcast_pipeline.stages.render.run_ffmpeg", _fail_ffmpeg)
+
+        with pytest.raises(RuntimeError, match="Caption burn-in failed"):
+            stage._burn_captions(
+                video_path=video_path,
+                output_dir=output_dir,
+                job_dir=tmp_path,
+                platform="youtube",
+                spec=spec,
+            )
+
+    def test_caption_burn_disabled_skips_burn_in_render_video(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """_render_video must skip caption burn when captions.enabled is False."""
+        config = load_config()
+        config.branding.captions.enabled = False
+        stage = RenderStage(config)
+        spec = config.platforms.youtube
+
+        output_dir = tmp_path / "output" / "youtube"
+        input_video = tmp_path / "input" / "raw.mp4"
+        input_video.parent.mkdir(parents=True, exist_ok=True)
+        input_video.write_bytes(b"video")
+
+        burn_calls: list[str] = []
+
+        def _record_burn(*_args: Any, **_kwargs: Any) -> Path | None:
+            burn_calls.append("called")
+            return None
+
+        monkeypatch.setattr(
+            "podcast_pipeline.stages.render.run_ffmpeg",
+            lambda args: (
+                Path(args[-1]).parent.mkdir(parents=True, exist_ok=True)
+                or Path(args[-1]).write_bytes(b"rendered")
+                or None
+            ),
+        )
+        monkeypatch.setattr(stage, "_burn_captions", _record_burn)
+        monkeypatch.setattr(stage, "_normalize_loudness", lambda *_a, **_k: None)
+        monkeypatch.setattr(stage, "_validate_video_platform_compliance", lambda *_a, **_k: None)
+
+        stage._render_video(
+            output_dir=output_dir,
+            input_video=input_video,
+            platform="youtube",
+            spec=spec,
+            decisions=ReviewDecisions(review_complete=True),
+            video_info={"width": 1920, "height": 1080, "duration": 30.0},
+            edit_plan=None,
+            normalize_audio=False,
+        )
+
+        assert burn_calls == [], "_burn_captions must not be called when captions are disabled"
+
+    def test_caption_burn_enabled_calls_burn_in_render_video(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """_render_video must invoke _burn_captions when captions.enabled is True."""
+        config = load_config()
+        config.branding.captions.enabled = True
+        stage = RenderStage(config)
+        spec = config.platforms.youtube
+
+        output_dir = tmp_path / "output" / "youtube"
+        input_video = tmp_path / "input" / "raw.mp4"
+        input_video.parent.mkdir(parents=True, exist_ok=True)
+        input_video.write_bytes(b"video")
+
+        captioned_video = tmp_path / "output" / "youtube" / "captioned.mp4"
+        burn_calls: list[str] = []
+
+        def _fake_burn(*_args: Any, **_kwargs: Any) -> Path | None:
+            burn_calls.append("called")
+            captioned_video.parent.mkdir(parents=True, exist_ok=True)
+            captioned_video.write_bytes(b"captioned")
+            return captioned_video
+
+        monkeypatch.setattr(
+            "podcast_pipeline.stages.render.run_ffmpeg",
+            lambda args: (
+                Path(args[-1]).parent.mkdir(parents=True, exist_ok=True)
+                or Path(args[-1]).write_bytes(b"rendered")
+                or None
+            ),
+        )
+        monkeypatch.setattr(stage, "_burn_captions", _fake_burn)
+        monkeypatch.setattr(stage, "_normalize_loudness", lambda *_a, **_k: None)
+        monkeypatch.setattr(stage, "_validate_video_platform_compliance", lambda *_a, **_k: None)
+
+        stage._render_video(
+            output_dir=output_dir,
+            input_video=input_video,
+            platform="youtube",
+            spec=spec,
+            decisions=ReviewDecisions(review_complete=True),
+            video_info={"width": 1920, "height": 1080, "duration": 30.0},
+            edit_plan=None,
+            normalize_audio=False,
+        )
+
+        assert len(burn_calls) == 1, (
+            "_burn_captions should be called exactly once when captions are enabled"
+        )
+
+    def test_caption_burn_legacy_alignment_location_discovered(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """_burn_captions should find word_alignment.json in analysis/ if transcribe/ is absent."""
+        import json as _json
+
+        stage = self._make_stage_with_captions(enabled=True)
+        spec = load_config().platforms.youtube
+
+        # Place alignment only in legacy analysis/ location.
+        analysis_dir = tmp_path / "analysis"
+        analysis_dir.mkdir(parents=True)
+        (analysis_dir / "word_alignment.json").write_text(
+            _json.dumps({"words": [{"word": "legacy", "start": 0.0, "end": 0.4}]})
+        )
+
+        video_path = tmp_path / "output" / "youtube" / "final.mp4"
+        video_path.parent.mkdir(parents=True, exist_ok=True)
+        video_path.write_bytes(b"video")
+        output_dir = video_path.parent
+
+        def _fake_ffmpeg(args: list[str]) -> None:
+            out = Path(args[-1])
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_bytes(b"captioned")
+
+        monkeypatch.setattr("podcast_pipeline.stages.render.run_ffmpeg", _fake_ffmpeg)
+
+        # Should succeed using legacy path — no RuntimeError raised.
+        result = stage._burn_captions(
+            video_path=video_path,
+            output_dir=output_dir,
+            job_dir=tmp_path,
+            platform="youtube",
+            spec=spec,
+        )
+        assert result is not None
+
+    def test_caption_burn_ass_file_generated_per_aspect_ratio(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """_burn_captions must generate a per-ratio .ass file in the output directory."""
+        import json as _json
+
+        stage = self._make_stage_with_captions(enabled=True)
+        spec = load_config().platforms.tiktok  # 9:16
+
+        transcribe_dir = tmp_path / "transcribe"
+        transcribe_dir.mkdir(parents=True)
+        (transcribe_dir / "word_alignment.json").write_text(
+            _json.dumps({"words": [{"word": "tiktok", "start": 0.0, "end": 0.5}]})
+        )
+
+        video_path = tmp_path / "output" / "tiktok" / "final.mp4"
+        video_path.parent.mkdir(parents=True, exist_ok=True)
+        video_path.write_bytes(b"video")
+        output_dir = video_path.parent
+
+        def _fake_ffmpeg(args: list[str]) -> None:
+            out = Path(args[-1])
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_bytes(b"captioned")
+
+        monkeypatch.setattr("podcast_pipeline.stages.render.run_ffmpeg", _fake_ffmpeg)
+
+        stage._burn_captions(
+            video_path=video_path,
+            output_dir=output_dir,
+            job_dir=tmp_path,
+            platform="tiktok",
+            spec=spec,
+        )
+
+        # ASS file should exist and reflect 9:16 ratio naming.
+        ass_files = list(output_dir.glob("*.ass"))
+        assert ass_files, "ASS file must be written to output_dir"
+        assert any("9_16" in f.name for f in ass_files), "ASS filename should include aspect ratio"

@@ -64,6 +64,11 @@ class ReviewDecisions(BaseModel):
     review_complete: bool = False
     review_notes: str = ""
 
+    # Manual sync offset override — operator sets this when auto-sync confidence is low.
+    # None means "use auto-detected offset from intermediate/sync_artifact.json".
+    # Set to 0.0 to explicitly disable the sync offset (useful when auto-sync is wrong).
+    manual_sync_offset_ms: float | None = None
+
     @field_validator("export_platforms", mode="before")
     @classmethod
     def validate_export_platforms(cls, value: Any) -> list[str]:

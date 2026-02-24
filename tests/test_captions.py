@@ -576,3 +576,162 @@ class TestCaptionConfig:
         restored = BrandingConfig.model_validate(reloaded)
         assert restored.captions.enabled == branding.captions.enabled
         assert restored.captions.max_words_per_line == branding.captions.max_words_per_line
+
+
+class TestCaptionRegressions:
+    """Task 3 regression coverage: edge cases, style fallback, and backward compat."""
+
+    def test_all_invalid_entries_produces_valid_empty_ass(self, tmp_path: Path) -> None:
+        """Word alignment where all entries fail validation produces a valid empty ASS."""
+        words = [
+            WordEntry("bad", -1.0, 0.5),  # negative start
+            WordEntry("zero", 1.0, 1.0),  # zero duration
+            WordEntry("inverted", 2.0, 0.5),  # end < start
+        ]
+        out = tmp_path / "empty_fallback.ass"
+        generate_ass(words, CaptionStyleConfig(), out)
+        assert out.exists()
+        content = out.read_text(encoding="utf-8-sig")
+        errors = validate_ass_syntax(content)
+        assert errors == [], f"Invalid ASS produced for all-invalid input: {errors}"
+        # No dialogue events expected
+        assert "Dialogue:" not in content
+
+    def test_single_word_group_produces_one_dialogue_event(self, tmp_path: Path) -> None:
+        """A single word should produce exactly one dialogue event."""
+        words = [WordEntry("hello", 1.0, 1.5)]
+        out = tmp_path / "single.ass"
+        generate_ass(words, CaptionStyleConfig(), out)
+        content = out.read_text(encoding="utf-8-sig")
+        dialogue_count = content.count("Dialogue:")
+        assert dialogue_count == 1
+
+    def test_long_speech_gap_splits_into_multiple_events(self, tmp_path: Path) -> None:
+        """Words separated by a gap >1.5s must be grouped into distinct events."""
+        words = [
+            WordEntry("first", 0.0, 0.5),
+            WordEntry("second", 3.0, 3.5),  # 2.5s gap
+        ]
+        out = tmp_path / "split.ass"
+        generate_ass(words, CaptionStyleConfig(), out)
+        content = out.read_text(encoding="utf-8-sig")
+        assert content.count("Dialogue:") == 2
+
+    def test_overlapping_words_produce_valid_ass(self, tmp_path: Path) -> None:
+        """Words with overlapping timestamps should clamp and still produce valid ASS."""
+        words = [
+            WordEntry("a", 0.0, 1.5),
+            WordEntry("b", 0.8, 1.8),  # overlaps with a
+            WordEntry("c", 1.0, 2.0),  # also overlaps
+        ]
+        out = tmp_path / "overlapping.ass"
+        generate_ass(words, CaptionStyleConfig(), out)
+        assert out.exists()
+        content = out.read_text(encoding="utf-8-sig")
+        errors = validate_ass_syntax(content)
+        assert errors == [], f"Overlapping words produced invalid ASS: {errors}"
+
+    def test_default_style_fallback_when_branding_has_no_caption_style(self) -> None:
+        """Branding with no caption_style attribute falls back to CaptionStyleConfig defaults."""
+
+        class _BrandingNoCaptionStyle:
+            highlight_color = "#FF0000"
+            font_path = None
+            # no caption_style attribute at all
+
+        style = CaptionStyleConfig.from_branding(_BrandingNoCaptionStyle())
+        assert style.text_color_hex == "#FFFFFF"
+        assert style.font_size == 48
+        assert style.bold is False
+
+    def test_generate_ass_max_words_per_line_respected(self, tmp_path: Path) -> None:
+        """max_words_per_line=3 should produce ceil(N/3) events for N tightly spaced words."""
+        words = [WordEntry(f"w{i}", float(i) * 0.3, float(i) * 0.3 + 0.2) for i in range(9)]
+        out = tmp_path / "max_words.ass"
+        generate_ass(words, CaptionStyleConfig(), out, max_words_per_line=3, gap_threshold_s=5.0)
+        content = out.read_text(encoding="utf-8-sig")
+        assert content.count("Dialogue:") == 3
+
+    def test_unsupported_aspect_ratio_raises_value_error(self, tmp_path: Path) -> None:
+        """Unsupported aspect ratios must raise ValueError with actionable message."""
+        words = [WordEntry("hello", 0.0, 0.5)]
+        with pytest.raises(ValueError, match="Unsupported aspect_ratio"):
+            generate_ass(words, CaptionStyleConfig(), tmp_path / "out.ass", aspect_ratio="4:3")
+
+    def test_each_supported_ratio_produces_distinct_play_res(self, tmp_path: Path) -> None:
+        """Each supported aspect ratio should encode a different PlayResX/PlayResY pair."""
+        from podcast_pipeline.utils.captions import _PLAY_RES
+
+        words = [WordEntry("test", 0.0, 0.5)]
+        play_res_seen: set[tuple[int, int]] = set()
+
+        for ratio in ["16:9", "9:16", "1:1"]:
+            out = tmp_path / f"ratio_{ratio.replace(':', '_')}.ass"
+            generate_ass(words, CaptionStyleConfig(), out, aspect_ratio=ratio)
+            content = out.read_text(encoding="utf-8-sig")
+            expected = _PLAY_RES[ratio]
+            play_res_seen.add(expected)
+            assert f"PlayResX: {expected[0]}" in content
+            assert f"PlayResY: {expected[1]}" in content
+
+        # All three ratios should have different play-res pairs.
+        assert len(play_res_seen) == 3
+
+    def test_highlight_colour_tag_in_dialogue_body(self, tmp_path: Path) -> None:
+        """Each dialogue event must contain the \\1c highlight tag for coloured words."""
+        words = [WordEntry("colour", 0.0, 0.5), WordEntry("test", 0.6, 1.0)]
+        style = CaptionStyleConfig(highlight_color_hex="#FF0000")
+        out = tmp_path / "colour_check.ass"
+        generate_ass(words, style, out)
+        content = out.read_text(encoding="utf-8-sig")
+        assert r"\1c" in content, "Dialogue body must contain \\1c colour tags"
+        # Highlight color should be the red ASS BGR equivalent.
+        assert "&H000000FF" in content
+
+    def test_srt_timestamp_function_unaffected_by_ass_import(self) -> None:
+        """Importing captions module must not break legacy SRT timestamp helpers."""
+        # Importing captions should not shadow or break the SRT/VTT utility.
+        from podcast_pipeline.utils.time import seconds_to_srt_timestamp, seconds_to_vtt_timestamp
+
+        srt_ts = seconds_to_srt_timestamp(3661.0)
+        vtt_ts = seconds_to_vtt_timestamp(3661.0)
+
+        # SRT uses HH:MM:SS,mmm format
+        assert "01:01:01" in srt_ts
+        assert "," in srt_ts
+
+        # VTT uses HH:MM:SS.mmm format
+        assert "01:01:01" in vtt_ts
+        assert "." in vtt_ts
+
+    def test_caption_module_is_independent_of_transcribe_stage(self) -> None:
+        """captions.py must not import from the transcribe stage (no circular dependency)."""
+        import importlib
+        import importlib.util
+
+        # Load the captions module spec without executing it to inspect its source.
+        spec = importlib.util.find_spec("podcast_pipeline.utils.captions")
+        assert spec is not None
+        assert spec.origin is not None
+
+        with open(spec.origin) as f:
+            source = f.read()
+        # captions.py must not import stages.transcribe.
+        assert "stages.transcribe" not in source, (
+            "captions.py must remain independent of the transcribe stage"
+        )
+
+    def test_load_word_alignment_with_empty_word_string_skipped(self, tmp_path: Path) -> None:
+        """Word entries with empty/whitespace-only word strings should be skipped."""
+        data = {
+            "words": [
+                {"word": "  ", "start": 0.0, "end": 0.5},  # whitespace only
+                {"word": "", "start": 0.6, "end": 1.0},  # empty
+                {"word": "valid", "start": 1.1, "end": 1.5},
+            ]
+        }
+        p = tmp_path / "alignment.json"
+        p.write_text(json.dumps(data))
+        words = load_word_alignment(p)
+        assert len(words) == 1
+        assert words[0].word == "valid"

@@ -21,6 +21,12 @@ from podcast_pipeline.models.edit_plan import EditPlan
 from podcast_pipeline.models.job import Job
 from podcast_pipeline.stages.base import Stage, StageResult
 from podcast_pipeline.stages.review import ReviewDecisions
+from podcast_pipeline.utils.audio_mix import (
+    apply_intro_stinger,
+    apply_outro_stinger,
+    apply_transition_stingers,
+    resolve_sound_kit_paths,
+)
 from podcast_pipeline.utils.editing import find_word_boundaries, snap_cut_range
 from podcast_pipeline.utils.ffmpeg import FFmpegError, get_video_info, run_ffmpeg, run_ffprobe
 from podcast_pipeline.utils.ffmpeg_toolkit import HardwareEncoderInfo, detect_hardware_encoders
@@ -122,6 +128,21 @@ class RenderStage(Stage):
                 success=False,
                 error="Input video not found",
             )
+
+        # Phase 9.7: Apply persisted or manual sync offset when available.
+        sync_offset_ms, sync_meta = self._resolve_sync_offset(job_dir, decisions)
+        if sync_offset_ms is not None and abs(sync_offset_ms) >= 1.0:
+            synced_input = self._apply_sync_offset(input_video, job_dir, sync_offset_ms)
+            if synced_input is not None:
+                self.logger.info(
+                    "sync_offset_applied",
+                    offset_ms=sync_offset_ms,
+                    source=sync_meta.get("source", "unknown"),
+                    synced_input=str(synced_input),
+                )
+                input_video = synced_input
+            else:
+                self.logger.warning("sync_offset_apply_failed", offset_ms=sync_offset_ms)
 
         # Get video info for aspect ratio calculations
         video_info = get_video_info(input_video)
@@ -332,6 +353,7 @@ class RenderStage(Stage):
                     "platform_results": platform_results,
                     "quality_controls": quality_controls,
                     "thumbnail_result": thumbnail_result,
+                    "sync": sync_meta,
                 },
             )
 
@@ -344,6 +366,7 @@ class RenderStage(Stage):
                 "platform_results": platform_results,
                 "quality_controls": quality_controls,
                 "thumbnail_result": thumbnail_result,
+                "sync": sync_meta,
             },
         )
 
@@ -1311,6 +1334,143 @@ class RenderStage(Stage):
                 return path
         return None
 
+    # -------------------------------------------------------------------------
+    # Phase 9.7 — Sync helpers
+    # -------------------------------------------------------------------------
+
+    def _resolve_sync_offset(
+        self,
+        job_dir: Path,
+        decisions: ReviewDecisions,
+    ) -> tuple[float | None, dict[str, object]]:
+        """Determine the effective sync offset for this render.
+
+        Priority:
+            1. ``decisions.manual_sync_offset_ms`` if operator set an override.
+            2. Auto-detected offset from ``intermediate/sync_artifact.json``.
+            3. ``None`` (no sync) if no artifact exists or single-track job.
+
+        Args:
+            job_dir: Job directory containing intermediate artifacts.
+            decisions: Review decisions with optional manual override.
+
+        Returns:
+            Tuple of ``(offset_ms, meta_dict)`` where *meta_dict* documents
+            which source was used (``"manual"``, ``"auto"``, or ``None``).
+        """
+        # Operator manual override takes precedence.
+        if decisions.manual_sync_offset_ms is not None:
+            return decisions.manual_sync_offset_ms, {
+                "source": "manual",
+                "offset_ms": decisions.manual_sync_offset_ms,
+            }
+
+        # Load auto-detected artifact.
+        artifact_path = job_dir / "intermediate" / "sync_artifact.json"
+        if not artifact_path.exists():
+            return None, {"source": None}
+
+        try:
+            artifact = json.loads(artifact_path.read_text())
+        except Exception as exc:
+            self.logger.warning("sync_artifact_load_failed", error=str(exc))
+            return None, {"source": None, "error": str(exc)}
+
+        offset_ms = float(artifact.get("offset_ms", 0.0))
+        return offset_ms, {
+            "source": "auto",
+            "offset_ms": offset_ms,
+            "confidence": artifact.get("confidence"),
+            "low_confidence": artifact.get("low_confidence"),
+            "no_clap": artifact.get("no_clap"),
+        }
+
+    def _apply_sync_offset(
+        self,
+        input_video: Path,
+        job_dir: Path,
+        offset_ms: float,
+    ) -> Path | None:
+        """Apply a sync offset to the input video by re-muxing with -itsoffset.
+
+        The second audio stream is delayed by ``offset_ms`` ms when
+        ``offset_ms > 0`` (external track lags reference), or the first
+        video/audio stream is delayed when ``offset_ms < 0``.
+
+        The synced output is written to ``intermediate/synced_input.*`` to
+        keep the job directory deterministic.
+
+        Args:
+            input_video: Original input video path.
+            job_dir: Job directory (output goes to intermediate/).
+            offset_ms: Offset in ms; positive = external track starts later.
+
+        Returns:
+            Path to the synced file, or ``None`` on FFmpeg failure.
+        """
+        intermediate_dir = job_dir / "intermediate"
+        intermediate_dir.mkdir(parents=True, exist_ok=True)
+        suffix = input_video.suffix
+        synced_path = intermediate_dir / f"synced_input{suffix}"
+
+        offset_s = abs(offset_ms) / 1000.0
+        itsoffset_str = f"{offset_s:.6f}"
+
+        if offset_ms > 0:
+            # External (second) audio stream lags reference: delay it.
+            args = [
+                "-i",
+                str(input_video),
+                "-itsoffset",
+                itsoffset_str,
+                "-i",
+                str(input_video),
+                "-map",
+                "0:v",
+                "-map",
+                "0:a:0",
+                "-map",
+                "1:a:1",
+                "-c",
+                "copy",
+                str(synced_path),
+            ]
+        else:
+            # Reference track lags external: delay reference video/audio.
+            args = [
+                "-itsoffset",
+                itsoffset_str,
+                "-i",
+                str(input_video),
+                "-i",
+                str(input_video),
+                "-map",
+                "0:v",
+                "-map",
+                "0:a:0",
+                "-map",
+                "1:a:1",
+                "-c",
+                "copy",
+                str(synced_path),
+            ]
+
+        try:
+            run_ffmpeg(args, timeout=600)
+        except FFmpegError as exc:
+            self.logger.warning(
+                "sync_offset_ffmpeg_failed",
+                offset_ms=offset_ms,
+                error=str(exc),
+            )
+            return None
+
+        if not synced_path.exists() or synced_path.stat().st_size == 0:
+            self.logger.warning("sync_offset_output_missing", path=str(synced_path))
+            return None
+
+        return synced_path
+
     def _load_edit_plan(self, job_dir: Path) -> EditPlan | None:
         """Load edit plan if present."""
         edit_path = job_dir / "review" / "edit_plan.json"
@@ -1779,6 +1939,16 @@ class RenderStage(Stage):
         run_ffmpeg(args)
         self._assert_output_exists(output_file, f"{platform} video export")
 
+        # Phase 9.8: Apply production sound-kit stingers after cut assembly but before
+        # loudness normalization so the ducked mix is part of the normalized output.
+        output_file = self._mix_stingers(
+            video_path=output_file,
+            output_dir=output_dir,
+            platform=platform,
+            edit_plan=edit_plan,
+            src_duration=src_duration,
+        )
+
         if normalize_audio:
             self._normalize_loudness(
                 output_file,
@@ -1795,8 +1965,169 @@ class RenderStage(Stage):
             spec=spec,
         )
 
+        # Phase 9: Caption burn-in — runs after loudness normalization so captions
+        # are applied to the compliance-validated, normalized video.  Only executed
+        # when config.branding.captions.enabled is True.
+        if self.config.branding.captions.enabled:
+            captioned = self._burn_captions(
+                video_path=output_file,
+                output_dir=output_dir,
+                job_dir=output_dir.parent.parent,
+                platform=platform,
+                spec=spec,
+            )
+            if captioned is not None:
+                output_file = captioned
+                self._assert_output_exists(output_file, f"{platform} captioned video export")
+
         self.logger.info(f"{platform}_rendered", output=str(output_file))
         return [str(output_file.relative_to(output_dir.parent.parent))]
+
+    def _burn_captions(
+        self,
+        video_path: Path,
+        output_dir: Path,
+        job_dir: Path,
+        platform: str,
+        spec: PlatformSpec,
+    ) -> Path | None:
+        """Generate ASS captions from word alignment and burn them into the video.
+
+        Generates a per-aspect-ratio ``.ass`` file from ``word_alignment.json``,
+        then re-encodes ``video_path`` with the FFmpeg ``ass=`` libass filter,
+        producing ``<output_dir>/captioned.<ext>`` (using the spec container).
+
+        Returns the captioned output path on success, or ``None`` when
+        the aspect ratio is unsupported (rare — logged as warning).  Any
+        failure to find the required alignment artifact raises ``RuntimeError``
+        with an actionable diagnostic.
+
+        Args:
+            video_path: Path to the rendered (and loudness-normalised) video.
+            output_dir: Platform output directory (``jobs/<id>/output/<platform>``).
+            job_dir: Job root directory (``jobs/<id>``).
+            platform: Platform identifier string (for logging).
+            spec: Platform specification used to derive the target aspect ratio.
+
+        Returns:
+            Path to the captioned video, or ``None`` when the aspect ratio
+            is not supported by the ASS template library (a warning is logged).
+
+        Raises:
+            RuntimeError: When ``word_alignment.json`` is missing and captions
+                are enabled, or when FFmpeg's libass filter fails.  The message
+                includes actionable diagnostics for the operator.
+        """
+        caption_cfg = self.config.branding.captions
+        aspect_ratio = (spec.aspect_ratio or "16:9").strip()
+
+        # Locate word alignment artifact — required when captions enabled.
+        alignment_path = job_dir / "transcribe" / caption_cfg.alignment_filename
+        if not alignment_path.exists():
+            # Also check legacy location under analysis/
+            alignment_path_legacy = job_dir / "analysis" / caption_cfg.alignment_filename
+            if alignment_path_legacy.exists():
+                alignment_path = alignment_path_legacy
+            else:
+                raise RuntimeError(
+                    f"Caption burn-in is enabled but '{caption_cfg.alignment_filename}' "
+                    f"was not found at '{alignment_path}' or '{alignment_path_legacy}'. "
+                    "Run the transcription stage with word-level alignment enabled before "
+                    "rendering with captions."
+                )
+
+        # Generate per-ratio ASS file.
+        ass_path = output_dir / f"captions_{aspect_ratio.replace(':', '_')}.ass"
+
+        # Load caption utilities and branding profile for style (best-effort; fall back to defaults).
+        from podcast_pipeline.utils.branding import load_profile as load_branding_profile
+        from podcast_pipeline.utils.captions import (
+            CaptionStyleConfig,
+            generate_ass_from_json,
+        )
+
+        branding_cfg = self.config.branding
+        branding_profile = None
+        if branding_cfg.active_profile:
+            try:
+                branding_profile = load_branding_profile(
+                    branding_cfg.active_profile,
+                    branding_cfg.branding_dir,
+                )
+            except Exception as exc:
+                self.logger.warning(
+                    "caption_branding_load_failed",
+                    platform=platform,
+                    profile=branding_cfg.active_profile,
+                    error=str(exc),
+                )
+
+        style = CaptionStyleConfig.from_branding(branding_profile)
+
+        try:
+            generate_ass_from_json(
+                alignment_path=alignment_path,
+                style=style,
+                output_path=ass_path,
+                aspect_ratio=aspect_ratio,
+            )
+        except ValueError as exc:
+            # Unsupported aspect ratio — log and skip, do not hard fail.
+            self.logger.warning(
+                "caption_unsupported_ratio",
+                platform=platform,
+                aspect_ratio=aspect_ratio,
+                error=str(exc),
+            )
+            return None
+
+        # Re-encode video with captions burned in via libass.
+        ext = spec.container if spec.container not in {"hls"} else "mp4"
+        captioned_path = output_dir / f"captioned.{ext}"
+
+        # Escape path for FFmpeg ass= filter (POSIX forward slashes).
+        ass_filter = f"ass={ass_path.as_posix()}"
+
+        burn_args = [
+            "-i",
+            str(video_path),
+            "-vf",
+            ass_filter,
+            "-c:v",
+            "libx264",
+            "-preset",
+            "fast",
+            "-crf",
+            "18",
+            "-c:a",
+            "copy",
+        ]
+        if ext == "mp4":
+            burn_args.extend(["-movflags", "+faststart"])
+        burn_args.append(str(captioned_path))
+
+        self.logger.info(
+            "caption_burn_start",
+            platform=platform,
+            ass=str(ass_path),
+            input=str(video_path),
+            output=str(captioned_path),
+        )
+
+        try:
+            run_ffmpeg(burn_args)
+        except FFmpegError as exc:
+            raise RuntimeError(
+                f"Caption burn-in failed for platform '{platform}': {exc}. "
+                "Verify that FFmpeg was built with libass support (--enable-libass)."
+            ) from exc
+
+        self.logger.info(
+            "caption_burn_complete",
+            platform=platform,
+            output=str(captioned_path),
+        )
+        return captioned_path
 
     def _supports_profile_level_flags(self, video_codec: str) -> bool:
         """Return whether a codec supports profile/level and GOP cadence flags."""
@@ -3328,3 +3659,167 @@ class RenderStage(Stage):
         self.logger.info("marketing_doc_generated", path=str(doc_path))
 
         return str(doc_path.relative_to(job_dir))
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Phase 9.8: Production sound-kit stinger mixing
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def _mix_stingers(
+        self,
+        video_path: Path,
+        output_dir: Path,
+        platform: str,
+        edit_plan: EditPlan | None,
+        src_duration: float,
+    ) -> Path:
+        """Mix intro/transition/outro stingers into the rendered video.
+
+        Called after cut assembly (FFmpeg render pass) but before loudness
+        normalization so the ducked stinger mix participates in normalization.
+
+        Sound assets are resolved from the active BrandingProfile and/or
+        ``BrandingConfig.sound_kit`` paths.  Missing assets log a warning and
+        are skipped — the original ``video_path`` is returned unchanged if no
+        stingers are successfully applied.
+
+        Per-stinger normalization to canonical PCM avoids VBR/container timing
+        drift destabilising the sidechaincompress chain.
+
+        Args:
+            video_path: Path to the rendered video output (input for stinger pass).
+            output_dir: Platform output directory for intermediate files.
+            platform: Platform string (for logging context only).
+            edit_plan: Optional resolved edit plan supplying content-cut boundaries
+                for transition-stinger placement.
+            src_duration: Duration (seconds) of the main voice/video track.
+
+        Returns:
+            Path to the stinger-mixed output, or ``video_path`` unchanged when
+            no stingers were configured or all stinger operations were skipped.
+        """
+        branding_cfg = self.config.branding
+        kit_config = branding_cfg.sound_kit
+
+        # Resolve the active branding profile for sound-kit field access.
+        # best-effort: if profile loading fails we fall back to kit_config paths only.
+        profile_intro: Path | None = None
+        profile_transition: Path | None = None
+        profile_outro: Path | None = None
+
+        if branding_cfg.active_profile:
+            try:
+                from podcast_pipeline.utils.branding import load_profile as _load_bp
+
+                branding_profile = _load_bp(
+                    branding_cfg.active_profile,
+                    branding_cfg.branding_dir,
+                )
+                if branding_profile is not None:
+                    profile_intro = branding_profile.intro_sound
+                    profile_transition = branding_profile.transition_sound
+                    profile_outro = branding_profile.outro_sound
+            except Exception as exc:
+                self.logger.warning(
+                    "sound_kit_profile_load_failed",
+                    profile=branding_cfg.active_profile,
+                    error=str(exc),
+                )
+
+        # Resolve final paths (profile overrides kit_config)
+        intro_path, transition_path, outro_path = resolve_sound_kit_paths(
+            profile_intro=profile_intro,
+            profile_transition=profile_transition,
+            profile_outro=profile_outro,
+            kit_config=kit_config,
+            branding_dir=branding_cfg.branding_dir,
+        )
+
+        has_any_sound = any(p is not None for p in (intro_path, transition_path, outro_path))
+        if not has_any_sound:
+            self.logger.debug("sound_kit_no_assets_configured", platform=platform)
+            return video_path
+
+        current = video_path
+
+        # ── Intro stinger ──────────────────────────────────────────────────────
+        if intro_path is not None:
+            intro_out = output_dir / "__with_intro.mkv"
+            result = apply_intro_stinger(
+                video_path=current,
+                stinger_path=intro_path,
+                output_path=intro_out,
+                kit_config=kit_config,
+                work_dir=output_dir,
+            )
+            if result is not None:
+                current = result
+                self.logger.info("sound_kit_intro_applied", platform=platform)
+            else:
+                self.logger.warning(
+                    "sound_kit_intro_skipped",
+                    platform=platform,
+                    path=str(intro_path),
+                )
+
+        # ── Transition stingers ────────────────────────────────────────────────
+        if transition_path is not None and edit_plan is not None:
+            # Collect content-cut boundaries for transition stinger placement.
+            content_boundaries: list[float] = []
+            for content_cut in edit_plan.content_cuts:
+                start_s = float(content_cut.start_seconds)
+                if start_s > 0.0:
+                    content_boundaries.append(start_s)
+            content_boundaries.sort()
+
+            if content_boundaries:
+                trans_out = output_dir / "__with_transitions.mkv"
+                result = apply_transition_stingers(
+                    video_path=current,
+                    stinger_path=transition_path,
+                    cut_boundaries_s=content_boundaries,
+                    output_path=trans_out,
+                    kit_config=kit_config,
+                    work_dir=output_dir,
+                )
+                if result is not None:
+                    current = result
+                    self.logger.info(
+                        "sound_kit_transitions_applied",
+                        platform=platform,
+                        count=len(content_boundaries),
+                    )
+                else:
+                    self.logger.warning(
+                        "sound_kit_transitions_skipped",
+                        platform=platform,
+                        path=str(transition_path),
+                        boundaries=content_boundaries,
+                    )
+            else:
+                self.logger.debug(
+                    "sound_kit_no_content_cuts_for_transition",
+                    platform=platform,
+                )
+
+        # ── Outro stinger ──────────────────────────────────────────────────────
+        if outro_path is not None:
+            outro_out = output_dir / "__with_outro.mkv"
+            result = apply_outro_stinger(
+                video_path=current,
+                stinger_path=outro_path,
+                output_path=outro_out,
+                kit_config=kit_config,
+                total_duration_s=src_duration,
+                work_dir=output_dir,
+            )
+            if result is not None:
+                current = result
+                self.logger.info("sound_kit_outro_applied", platform=platform)
+            else:
+                self.logger.warning(
+                    "sound_kit_outro_skipped",
+                    platform=platform,
+                    path=str(outro_path),
+                )
+
+        return current

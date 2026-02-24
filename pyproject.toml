@@ -65,6 +65,15 @@ gpu = [
     "opencv-python-headless>=4.13,<5",
     "torchcodec>=0.10,<1",
 ]
+thumbnails = [
+    # Imagen 4 via Vertex AI — primary cloud backend
+    "google-cloud-aiplatform>=1.70.0,<2",
+    # Local FLUX.1 Schnell pipeline
+    "diffusers>=0.32.0,<1",
+    # FP8/INT8 quantisation for FLUX VRAM budget
+    # Note: optimum-quanto reached 0.2.7 as of 2026-02; >=0.2.5 is the verified floor
+    "optimum-quanto>=0.2.5,<1",
+]
 
 [project.scripts]
 podcast-pipeline = "podcast_pipeline.cli:app"

@@ -1439,7 +1439,7 @@ def _correlate_audio(ref_wav: Path, ext_wav: Path, sample_rate: int) -> tuple[fl
     ext_norm = ext_data / (np.std(ext_data) + 1e-9)
 
     try:
-        from scipy.signal import correlate  # type: ignore[import-untyped]
+        from scipy.signal import correlate
 
         corr = correlate(ref_norm, ext_norm, mode="full")
     except ImportError:

@@ -566,9 +566,9 @@ def _production_module_introduces_mcp(module_name: str) -> list[str]:
     """Check whether importing a production module causes mcp modules to appear.
 
     Temporarily removes any existing mcp entries from sys.modules, imports the
-    target production module fresh (clearing its cache entry first), then checks
-    whether any new podcast_pipeline.mcp entries appeared. Restores sys.modules
-    afterwards.
+    target production module fresh (clearing its cache entry and all submodules
+    first), then checks whether any new podcast_pipeline.mcp entries appeared.
+    Restores sys.modules afterwards.
     """
     # Snapshot and temporarily remove all mcp-related modules
     mcp_snapshot: dict[str, Any] = {
@@ -577,18 +577,33 @@ def _production_module_introduces_mcp(module_name: str) -> list[str]:
     for k in mcp_snapshot:
         sys.modules.pop(k)
 
-    # Also clear the target production module to force a fresh import
-    prod_snapshot = sys.modules.pop(module_name, None)
+    # Clear the target module AND all its submodules to force a clean re-import
+    prefix = module_name + "."
+    prod_snapshot: dict[str, Any] = {}
+    for k in list(sys.modules):
+        if k == module_name or k.startswith(prefix):
+            prod_snapshot[k] = sys.modules.pop(k)
+
+    # Also snapshot parent-package attribute binding so we can restore it
+    parts = module_name.rsplit(".", 1)
+    parent_pkg = sys.modules.get(parts[0]) if len(parts) > 1 else None
+    parent_attr = parts[1] if len(parts) > 1 else None
+    old_parent_ref = getattr(parent_pkg, parent_attr, None) if parent_pkg else None
 
     try:
         importlib.import_module(module_name)
         introduced = [k for k in sys.modules if "podcast_pipeline.mcp" in k]
     finally:
-        # Restore mcp modules (so other tests continue to work)
+        # Remove any modules the fresh import introduced for the target tree
+        for k in list(sys.modules):
+            if k == module_name or k.startswith(prefix):
+                sys.modules.pop(k, None)
+        # Restore original module state
         sys.modules.update(mcp_snapshot)
-        # Restore the production module cache entry if it was present
-        if prod_snapshot is not None:
-            sys.modules[module_name] = prod_snapshot
+        sys.modules.update(prod_snapshot)
+        # Restore parent-package attribute to avoid stale module references
+        if parent_pkg is not None and parent_attr and old_parent_ref is not None:
+            setattr(parent_pkg, parent_attr, old_parent_ref)
 
     return introduced
 

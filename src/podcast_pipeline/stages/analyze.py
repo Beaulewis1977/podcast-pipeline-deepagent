@@ -186,6 +186,20 @@ class AnalyzeStage(Stage):
                         generated=len(thumbnail_artifacts),
                     )
 
+                # AI thumbnail generation: optional, controlled by branding config.
+                # Uses visual_description strings from thumbnail_frames as prompts,
+                # then persists generated image paths back into the analysis payload.
+                if self.config.branding.thumbnail_generation.enabled:
+                    ai_thumbnail_artifacts = self._generate_ai_thumbnails(
+                        analysis_payload=analysis_payload,
+                        job_dir=job_dir,
+                    )
+                    if ai_thumbnail_artifacts:
+                        self.logger.info(
+                            "analysis_ai_thumbnails_generated",
+                            generated=len(ai_thumbnail_artifacts),
+                        )
+
                 # Save analysis result
                 analysis_path = job_dir / "analysis" / "analysis.json"
                 analysis_path.parent.mkdir(parents=True, exist_ok=True)
@@ -342,6 +356,94 @@ class AnalyzeStage(Stage):
             generated.append(relative_path)
 
         return generated
+
+    def _generate_ai_thumbnails(
+        self,
+        analysis_payload: dict[str, Any],
+        job_dir: Path,
+    ) -> list[str]:
+        """Generate AI thumbnails from visual_description prompts via ThumbnailService.
+
+        Extracts ``visual_description`` strings from ``thumbnail_frames`` in the
+        analysis payload, calls ``ThumbnailService.generate()`` with those prompts,
+        and persists the relative paths of generated images back into each frame's
+        ``ai_image_path`` field.
+
+        Args:
+            analysis_payload: Mutable analysis dict (thumbnail_frames entries updated in-place).
+            job_dir: Root job directory used to compute relative artifact paths.
+
+        Returns:
+            List of relative paths for successfully generated AI thumbnail images.
+        """
+        from podcast_pipeline.utils.thumbnails import ThumbnailRequest, ThumbnailService
+
+        raw_frames = analysis_payload.get("thumbnail_frames")
+        if not isinstance(raw_frames, list) or not raw_frames:
+            return []
+
+        # Build prompt list from visual_description fields
+        prompts: list[str] = []
+        frame_indices: list[int] = []  # Which frame index each prompt corresponds to
+        for frame_index, frame in enumerate(raw_frames):
+            if not isinstance(frame, dict):
+                continue
+            description = frame.get("visual_description", "")
+            if isinstance(description, str) and description.strip():
+                prompts.append(description.strip())
+                frame_indices.append(frame_index)
+
+        if not prompts:
+            self.logger.info(
+                "ai_thumbnail_skip_no_descriptions",
+                reason="no visual_description fields in thumbnail_frames",
+            )
+            return []
+
+        gen_config = self.config.branding.thumbnail_generation
+        output_dir = job_dir / "intermediate" / "ai_thumbnails"
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        request = ThumbnailRequest(
+            prompts=prompts,
+            output_dir=output_dir,
+            images_per_prompt=gen_config.images_per_prompt,
+            width=gen_config.width,
+            height=gen_config.height,
+            model=gen_config.model,
+            branding_profile=self._active_branding,
+        )
+
+        service = ThumbnailService()
+        result = service.generate(request)
+
+        if result.degraded and result.total_generated == 0 and result.total_cached == 0:
+            self.logger.warning(
+                "ai_thumbnail_degraded",
+                reason=result.degraded_reason,
+            )
+            return []
+
+        # Map generated artifacts back to frame entries using prompt as the key.
+        # Build a lookup from prompt text → first matching artifact relative path.
+        generated_paths: list[str] = []
+        prompt_to_relative: dict[str, str] = {}
+
+        for artifact in result.artifacts:
+            if artifact.status.value in ("generated", "cached") and artifact.path.exists():
+                if artifact.prompt not in prompt_to_relative:
+                    relative = str(artifact.path.relative_to(job_dir))
+                    prompt_to_relative[artifact.prompt] = relative
+
+        # Write ai_image_path back into each matching frame entry
+        for list_index, frame_index in enumerate(frame_indices):
+            prompt = prompts[list_index]
+            ai_path = prompt_to_relative.get(prompt)
+            if ai_path:
+                raw_frames[frame_index]["ai_image_path"] = ai_path
+                generated_paths.append(ai_path)
+
+        return generated_paths
 
     def _parse_thumbnail_timestamp_seconds(
         self,
