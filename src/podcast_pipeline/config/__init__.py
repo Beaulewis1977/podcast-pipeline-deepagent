@@ -2,6 +2,7 @@
 
 from podcast_pipeline.config.settings import (
     AudioConfig,
+    BrandingConfig,
     Config,
     FillerConfig,
     HLSConfig,
@@ -17,6 +18,7 @@ from podcast_pipeline.config.settings import (
 
 __all__ = [
     "AudioConfig",
+    "BrandingConfig",
     "Config",
     "FillerConfig",
     "HLSConfig",

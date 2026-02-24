@@ -8,6 +8,7 @@ from typing import Any
 
 from podcast_pipeline.config import Config
 from podcast_pipeline.models.analysis import AnalysisResult
+from podcast_pipeline.models.branding import BrandingProfile
 from podcast_pipeline.models.job import Job
 from podcast_pipeline.models.triage import FillerTriageResult
 from podcast_pipeline.providers.base import AnalysisProvider, ProviderError
@@ -17,6 +18,7 @@ from podcast_pipeline.providers.kimi import KimiProvider
 from podcast_pipeline.research.viral_detector import ViralClipDetector
 from podcast_pipeline.research.youtube import ResearchResult, YouTubeResearcher
 from podcast_pipeline.stages.base import Stage, StageResult
+from podcast_pipeline.utils.branding import load_active_profile, resolve_profile
 from podcast_pipeline.utils.ffmpeg import FFmpegError, run_ffmpeg
 from podcast_pipeline.utils.logging import get_logger
 
@@ -33,6 +35,14 @@ class AnalyzeStage(Stage):
     def __init__(self, config: Config):
         super().__init__(config)
         self.providers: list[AnalysisProvider] = []
+
+        # Resolve active branding profile at construction time.
+        # None when branding is not configured — all branding-aware paths
+        # check for None and fall back to no-branding behavior gracefully.
+        self._active_branding: BrandingProfile | None = load_active_profile(
+            active_profile_name=config.branding.active_profile,
+            branding_dir=config.branding.branding_dir,
+        )
 
         # Initialize primary provider based on configured provider name.
         primary_provider = config.models.provider
@@ -546,6 +556,23 @@ class AnalyzeStage(Stage):
             seen.add(value)
             normalized.append(value)
         return normalized
+
+    def resolve_branding_for_platform(self, platform: str) -> BrandingProfile | None:
+        """Return a resolved BrandingProfile for ``platform``, or None when unconfigured.
+
+        Applies platform-specific overrides onto the base active profile when
+        present.  Returns None when no branding profile is configured so that
+        all downstream callers can branch on None without special casing.
+
+        Args:
+            platform: Export platform name (e.g. ``"youtube"``, ``"tiktok"``).
+
+        Returns:
+            Resolved :class:`BrandingProfile` or ``None``.
+        """
+        if self._active_branding is None:
+            return None
+        return resolve_profile(self._active_branding, platform)
 
     def _build_degraded_mode_metadata(
         self,

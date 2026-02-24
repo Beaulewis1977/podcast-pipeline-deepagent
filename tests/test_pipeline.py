@@ -6,8 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from podcast_pipeline.config import Config
+from podcast_pipeline.config import BrandingConfig, Config
 from podcast_pipeline.models.analysis import AnalysisResult
+from podcast_pipeline.models.branding import BrandingProfile, PlatformBrandingOverride
 from podcast_pipeline.models.job import Job, StageStatus
 from podcast_pipeline.models.transcript import Segment, Word
 from podcast_pipeline.pipeline import Pipeline
@@ -205,7 +206,7 @@ class TestStageValidation:
     def test_invalid_stage_rejected_with_validation_error(self, config: Config) -> None:
         """Invalid explicit stage names should fail fast."""
         pipeline = Pipeline(config)
-        job = Job(job_id="invalid-stage-job", input_file="/tmp/test.mp4")  # noqa: S108
+        job = Job(job_id="invalid-stage-job", input_file="/tmp/test.mp4")
 
         with pytest.raises(ValueError, match="Unknown stage: invalid-stage"):
             pipeline.run(job, stage="invalid-stage")
@@ -216,7 +217,7 @@ class TestStageValidation:
     def test_invalid_stage_validation_for_until_stage(self, config: Config) -> None:
         """Invalid until_stage values should fail fast."""
         pipeline = Pipeline(config)
-        job = Job(job_id="invalid-until-job", input_file="/tmp/test.mp4")  # noqa: S108
+        job = Job(job_id="invalid-until-job", input_file="/tmp/test.mp4")
 
         with pytest.raises(ValueError, match="Unknown stage: not-a-stage"):
             pipeline.run(job, until_stage="not-a-stage")
@@ -230,7 +231,7 @@ class TestPipelineLocking:
     def test_state_reload_uses_latest_job_state(self, config: Config) -> None:
         """state_reload should skip stages already complete on disk."""
         pipeline = Pipeline(config)
-        job = Job(job_id="state-reload-job", input_file="/tmp/test.mp4")  # noqa: S108
+        job = Job(job_id="state-reload-job", input_file="/tmp/test.mp4")
         job.save(config.paths.jobs_dir)
 
         stale_job = pipeline.load_job(job.job_id)
@@ -255,7 +256,7 @@ class TestPipelineLocking:
         """lock contention should reject a concurrent run for the same job."""
         pipeline_one = Pipeline(config)
         pipeline_two = Pipeline(config)
-        job = Job(job_id="lock-contention-job", input_file="/tmp/test.mp4")  # noqa: S108
+        job = Job(job_id="lock-contention-job", input_file="/tmp/test.mp4")
         job.save(config.paths.jobs_dir)
 
         stage_started = threading.Event()
@@ -832,3 +833,100 @@ class TestPhase8RenderDisabledBaseline:
 
         dist = pose_distance(dummy_frame, dummy_frame)
         assert dist == float("inf")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Phase 9 — Branding profile resolution tests
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+class TestBrandingAndResolve:
+    """Tests for branding profile resolution in the runtime configuration flow."""
+
+    def test_branding_not_configured_returns_none_from_analyze_stage(self, config: Config) -> None:
+        """AnalyzeStage.resolve_branding_for_platform returns None when no profile configured."""
+        assert config.branding.active_profile is None
+        stage = AnalyzeStage(config)
+        assert stage.resolve_branding_for_platform("youtube") is None
+        assert stage.resolve_branding_for_platform("tiktok") is None
+
+    def test_branding_config_default_values(self, config: Config) -> None:
+        """BrandingConfig defaults should be backward-compatible (no active profile)."""
+        assert config.branding.active_profile is None
+        assert config.branding.branding_dir == Path("branding")
+
+    def test_branding_config_accepts_profile_name(self) -> None:
+        """BrandingConfig can be constructed with an active_profile name."""
+        bc = BrandingConfig(active_profile="neon_viral", branding_dir=Path("/tmp/branding"))
+        assert bc.active_profile == "neon_viral"
+        assert bc.branding_dir == Path("/tmp/branding")
+
+    def test_branding_resolve_with_active_profile_applies_overrides(
+        self, config: Config, tmp_path: Path
+    ) -> None:
+        """resolve_branding_for_platform with a loaded profile applies platform overrides."""
+        from podcast_pipeline.utils.branding import save_profile
+
+        # Create a branding profile with a tiktok override.
+        profile = BrandingProfile(
+            profile_name="test_kit",
+            brand_voice="Energetic Gen Z tone.",
+            logo_placement="top_right",
+            highlight_color="#FFFF00",
+            platform_overrides={
+                "tiktok": PlatformBrandingOverride(
+                    logo_placement="bottom_left",
+                    highlight_color="#FF0000",
+                )
+            },
+        )
+        branding_dir = tmp_path / "branding"
+        save_profile(profile, branding_dir=branding_dir)
+
+        # Wire config to use the saved profile.
+        config_with_branding = Config.model_validate(
+            config.model_dump()
+            | {"branding": {"active_profile": "test_kit", "branding_dir": str(branding_dir)}}
+        )
+        stage = AnalyzeStage(config_with_branding)
+
+        # youtube: no override → base profile values
+        yt = stage.resolve_branding_for_platform("youtube")
+        assert yt is not None
+        assert yt.logo_placement == "top_right"
+        assert yt.highlight_color == "#FFFF00"
+        assert yt.platform_overrides == {}
+
+        # tiktok: override applied
+        tk = stage.resolve_branding_for_platform("tiktok")
+        assert tk is not None
+        assert tk.logo_placement == "bottom_left"
+        assert tk.highlight_color == "#FF0000"
+        assert tk.platform_overrides == {}
+
+    def test_branding_resolve_missing_profile_file_returns_none(
+        self, config: Config, tmp_path: Path
+    ) -> None:
+        """When active_profile points to a non-existent YAML, AnalyzeStage logs and returns None."""
+        config_with_missing = Config.model_validate(
+            config.model_dump()
+            | {
+                "branding": {
+                    "active_profile": "does_not_exist",
+                    "branding_dir": str(tmp_path / "branding"),
+                }
+            }
+        )
+        # AnalyzeStage construction must not raise; missing profile logs a warning.
+        stage = AnalyzeStage(config_with_missing)
+        assert stage._active_branding is None
+        assert stage.resolve_branding_for_platform("youtube") is None
+
+    def test_pipeline_runs_without_branding_configured(
+        self, config: Config, temp_dir: Path
+    ) -> None:
+        """Pipeline runs without error when branding section is absent (default config)."""
+        pipeline = Pipeline(config)
+        # Default Config() has no active branding — stage construction must succeed.
+        analyze_stage = pipeline.stages.get("analyze")
+        assert analyze_stage is not None
