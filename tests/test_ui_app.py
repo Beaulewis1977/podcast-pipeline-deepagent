@@ -908,3 +908,254 @@ def test_filler_card_no_phase8_data() -> None:
     assert card["protected"] is False
     assert card["llm_safe_to_remove"] is None
     assert card["llm_reason"] == ""
+
+
+# ============================================================================
+# Phase 9: Brand Studio UI tests
+# ============================================================================
+
+
+def test_brand_studio_nav_label_registered() -> None:
+    """Brand Studio should appear in the navigation label registry."""
+    from podcast_pipeline.ui.app import _NAV_LABELS_BY_PAGE
+
+    assert "brand_studio" in _NAV_LABELS_BY_PAGE
+
+
+def test_brand_studio_profile_create_save_load_delete(tmp_path: Path) -> None:
+    """Brand Studio profile CRUD: create, save, load, delete round-trip."""
+    from podcast_pipeline.models.branding import BrandingProfile
+    from podcast_pipeline.utils.branding import (
+        delete_profile,
+        list_profiles,
+        load_profile,
+        save_profile,
+    )
+
+    branding_dir = tmp_path / "branding"
+    branding_dir.mkdir()
+
+    # Create and save
+    profile = BrandingProfile(
+        profile_name="test-brand",
+        brand_voice="Energetic and bold podcast brand",
+    )
+    save_profile(profile, branding_dir)
+
+    # List
+    names = list_profiles(branding_dir)
+    assert "test-brand" in names
+
+    # Load
+    loaded = load_profile("test-brand", branding_dir)
+    assert loaded.profile_name == "test-brand"
+    assert loaded.brand_voice == "Energetic and bold podcast brand"
+
+    # Delete
+    result = delete_profile("test-brand", branding_dir)
+    assert result is True
+    assert "test-brand" not in list_profiles(branding_dir)
+
+    # Delete again (already gone)
+    result = delete_profile("test-brand", branding_dir)
+    assert result is False
+
+
+def test_brand_studio_profile_with_caption_style_persists(tmp_path: Path) -> None:
+    """Profile with caption style saves and loads correctly."""
+    from podcast_pipeline.models.branding import BrandingProfile, CaptionStyle
+    from podcast_pipeline.utils.branding import load_profile, save_profile
+
+    branding_dir = tmp_path / "branding"
+    branding_dir.mkdir()
+
+    profile = BrandingProfile(
+        profile_name="styled",
+        caption_style=CaptionStyle(
+            color="#FF0000",
+            size=64,
+            shadow=False,
+            bold=True,
+            italic=True,
+            font="Arial",
+        ),
+    )
+    save_profile(profile, branding_dir)
+    loaded = load_profile("styled", branding_dir)
+
+    assert loaded.caption_style.color == "#FF0000"
+    assert loaded.caption_style.size == 64
+    assert loaded.caption_style.shadow is False
+    assert loaded.caption_style.bold is True
+    assert loaded.caption_style.italic is True
+    assert loaded.caption_style.font == "Arial"
+
+
+def test_brand_studio_profile_with_sound_kit_persists(tmp_path: Path) -> None:
+    """Profile with sound kit paths saves and loads correctly."""
+    from podcast_pipeline.models.branding import BrandingProfile
+    from podcast_pipeline.utils.branding import load_profile, save_profile
+
+    branding_dir = tmp_path / "branding"
+    branding_dir.mkdir()
+
+    profile = BrandingProfile(
+        profile_name="sounds",
+        intro_sound=Path("assets/intro.wav"),
+        transition_sound=Path("assets/whoosh.wav"),
+        outro_sound=Path("assets/outro.mp3"),
+    )
+    save_profile(profile, branding_dir)
+    loaded = load_profile("sounds", branding_dir)
+
+    assert loaded.intro_sound == Path("assets/intro.wav")
+    assert loaded.transition_sound == Path("assets/whoosh.wav")
+    assert loaded.outro_sound == Path("assets/outro.mp3")
+    assert loaded.has_sound_kit is True
+
+
+def test_brand_studio_review_decisions_branding_profile_name_persists(tmp_path: Path) -> None:
+    """ReviewDecisions.branding_profile_name persists through save/load cycle."""
+    from podcast_pipeline.stages.review import ReviewDecisions
+
+    decisions = ReviewDecisions(
+        branding_profile_name="my-brand",
+        captions_enabled=True,
+        sound_kit_enabled=True,
+        ai_thumbnails_enabled=True,
+    )
+    review_dir = tmp_path / "review"
+    review_dir.mkdir(parents=True)
+    path = review_dir / "review_state.json"
+    path.write_text(decisions.model_dump_json(indent=2))
+
+    loaded = ReviewDecisions.model_validate_json(path.read_text())
+    assert loaded.branding_profile_name == "my-brand"
+    assert loaded.captions_enabled is True
+    assert loaded.sound_kit_enabled is True
+    assert loaded.ai_thumbnails_enabled is True
+
+
+def test_brand_studio_review_decisions_defaults_none_and_false() -> None:
+    """New ReviewDecisions should default all Phase 9 fields to None/False."""
+    from podcast_pipeline.stages.review import ReviewDecisions
+
+    decisions = ReviewDecisions()
+    assert decisions.branding_profile_name is None
+    assert decisions.captions_enabled is False
+    assert decisions.sound_kit_enabled is False
+    assert decisions.ai_thumbnails_enabled is False
+
+
+def test_brand_studio_set_active_profile_persists_to_review_state(tmp_path: Path) -> None:
+    """_set_active_branding_profile should write branding_profile_name into review state."""
+    from podcast_pipeline.stages.review import ReviewDecisions
+    from podcast_pipeline.ui.app import _set_active_branding_profile
+
+    # Set up job dir with analysis and review artifacts
+    analysis_dir = tmp_path / "analysis"
+    analysis_dir.mkdir(parents=True)
+    _write_json(analysis_dir / "analysis.json", {"content_cuts": []})
+    _write_json(analysis_dir / "filler_cuts.json", [])
+
+    review_dir = tmp_path / "review"
+    review_dir.mkdir(parents=True)
+    initial = ReviewDecisions()
+    (review_dir / "review_state.json").write_text(initial.model_dump_json(indent=2))
+
+    mock_st = MagicMock()
+    mock_st.session_state = {"current_job_id": "test-job"}
+
+    mock_config = MagicMock()
+    mock_config.paths.jobs_dir = tmp_path.parent
+    # The job_dir is derived from jobs_dir / job_id, so we need to rename
+    job_dir = tmp_path.parent / "test-job"
+    if not job_dir.exists():
+        tmp_path.rename(job_dir)
+
+    with (
+        patch("podcast_pipeline.ui.app.st", mock_st),
+        patch("podcast_pipeline.ui.app.get_config", return_value=mock_config),
+    ):
+        _set_active_branding_profile("neon-viral")
+
+    loaded = ReviewDecisions.model_validate_json(
+        (job_dir / "review" / "review_state.json").read_text()
+    )
+    assert loaded.branding_profile_name == "neon-viral"
+
+
+# ============================================================================
+# Phase 9: Production Controls UI tests
+# ============================================================================
+
+
+def test_production_controls_persist_caption_toggle(tmp_path: Path) -> None:
+    """Production controls should persist captions_enabled in review state."""
+    from podcast_pipeline.stages.review import ReviewDecisions
+    from podcast_pipeline.ui.app import render_production_controls
+
+    analysis_dir = tmp_path / "analysis"
+    analysis_dir.mkdir(parents=True)
+    _write_json(analysis_dir / "analysis.json", {"content_cuts": []})
+    _write_json(analysis_dir / "filler_cuts.json", [])
+
+    review_dir = tmp_path / "review"
+    review_dir.mkdir(parents=True)
+    initial = ReviewDecisions()
+    (review_dir / "review_state.json").write_text(initial.model_dump_json(indent=2))
+
+    mock_st = MagicMock()
+    # Simulate UI returning values different from defaults
+    mock_st.checkbox.side_effect = lambda label, **kwargs: (
+        True if "Caption" in label else kwargs.get("value", False)
+    )
+    mock_st.selectbox.return_value = 0  # (none) profile
+    mock_st.slider.return_value = 0.0  # no sync offset
+
+    mock_config = MagicMock()
+    mock_config.branding.branding_dir = tmp_path / "branding"
+    (tmp_path / "branding").mkdir()
+
+    with (
+        patch("podcast_pipeline.ui.app.st", mock_st),
+        patch("podcast_pipeline.ui.app.get_config", return_value=mock_config),
+    ):
+        render_production_controls("job-1", tmp_path)
+
+    loaded = ReviewDecisions.model_validate_json((review_dir / "review_state.json").read_text())
+    assert loaded.captions_enabled is True
+
+
+def test_production_controls_persist_sync_offset(tmp_path: Path) -> None:
+    """Production controls should persist manual_sync_offset_ms in review state."""
+    from podcast_pipeline.stages.review import ReviewDecisions
+    from podcast_pipeline.ui.app import render_production_controls
+
+    analysis_dir = tmp_path / "analysis"
+    analysis_dir.mkdir(parents=True)
+    _write_json(analysis_dir / "analysis.json", {"content_cuts": []})
+    _write_json(analysis_dir / "filler_cuts.json", [])
+
+    review_dir = tmp_path / "review"
+    review_dir.mkdir(parents=True)
+    initial = ReviewDecisions()
+    (review_dir / "review_state.json").write_text(initial.model_dump_json(indent=2))
+
+    mock_st = MagicMock()
+    mock_st.checkbox.side_effect = lambda label, **kwargs: kwargs.get("value", False)
+    mock_st.selectbox.return_value = 0  # (none) profile
+    mock_st.slider.return_value = 150.0  # 150ms offset
+
+    mock_config = MagicMock()
+    mock_config.branding.branding_dir = tmp_path / "branding"
+    (tmp_path / "branding").mkdir()
+
+    with (
+        patch("podcast_pipeline.ui.app.st", mock_st),
+        patch("podcast_pipeline.ui.app.get_config", return_value=mock_config),
+    ):
+        render_production_controls("job-2", tmp_path)
+
+    loaded = ReviewDecisions.model_validate_json((review_dir / "review_state.json").read_text())
+    assert loaded.manual_sync_offset_ms == 150.0

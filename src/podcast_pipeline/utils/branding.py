@@ -237,6 +237,36 @@ def list_profiles(branding_dir: Path | None = None) -> list[str]:
     return sorted(p.stem for p in resolved_dir.glob("*.yaml"))
 
 
+def delete_profile(
+    profile_name: str,
+    branding_dir: Path | None = None,
+) -> bool:
+    """Delete a branding profile YAML file.
+
+    Args:
+        profile_name: Name of the profile to delete (without extension).
+        branding_dir: Directory that holds profile YAML files.  Defaults to
+            :data:`DEFAULT_BRANDING_DIR`.
+
+    Returns:
+        ``True`` if the file was deleted, ``False`` if it did not exist.
+
+    Raises:
+        ValueError: If ``profile_name`` contains unsafe characters.
+        OSError: On file system errors.
+    """
+    resolved_dir = branding_dir if branding_dir is not None else DEFAULT_BRANDING_DIR
+    path = _profile_path(profile_name, resolved_dir)
+
+    if not path.exists():
+        logger.warning("branding_profile_delete_not_found", profile_name=profile_name)
+        return False
+
+    path.unlink()
+    logger.info("branding_profile_deleted", profile_name=profile_name, path=str(path))
+    return True
+
+
 def load_active_profile(
     active_profile_name: str | None,
     branding_dir: Path | None = None,

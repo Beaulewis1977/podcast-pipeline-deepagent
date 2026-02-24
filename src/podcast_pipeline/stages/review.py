@@ -69,6 +69,22 @@ class ReviewDecisions(BaseModel):
     # Set to 0.0 to explicitly disable the sync offset (useful when auto-sync is wrong).
     manual_sync_offset_ms: float | None = None
 
+    # Phase 9: Branding profile name selected in Brand Studio.
+    # None means "no branding profile" — run without brand assets.
+    branding_profile_name: str | None = None
+
+    # Phase 9: Caption style override from production controls.
+    # When True, captions are burned into exports using the active caption style.
+    captions_enabled: bool = False
+
+    # Phase 9: Sound kit (auto-ducking) toggle from production controls.
+    # When True, sound kit stingers are mixed into exports.
+    sound_kit_enabled: bool = False
+
+    # Phase 9: AI thumbnail generation toggle from production controls.
+    # When True, the analyze stage will attempt AI thumbnail generation.
+    ai_thumbnails_enabled: bool = False
+
     @field_validator("export_platforms", mode="before")
     @classmethod
     def validate_export_platforms(cls, value: Any) -> list[str]:

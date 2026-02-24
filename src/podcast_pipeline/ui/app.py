@@ -30,11 +30,21 @@ from podcast_pipeline.export_targets import (
     EXPORT_TARGETS,
     normalize_export_platforms,
 )
+from podcast_pipeline.models.branding import (
+    BrandingProfile,
+    CaptionStyle,
+)
 from podcast_pipeline.stages.review import (
     FillerDecision,
     ReviewDecisions,
     approve_review,
     write_edit_plan,
+)
+from podcast_pipeline.utils.branding import (
+    delete_profile,
+    list_profiles,
+    load_profile,
+    save_profile,
 )
 from podcast_pipeline.utils.logging import get_logger
 
@@ -43,6 +53,7 @@ _MARKETING_METADATA_KEY = "__metadata__"
 _NAV_LABELS_BY_PAGE = {
     "dashboard": "📊 Dashboard",
     "editor": "🎬 Editor",
+    "brand_studio": "🎨 Brand Studio",
     "settings": "⚙️ Settings",
 }
 _NAV_PAGES_BY_LABEL = {label: page for page, label in _NAV_LABELS_BY_PAGE.items()}
@@ -877,6 +888,10 @@ def render_editor() -> None:
 
     # Stage status from service response
     render_stage_status_from_detail(job_detail.stages)
+
+    # Production controls in sidebar
+    with st.sidebar:
+        render_production_controls(job_id, job_dir)
 
     # Tab navigation
     tabs = st.tabs(
@@ -2242,6 +2257,396 @@ def update_export_platforms(job_dir: Path, platforms: list[str]) -> tuple[list[s
 
 
 # ============================================================================
+# Brand Studio Page
+# ============================================================================
+
+
+def _get_branding_dir() -> Path:
+    """Return the configured branding directory."""
+    config = get_config()
+    return config.branding.branding_dir
+
+
+def render_brand_studio() -> None:
+    """Render the Brand Studio page for profile CRUD and asset management."""
+    st.header("Brand Studio")
+
+    branding_dir = _get_branding_dir()
+    profiles = list_profiles(branding_dir)
+
+    # ── Profile selector ────────────────────────────────────────────────────
+    st.subheader("Branding Profiles")
+
+    col_select, col_create = st.columns([3, 1])
+    with col_select:
+        profile_options = ["(none)", *profiles]
+        selected_idx = st.selectbox(
+            "Select Profile",
+            range(len(profile_options)),
+            format_func=lambda i: profile_options[i],
+            key="brand_studio_profile_select",
+        )
+        selected_profile_name: str | None = (
+            profile_options[selected_idx] if selected_idx > 0 else None
+        )
+
+    with col_create:
+        st.markdown("&nbsp;")  # vertical alignment spacer
+        create_new = st.button("Create New Profile", key="brand_studio_create_new")
+
+    # ── Create new profile form ─────────────────────────────────────────────
+    if create_new or st.session_state.get("_brand_studio_creating"):
+        st.session_state["_brand_studio_creating"] = True
+        _render_brand_studio_create_form(branding_dir)
+        return
+
+    if selected_profile_name is None:
+        st.info("Select a profile to edit or create a new one.")
+        return
+
+    # ── Load and edit existing profile ──────────────────────────────────────
+    try:
+        profile = load_profile(selected_profile_name, branding_dir)
+    except (FileNotFoundError, ValueError, OSError) as exc:
+        st.error(f"Failed to load profile '{selected_profile_name}': {exc}")
+        return
+
+    _render_brand_studio_editor(profile, branding_dir)
+
+
+def _render_brand_studio_create_form(branding_dir: Path) -> None:
+    """Render the 'create new profile' form."""
+    st.markdown("#### Create New Branding Profile")
+    new_name = st.text_input(
+        "Profile Name",
+        key="brand_studio_new_name",
+        placeholder="e.g. neon-viral",
+        help="Letters, digits, hyphens, and underscores only.",
+    )
+    new_voice = st.text_area(
+        "Brand Voice",
+        key="brand_studio_new_voice",
+        height=100,
+        max_chars=2000,
+        placeholder="Describe your brand personality and tone...",
+    )
+
+    col_save, col_cancel = st.columns([1, 3])
+    with col_save:
+        if st.button("Save Profile", key="brand_studio_save_new"):
+            if not new_name or not new_name.strip():
+                st.error("Profile name is required.")
+                return
+            try:
+                profile = BrandingProfile(
+                    profile_name=new_name.strip(),
+                    brand_voice=new_voice.strip(),
+                )
+                save_profile(profile, branding_dir, overwrite=False)
+                st.session_state.pop("_brand_studio_creating", None)
+                st.success(f"Profile '{profile.profile_name}' created.")
+                st.rerun()
+            except FileExistsError:
+                st.error(f"Profile '{new_name.strip()}' already exists.")
+            except (ValueError, OSError) as exc:
+                st.error(f"Failed to create profile: {exc}")
+
+    with col_cancel:
+        if st.button("Cancel", key="brand_studio_cancel_new"):
+            st.session_state.pop("_brand_studio_creating", None)
+            st.rerun()
+
+
+def _render_brand_studio_editor(profile: BrandingProfile, branding_dir: Path) -> None:
+    """Render the full profile editor for an existing branding profile."""
+    st.markdown(f"#### Editing: **{profile.profile_name}**")
+
+    # ── Brand Voice ─────────────────────────────────────────────────────────
+    with st.expander("Brand Voice", expanded=True):
+        brand_voice = st.text_area(
+            "Brand Voice Instructions",
+            value=profile.brand_voice,
+            height=150,
+            max_chars=2000,
+            key="brand_studio_voice",
+            help="Creative persona and tone instructions injected into AI prompts.",
+        )
+        st.caption(f"{len(brand_voice)}/2000 characters")
+
+    # ── Visual Assets ───────────────────────────────────────────────────────
+    with st.expander("Visual Assets", expanded=False):
+        logo_path = st.text_input(
+            "Logo Path",
+            value=str(profile.logo_path or ""),
+            key="brand_studio_logo",
+            help="Path to logo image file (PNG/SVG). Leave empty for no logo.",
+        )
+        logo_placement = st.selectbox(
+            "Logo Placement",
+            options=["top_left", "top_right", "bottom_left", "bottom_right", "center"],
+            index=["top_left", "top_right", "bottom_left", "bottom_right", "center"].index(
+                profile.logo_placement
+                if profile.logo_placement
+                in {"top_left", "top_right", "bottom_left", "bottom_right", "center"}
+                else "top_right"
+            ),
+            key="brand_studio_logo_placement",
+        )
+        logo_opacity = st.slider(
+            "Logo Opacity",
+            min_value=0.0,
+            max_value=1.0,
+            value=profile.logo_opacity,
+            step=0.05,
+            key="brand_studio_logo_opacity",
+        )
+        font_path = st.text_input(
+            "Font Path",
+            value=str(profile.font_path or ""),
+            key="brand_studio_font",
+            help="Path to custom font file (TTF/OTF). Leave empty for default.",
+        )
+
+    # ── Caption Style ───────────────────────────────────────────────────────
+    with st.expander("Caption Style", expanded=False):
+        caption_color = st.text_input(
+            "Caption Color (hex)",
+            value=profile.caption_style.color,
+            key="brand_studio_caption_color",
+            help="CSS hex color (#RGB or #RRGGBB).",
+        )
+        caption_size = st.slider(
+            "Caption Size",
+            min_value=8,
+            max_value=256,
+            value=profile.caption_style.size,
+            key="brand_studio_caption_size",
+        )
+        caption_shadow = st.checkbox(
+            "Caption Shadow",
+            value=profile.caption_style.shadow,
+            key="brand_studio_caption_shadow",
+        )
+        caption_bold = st.checkbox(
+            "Caption Bold",
+            value=profile.caption_style.bold,
+            key="brand_studio_caption_bold",
+        )
+        caption_italic = st.checkbox(
+            "Caption Italic",
+            value=profile.caption_style.italic,
+            key="brand_studio_caption_italic",
+        )
+        caption_font = st.text_input(
+            "Caption Font",
+            value=profile.caption_style.font,
+            key="brand_studio_caption_font",
+            help="Font family name for captions. Leave empty for default.",
+        )
+
+    # ── Sound Kit ───────────────────────────────────────────────────────────
+    with st.expander("Sound Kit", expanded=False):
+        intro_sound = st.text_input(
+            "Intro Stinger Path",
+            value=str(profile.intro_sound or ""),
+            key="brand_studio_intro_sound",
+            help="Path to intro audio file (WAV/FLAC/MP3).",
+        )
+        transition_sound = st.text_input(
+            "Transition Sound Path",
+            value=str(profile.transition_sound or ""),
+            key="brand_studio_transition_sound",
+            help="Path to transition whoosh audio file.",
+        )
+        outro_sound = st.text_input(
+            "Outro Stinger Path",
+            value=str(profile.outro_sound or ""),
+            key="brand_studio_outro_sound",
+            help="Path to outro theme audio file.",
+        )
+
+    # ── Platform Overrides ──────────────────────────────────────────────────
+    with st.expander("Platform Overrides", expanded=False):
+        st.caption(
+            "Add per-platform branding overrides. Each override replaces the base "
+            "profile field for that platform only."
+        )
+        override_platforms = list(profile.platform_overrides.keys())
+        if override_platforms:
+            for platform_key in override_platforms:
+                override = profile.platform_overrides[platform_key]
+                st.markdown(f"**{platform_key}**")
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.text_input(
+                        "Override Logo Placement",
+                        value=override.logo_placement or "",
+                        key=f"brand_override_{platform_key}_placement",
+                        disabled=True,
+                    )
+                with col2:
+                    if override.caption_style:
+                        st.caption(
+                            f"Caption: {override.caption_style.color} "
+                            f"size={override.caption_style.size}"
+                        )
+                    else:
+                        st.caption("No caption override")
+        else:
+            st.info("No platform overrides configured. Edit the YAML file directly to add them.")
+
+    # ── Action buttons ──────────────────────────────────────────────────────
+    st.divider()
+    action_col1, action_col2, action_col3, _action_col4 = st.columns([1, 1, 1, 2])
+
+    with action_col1:
+        if st.button("Save Profile", key="brand_studio_save"):
+            try:
+                updated_profile = BrandingProfile(
+                    profile_name=profile.profile_name,
+                    brand_voice=brand_voice.strip(),
+                    logo_path=Path(logo_path) if logo_path.strip() else None,
+                    logo_placement=logo_placement,
+                    logo_opacity=logo_opacity,
+                    font_path=Path(font_path) if font_path.strip() else None,
+                    caption_style=CaptionStyle(
+                        color=caption_color,
+                        size=caption_size,
+                        shadow=caption_shadow,
+                        bold=caption_bold,
+                        italic=caption_italic,
+                        font=caption_font,
+                    ),
+                    intro_sound=Path(intro_sound) if intro_sound.strip() else None,
+                    transition_sound=Path(transition_sound) if transition_sound.strip() else None,
+                    outro_sound=Path(outro_sound) if outro_sound.strip() else None,
+                    platform_overrides=profile.platform_overrides,
+                )
+                save_profile(updated_profile, branding_dir)
+                st.success(f"Profile '{profile.profile_name}' saved.")
+            except (ValueError, OSError) as exc:
+                st.error(f"Failed to save profile: {exc}")
+
+    with action_col2:
+        if st.button("Delete Profile", key="brand_studio_delete"):
+            try:
+                deleted = delete_profile(profile.profile_name, branding_dir)
+                if deleted:
+                    st.success(f"Profile '{profile.profile_name}' deleted.")
+                    st.rerun()
+                else:
+                    st.warning("Profile file was already removed.")
+            except (ValueError, OSError) as exc:
+                st.error(f"Failed to delete profile: {exc}")
+
+    with action_col3:
+        if st.button("Set as Active", key="brand_studio_activate"):
+            _set_active_branding_profile(profile.profile_name)
+            st.success(f"'{profile.profile_name}' set as active branding profile.")
+
+
+def _set_active_branding_profile(profile_name: str | None) -> None:
+    """Persist selected profile name into current job review state if a job is selected."""
+    job_id = st.session_state.get("current_job_id")
+    if not job_id:
+        return
+    job_dir = _job_dir_for(job_id)
+    decisions = _load_review_decisions(job_dir)
+    decisions.branding_profile_name = profile_name
+    save_review_decisions(job_dir, decisions)
+
+
+# ============================================================================
+# Production Sidebar Controls
+# ============================================================================
+
+
+def render_production_controls(job_id: str, job_dir: Path) -> None:
+    """Render Phase 9 production controls in the editor sidebar region."""
+    st.markdown("---")
+    st.markdown("**Production Controls**")
+
+    decisions = _load_review_decisions(job_dir)
+
+    # ── Branding Profile Selection ──────────────────────────────────────────
+    branding_dir = _get_branding_dir()
+    profiles = list_profiles(branding_dir)
+    profile_options = ["(none)", *profiles]
+    current_profile = decisions.branding_profile_name
+    current_idx = 0
+    if current_profile and current_profile in profiles:
+        current_idx = profiles.index(current_profile) + 1
+
+    profile_select = st.selectbox(
+        "Branding Profile",
+        range(len(profile_options)),
+        format_func=lambda i: profile_options[i],
+        index=current_idx,
+        key=f"prod_branding_profile_{job_id}",
+    )
+    new_profile_name = profile_options[profile_select] if profile_select > 0 else None
+
+    # ── Caption Controls ────────────────────────────────────────────────────
+    captions_enabled = st.checkbox(
+        "Enable Captions",
+        value=decisions.captions_enabled,
+        key=f"prod_captions_{job_id}",
+        help="Burn ASS captions into exported video.",
+    )
+
+    # ── Sound Kit (Auto-Ducking) Toggle ─────────────────────────────────────
+    sound_kit_enabled = st.checkbox(
+        "Enable Sound Kit",
+        value=decisions.sound_kit_enabled,
+        key=f"prod_sound_kit_{job_id}",
+        help="Mix intro/transition/outro stingers with auto-ducking.",
+    )
+
+    # ── AI Thumbnail Generation Toggle ──────────────────────────────────────
+    ai_thumbnails = st.checkbox(
+        "AI Thumbnail Generation",
+        value=decisions.ai_thumbnails_enabled,
+        key=f"prod_ai_thumbnails_{job_id}",
+        help="Generate AI thumbnails via Imagen 4 or FLUX during analysis.",
+    )
+
+    # ── Manual Sync Offset Slider ───────────────────────────────────────────
+    sync_offset_value = decisions.manual_sync_offset_ms if decisions.manual_sync_offset_ms else 0.0
+    manual_sync_offset = st.slider(
+        "Manual Sync Offset (ms)",
+        min_value=-2000.0,
+        max_value=2000.0,
+        value=sync_offset_value,
+        step=10.0,
+        key=f"prod_sync_offset_{job_id}",
+        help="Override auto-sync offset. 0 = use auto-detected value.",
+    )
+
+    # ── Persist if changed ──────────────────────────────────────────────────
+    needs_save = False
+    if new_profile_name != decisions.branding_profile_name:
+        decisions.branding_profile_name = new_profile_name
+        needs_save = True
+    if captions_enabled != decisions.captions_enabled:
+        decisions.captions_enabled = captions_enabled
+        needs_save = True
+    if sound_kit_enabled != decisions.sound_kit_enabled:
+        decisions.sound_kit_enabled = sound_kit_enabled
+        needs_save = True
+    if ai_thumbnails != decisions.ai_thumbnails_enabled:
+        decisions.ai_thumbnails_enabled = ai_thumbnails
+        needs_save = True
+
+    effective_sync = manual_sync_offset if manual_sync_offset != 0.0 else None
+    if effective_sync != decisions.manual_sync_offset_ms:
+        decisions.manual_sync_offset_ms = effective_sync
+        needs_save = True
+
+    if needs_save:
+        save_review_decisions(job_dir, decisions)
+
+
+# ============================================================================
 # Main App
 # ============================================================================
 def main() -> None:
@@ -2324,6 +2729,8 @@ def main() -> None:
         render_dashboard()
     elif current_page == "editor":
         render_editor()
+    elif current_page == "brand_studio":
+        render_brand_studio()
     elif current_page == "settings":
         render_settings()
     else:
