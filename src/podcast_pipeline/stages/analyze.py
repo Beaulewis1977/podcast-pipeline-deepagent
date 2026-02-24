@@ -751,16 +751,18 @@ class AnalyzeStage(Stage):
             ]
 
         model = self.config.fillers.llm_triage_model
+        # Normalize for routing checks only; preserve original for API calls.
+        model_key = model.strip().lower()
 
         # Determine provider and API key from model name.
         # Only Gemini is officially supported for triage; other models fall back
         # to the OpenAI-compatible transport.  Claude/Anthropic models are NOT
         # supported and will fail at the API call — use gemini-2.5-flash-lite.
-        if model.startswith("gemini"):
+        if model_key.startswith("gemini"):
             api_key = self.config.api_keys.gemini
             provider_name = "gemini"
         else:
-            if model.startswith("claude") or model.startswith("anthropic"):
+            if model_key.startswith("claude") or model_key.startswith("anthropic"):
                 self.logger.warning(
                     "triage_unsupported_model",
                     model=model,
