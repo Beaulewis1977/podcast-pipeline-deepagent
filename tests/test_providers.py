@@ -18,6 +18,11 @@ from podcast_pipeline.providers.base import (
     ProviderParseError,
     RateLimitError,
 )
+from podcast_pipeline.providers.claude_provider import (
+    _ANALYSIS_TOOL_NAME,
+    SUPPORTED_CLAUDE_MODELS,
+    ClaudeProvider,
+)
 from podcast_pipeline.providers.gemini import GeminiProvider
 from podcast_pipeline.providers.kimi import KIMI_API_URL, KimiProvider
 from podcast_pipeline.stages.analyze import AnalyzeStage
@@ -587,3 +592,293 @@ def test_analyze_stage_injects_trend_context_when_artifacts_exist(
     assert "Strong controversy framing" in trend_context["trending_hooks"]
     assert "avg_velocity_per_hour=42.50" in trend_context["momentum_signals"]
     assert "clip_rank_1_combined_score=9.10" in trend_context["momentum_signals"]
+
+
+# ---------------------------------------------------------------------------
+# Claude provider helpers
+# ---------------------------------------------------------------------------
+
+
+def _make_fake_tool_use_message(payload: dict[str, Any]) -> Any:
+    """Build a fake Anthropic Message with a tool_use content block."""
+    tool_block = SimpleNamespace(
+        type="tool_use",
+        id="tu_fake123",
+        name=_ANALYSIS_TOOL_NAME,
+        input=payload,
+    )
+    return SimpleNamespace(
+        content=[tool_block],
+        stop_reason="tool_use",
+        model="claude-sonnet-4-6",
+    )
+
+
+def _make_fake_text_message(text: str) -> Any:
+    """Build a fake Anthropic Message with only a text content block."""
+    text_block = SimpleNamespace(type="text", text=text)
+    return SimpleNamespace(
+        content=[text_block],
+        stop_reason="end_turn",
+        model="claude-sonnet-4-6",
+    )
+
+
+def _make_fake_empty_message() -> Any:
+    """Build a fake Anthropic Message with no content blocks."""
+    return SimpleNamespace(
+        content=[],
+        stop_reason="end_turn",
+        model="claude-sonnet-4-6",
+    )
+
+
+# ---------------------------------------------------------------------------
+# ClaudeProvider — availability
+# ---------------------------------------------------------------------------
+
+
+def test_claude_provider_is_available_with_key() -> None:
+    """ClaudeProvider.is_available returns True when API key is present."""
+    provider = ClaudeProvider(api_key="sk-ant-test")
+    assert provider.is_available() is True
+
+
+def test_claude_provider_is_not_available_without_key() -> None:
+    """ClaudeProvider.is_available returns False when API key is absent."""
+    provider = ClaudeProvider(api_key=None)
+    assert provider.is_available() is False
+
+
+def test_claude_provider_is_not_available_with_empty_string() -> None:
+    """ClaudeProvider.is_available returns False for empty-string key."""
+    provider = ClaudeProvider(api_key="")
+    assert provider.is_available() is False
+
+
+# ---------------------------------------------------------------------------
+# ClaudeProvider — protocol conformance
+# ---------------------------------------------------------------------------
+
+
+def test_claude_provider_name_is_claude() -> None:
+    """ClaudeProvider.name is 'claude'."""
+    provider = ClaudeProvider(api_key="test")
+    assert provider.name == "claude"
+
+
+def test_claude_provider_supports_video_is_false() -> None:
+    """ClaudeProvider.supports_video is False (transcript-only)."""
+    provider = ClaudeProvider(api_key="test")
+    assert provider.supports_video is False
+
+
+def test_claude_provider_default_model_is_sonnet() -> None:
+    """ClaudeProvider default model is claude-sonnet-4-6."""
+    provider = ClaudeProvider(api_key="test")
+    assert provider.model == "claude-sonnet-4-6"
+
+
+def test_claude_provider_model_override() -> None:
+    """ClaudeProvider accepts model override at construction."""
+    provider = ClaudeProvider(api_key="test", model="claude-haiku-4-5")
+    assert provider.model == "claude-haiku-4-5"
+
+
+def test_claude_supported_models_contains_three_models() -> None:
+    """SUPPORTED_CLAUDE_MODELS contains the three expected models."""
+    assert "claude-sonnet-4-6" in SUPPORTED_CLAUDE_MODELS
+    assert "claude-haiku-4-5" in SUPPORTED_CLAUDE_MODELS
+    assert "claude-opus-4-6" in SUPPORTED_CLAUDE_MODELS
+    assert len(SUPPORTED_CLAUDE_MODELS) == 3
+
+
+# ---------------------------------------------------------------------------
+# ClaudeProvider — structured output contract (parse paths)
+# ---------------------------------------------------------------------------
+
+
+def test_claude_analyze_returns_valid_result_from_tool_use(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ClaudeProvider.analyze returns AnalysisResult from valid tool_use response."""
+    provider = ClaudeProvider(api_key="sk-ant-test")
+    payload = _valid_analysis_payload()
+    fake_message = _make_fake_tool_use_message(payload)
+
+    fake_client = SimpleNamespace(
+        messages=SimpleNamespace(
+            create=lambda **kwargs: fake_message,
+        )
+    )
+    monkeypatch.setattr(provider, "_get_client", lambda: fake_client)
+
+    result = provider.analyze(Path("proxy.mp4"), {"text": "transcript"})
+    assert isinstance(result, AnalysisResult)
+    assert result.metadata.summary == "Valid provider response"
+
+
+def test_claude_analyze_no_key_raises_provider_error() -> None:
+    """analyze raises ProviderError immediately when no API key is present."""
+    provider = ClaudeProvider(api_key=None)
+    with pytest.raises(ProviderError, match="API key not configured"):
+        provider.analyze(Path("proxy.mp4"), {"text": "transcript"})
+
+
+def test_claude_parse_no_tool_use_block_raises_provider_parse_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No tool_use block in response must raise ProviderParseError."""
+    provider = ClaudeProvider(api_key="sk-ant-test")
+    fake_message = _make_fake_empty_message()
+
+    fake_client = SimpleNamespace(messages=SimpleNamespace(create=lambda **kwargs: fake_message))
+    monkeypatch.setattr(provider, "_get_client", lambda: fake_client)
+
+    with pytest.raises(ProviderParseError, match="no tool_use block"):
+        provider.analyze(Path("proxy.mp4"), {"text": "transcript"})
+
+
+def test_claude_parse_invalid_schema_raises_provider_parse_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """tool_use input that fails AnalysisResult validation raises ProviderParseError."""
+    provider = ClaudeProvider(api_key="sk-ant-test")
+    # Malformed payload: content_cuts items missing required fields
+    bad_payload: dict[str, Any] = {
+        "content_cuts": [{"reason": "missing timestamps"}],
+        "viral_clips": [],
+        "thumbnail_frames": [],
+        "metadata": {"summary": "s", "topics": []},
+    }
+    fake_message = _make_fake_tool_use_message(bad_payload)
+
+    fake_client = SimpleNamespace(messages=SimpleNamespace(create=lambda **kwargs: fake_message))
+    monkeypatch.setattr(provider, "_get_client", lambda: fake_client)
+
+    with pytest.raises(ProviderParseError, match="invalid analysis schema"):
+        provider.analyze(Path("proxy.mp4"), {"text": "transcript"})
+
+
+def test_claude_parse_non_dict_tool_input_raises_provider_parse_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """tool_use block with non-dict input raises ProviderParseError."""
+    provider = ClaudeProvider(api_key="sk-ant-test")
+    bad_block = SimpleNamespace(
+        type="tool_use", id="x", name=_ANALYSIS_TOOL_NAME, input="not-a-dict"
+    )
+    fake_message = SimpleNamespace(content=[bad_block], stop_reason="tool_use")
+
+    fake_client = SimpleNamespace(messages=SimpleNamespace(create=lambda **kwargs: fake_message))
+    monkeypatch.setattr(provider, "_get_client", lambda: fake_client)
+
+    with pytest.raises(ProviderParseError, match="non-dict input"):
+        provider.analyze(Path("proxy.mp4"), {"text": "transcript"})
+
+
+def test_claude_parse_text_block_json_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Text-block JSON fallback path produces valid AnalysisResult."""
+    provider = ClaudeProvider(api_key="sk-ant-test")
+    payload = _valid_analysis_payload()
+    fake_message = _make_fake_text_message(json.dumps(payload))
+
+    fake_client = SimpleNamespace(messages=SimpleNamespace(create=lambda **kwargs: fake_message))
+    monkeypatch.setattr(provider, "_get_client", lambda: fake_client)
+
+    result = provider.analyze(Path("proxy.mp4"), {"text": "transcript"})
+    assert isinstance(result, AnalysisResult)
+
+
+def test_claude_parse_text_block_invalid_json_raises_provider_parse_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Text-block fallback with invalid JSON raises ProviderParseError."""
+    provider = ClaudeProvider(api_key="sk-ant-test")
+    fake_message = _make_fake_text_message("not valid JSON {{{")
+
+    fake_client = SimpleNamespace(messages=SimpleNamespace(create=lambda **kwargs: fake_message))
+    monkeypatch.setattr(provider, "_get_client", lambda: fake_client)
+
+    with pytest.raises(ProviderParseError, match="invalid JSON"):
+        provider.analyze(Path("proxy.mp4"), {"text": "transcript"})
+
+
+# ---------------------------------------------------------------------------
+# ClaudeProvider — retry and error classification
+# ---------------------------------------------------------------------------
+
+
+def test_claude_rate_limit_error_is_retryable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """RateLimitError from Claude is retryable (retryable=True)."""
+    provider = ClaudeProvider(api_key="sk-ant-test")
+    monkeypatch.setattr(provider.analyze.retry, "wait", wait_none())  # type: ignore[attr-defined]
+    monkeypatch.setattr(provider.analyze.retry, "stop", stop_after_attempt(1))  # type: ignore[attr-defined]
+
+    class _FakeRateLimitError(Exception):
+        """Simulates anthropic.RateLimitError."""
+
+        pass
+
+    _FakeRateLimitError.__name__ = "RateLimitError"
+    _FakeRateLimitError.__qualname__ = "RateLimitError"
+
+    fake_client = SimpleNamespace(
+        messages=SimpleNamespace(
+            create=lambda **kwargs: (_ for _ in ()).throw(_FakeRateLimitError("rate limit hit"))
+        )
+    )
+    monkeypatch.setattr(provider, "_get_client", lambda: fake_client)
+
+    with pytest.raises(RateLimitError) as exc_info:
+        provider.analyze(Path("proxy.mp4"), {"text": "transcript"})
+
+    assert exc_info.value.retryable is True
+
+
+def test_claude_generic_api_error_wraps_to_provider_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Non-rate-limit API errors are wrapped as ProviderError."""
+    provider = ClaudeProvider(api_key="sk-ant-test")
+
+    fake_client = SimpleNamespace(
+        messages=SimpleNamespace(
+            create=lambda **kwargs: (_ for _ in ()).throw(ConnectionError("network down"))
+        )
+    )
+    monkeypatch.setattr(provider, "_get_client", lambda: fake_client)
+
+    with pytest.raises(ProviderError):
+        provider.analyze(Path("proxy.mp4"), {"text": "transcript"})
+
+
+def test_claude_analyze_passes_trend_context_to_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Claude analyze injects trend_context from transcript into the prompt."""
+    provider = ClaudeProvider(api_key="sk-ant-test")
+    captured: dict[str, Any] = {}
+
+    def _fake_create(**kwargs: Any) -> Any:
+        captured["messages"] = kwargs.get("messages", [])
+        return _make_fake_tool_use_message(_valid_analysis_payload())
+
+    fake_client = SimpleNamespace(messages=SimpleNamespace(create=_fake_create))
+    monkeypatch.setattr(provider, "_get_client", lambda: fake_client)
+
+    trend_context = {
+        "keywords": ["ai tools"],
+        "trending_hooks": ["Best AI hook"],
+        "competitive_angle": "Differentiate on speed.",
+        "momentum_signals": ["avg_velocity=12.0"],
+    }
+    provider.analyze(Path("proxy.mp4"), {"text": "test", "trend_context": trend_context})
+
+    user_content = captured["messages"][0]["content"]
+    assert "ai tools" in user_content
+    assert "Best AI hook" in user_content

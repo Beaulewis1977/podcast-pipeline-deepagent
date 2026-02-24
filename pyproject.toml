@@ -27,6 +27,7 @@ dependencies = [
     "google-genai>=1.0.0",
     "openai>=1.60.0",
     "httpx>=0.28.0",
+    "anthropic>=0.80.0",
     # CLI & Config
     "typer>=0.15.0",
     "pydantic>=2.10.0",
@@ -181,6 +182,10 @@ ignore = [
     "PLC0415", # lazy imports
     "S603",    # subprocess calls are trusted internal utilities
 ]
+"src/podcast_pipeline/mcp/*.py" = [
+    "PLC0415", # lazy imports for dev-only fastmcp
+    "PLR0913", # many tool args is expected pattern for MCP tools
+]
 
 [tool.ruff.lint.isort]
 known-first-party = ["podcast_pipeline"]
@@ -217,6 +222,12 @@ module = [
     "soundfile.*",
     "streamlit.*",
     "uvicorn.*",
+    # Optional/conditional imports
+    "anthropic",
+    "anthropic.*",
+    # Dev-only MCP tooling — not installed in production env
+    "fastmcp",
+    "fastmcp.*",
     # Optional GPU/audio extras — not installed in base env
     "silero_vad",
     "silero_vad.*",
@@ -291,6 +302,7 @@ directory = "htmlcov"
 
 [dependency-groups]
 dev = [
+    "fastmcp>=2.0.0",
     "mypy>=1.19.1",
     "pip-audit>=2.10.0",
     "pre-commit>=4.5.1",
