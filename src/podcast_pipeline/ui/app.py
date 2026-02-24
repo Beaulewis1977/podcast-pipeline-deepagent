@@ -25,6 +25,7 @@ from podcast_pipeline.clients.service_client import (
     ServiceUnavailableError,
 )
 from podcast_pipeline.config import Config, load_config
+from podcast_pipeline.config.settings import SUPPORTED_MODEL_PROVIDERS
 from podcast_pipeline.export_targets import (
     DEFAULT_EXPORT_PLATFORMS,
     EXPORT_TARGETS,
@@ -2759,7 +2760,25 @@ def render_settings() -> None:
 
     # AI Models
     with st.expander("🤖 AI Models"):
-        st.text_input("Provider", value=config.models.provider, disabled=True)
+        provider_options = sorted(SUPPORTED_MODEL_PROVIDERS)
+        current_provider_idx = (
+            provider_options.index(config.models.provider)
+            if config.models.provider in provider_options
+            else 0
+        )
+        selected_provider = st.selectbox(
+            "Analysis Provider",
+            options=provider_options,
+            index=current_provider_idx,
+            key="settings_provider_select",
+            help="Select the AI provider for analysis. Session-only — does not persist to config.yaml.",
+        )
+        if selected_provider != config.models.provider:
+            config.models.provider = selected_provider
+        st.caption(
+            "To change provider permanently, set `models.provider` in config.yaml "
+            "or start with `MODELS__PROVIDER=claude`."
+        )
         st.text_input("Model", value=config.models.model, disabled=True)
         st.text_input(
             "Fallback Provider", value=config.models.fallback_provider or "None", disabled=True
@@ -2775,6 +2794,8 @@ def render_settings() -> None:
         st.markdown("**Status:**")
         st.markdown(f"- Gemini: {'✅ Configured' if config.api_keys.gemini else '❌ Not set'}")
         st.markdown(f"- Kimi: {'✅ Configured' if config.api_keys.kimi else '❌ Not set'}")
+        anthropic_status = "✅ Configured" if config.api_keys.anthropic else "❌ Not set"
+        st.markdown(f"- Anthropic (Claude): {anthropic_status}")
         st.markdown(f"- YouTube: {'✅ Configured' if config.api_keys.youtube else '❌ Not set'}")
 
         st.info("API keys are configured via environment variables or .env file")
