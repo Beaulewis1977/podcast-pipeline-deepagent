@@ -10,7 +10,8 @@ from podcast_pipeline.config import Config
 from podcast_pipeline.models.analysis import AnalysisResult
 from podcast_pipeline.models.job import Job
 from podcast_pipeline.models.triage import FillerTriageResult
-from podcast_pipeline.providers.base import ProviderError
+from podcast_pipeline.providers.base import AnalysisProvider, ProviderError
+from podcast_pipeline.providers.claude_provider import ClaudeProvider
 from podcast_pipeline.providers.gemini import GeminiProvider
 from podcast_pipeline.providers.kimi import KimiProvider
 from podcast_pipeline.research.viral_detector import ViralClipDetector
@@ -31,23 +32,71 @@ class AnalyzeStage(Stage):
 
     def __init__(self, config: Config):
         super().__init__(config)
-        self.providers: list[GeminiProvider | KimiProvider] = []
+        self.providers: list[AnalysisProvider] = []
 
-        # Initialize primary provider
-        if config.api_keys.gemini:
+        # Initialize primary provider based on configured provider name.
+        primary_provider = config.models.provider
+        primary_model = config.models.model
+
+        if primary_provider == "gemini" and config.api_keys.gemini:
             self.providers.append(
                 GeminiProvider(
                     api_key=config.api_keys.gemini,
-                    model=config.models.model,
+                    model=primary_model,
                 )
             )
-
-        # Initialize fallback provider
-        if config.api_keys.kimi:
+        elif primary_provider == "kimi" and config.api_keys.kimi:
             self.providers.append(
                 KimiProvider(
                     api_key=config.api_keys.kimi,
-                    model=config.models.fallback_model or "moonshot-v1-128k",
+                    model=primary_model,
+                )
+            )
+        elif primary_provider == "claude" and config.api_keys.anthropic:
+            self.providers.append(
+                ClaudeProvider(
+                    api_key=config.api_keys.anthropic,
+                    model=primary_model,
+                )
+            )
+        elif primary_provider == "gemini":
+            # Legacy path: Gemini was the only primary before multi-provider support.
+            # If GEMINI_API_KEY is present, it was already handled above.
+            # Fall through to fallback provider selection below.
+            pass
+
+        # Initialize fallback provider (only if different from primary).
+        fallback_provider = config.models.fallback_provider
+        fallback_model = config.models.fallback_model
+
+        if fallback_provider == "kimi" and config.api_keys.kimi:
+            self.providers.append(
+                KimiProvider(
+                    api_key=config.api_keys.kimi,
+                    model=fallback_model or "moonshot-v1-128k",
+                )
+            )
+        elif fallback_provider == "gemini" and config.api_keys.gemini:
+            self.providers.append(
+                GeminiProvider(
+                    api_key=config.api_keys.gemini,
+                    model=fallback_model or "gemini-2.5-flash",
+                )
+            )
+        elif fallback_provider == "claude" and config.api_keys.anthropic:
+            self.providers.append(
+                ClaudeProvider(
+                    api_key=config.api_keys.anthropic,
+                    model=fallback_model or "claude-sonnet-4-6",
+                )
+            )
+        elif fallback_provider is None and primary_provider != "kimi" and config.api_keys.kimi:
+            # Implicit Kimi fallback when no explicit fallback is configured
+            # and primary is not already Kimi — preserves legacy behavior.
+            self.providers.append(
+                KimiProvider(
+                    api_key=config.api_keys.kimi,
+                    model="moonshot-v1-128k",
                 )
             )
 
@@ -190,7 +239,10 @@ class AnalyzeStage(Stage):
         if not self.providers:
             return StageResult(
                 success=False,
-                error="No AI providers configured. Set GEMINI_API_KEY or KIMI_API_KEY in .env",
+                error=(
+                    "No AI providers configured. "
+                    "Set GEMINI_API_KEY, KIMI_API_KEY, or ANTHROPIC_API_KEY in .env"
+                ),
             )
 
         return StageResult(
@@ -497,7 +549,7 @@ class AnalyzeStage(Stage):
 
     def _build_degraded_mode_metadata(
         self,
-        provider: GeminiProvider | KimiProvider,
+        provider: AnalysisProvider,
         provider_index: int,
     ) -> dict[str, Any]:
         """Build degraded-mode metadata for transcript-only provider outputs."""

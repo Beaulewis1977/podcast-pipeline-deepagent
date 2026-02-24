@@ -10,7 +10,7 @@ import yaml
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-SUPPORTED_MODEL_PROVIDERS = {"gemini", "kimi"}
+SUPPORTED_MODEL_PROVIDERS = {"gemini", "kimi", "claude"}
 SUPPORTED_GEMINI_MODELS = {
     "gemini-2.5-flash",
     "gemini-2.5-flash-latest",
@@ -22,9 +22,15 @@ SUPPORTED_KIMI_MODELS = {
     "kimi-k2.5",
     "moonshot-v1-128k",
 }
+SUPPORTED_CLAUDE_MODELS = {
+    "claude-sonnet-4-6",  # Best cost/performance (RECOMMENDED)
+    "claude-haiku-4-5",  # Fast, cheaper
+    "claude-opus-4-6",  # Most intelligent, highest cost
+}
 SUPPORTED_MODELS_BY_PROVIDER = {
     "gemini": SUPPORTED_GEMINI_MODELS,
     "kimi": SUPPORTED_KIMI_MODELS,
+    "claude": SUPPORTED_CLAUDE_MODELS,
 }
 
 SERVICE_HOST_PATTERN = re.compile(r"^[A-Za-z0-9.-]+$")
@@ -822,6 +828,7 @@ class APIKeysConfig(BaseModel):
     kimi: str | None = None
     openai: str | None = None
     youtube: str | None = None
+    anthropic: str | None = None
 
     @classmethod
     def from_env(cls) -> "APIKeysConfig":
@@ -831,6 +838,7 @@ class APIKeysConfig(BaseModel):
             kimi=os.getenv("KIMI_API_KEY"),
             openai=os.getenv("OPENAI_API_KEY"),
             youtube=os.getenv("YOUTUBE_API_KEY"),
+            anthropic=os.getenv("ANTHROPIC_API_KEY"),
         )
 
 
