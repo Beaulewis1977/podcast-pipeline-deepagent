@@ -1,8 +1,8 @@
 # Project State: Podcast Pipeline
 
 **Last updated:** 2026-02-24
-**Current phase:** Phase 9.12 — Streamlit UI Gap Closure (not planned yet)
-**Overall progress:** Phase 9 complete (11/11 plans); 62 plans completed overall; Phase 9.12 pending planning
+**Current phase:** Phase 9.12 — Streamlit UI Gap Closure
+**Overall progress:** Phase 9 complete (11/11 plans); 63 plans completed overall; Phase 9.12 plan 1/3 complete
 
 ## Project Reference
 
@@ -14,15 +14,15 @@ See: `.planning/PROJECT.md`
 ## Current Position
 
 ```text
-Phase:    9.12 (not planned yet — pending /gsd:plan-phase 9.12)
-Plan:     n/a — no plans created yet
-Status:   Phase 9 complete; Phase 9.12 added to close UI/render-wiring gaps
-Last activity: 2026-02-24 - Added Phase 9.12 (Streamlit UI Gap Closure)
+Phase:    9.12 (Streamlit UI Gap Closure)
+Plan:     01/03 complete — 09.12-01 render wiring + export target
+Status:   Executing — 1 plan done, 2 remaining
+Last activity: 2026-02-24 - Completed 09.12-01-PLAN.md (GAP-7 render wiring fix)
 
-Progress: [██████████████████████████████] 62/62 plans complete (Phase 9.12 not yet counted)
+Progress: [██████████████████████████████] 63/65 plans complete
 ```
 
-**Current Phase:** Phase 9.12 — Streamlit UI Gap Closure (not planned yet)
+**Current Phase:** Phase 9.12 — Streamlit UI Gap Closure (1/3 plans complete)
 
 ## Phase Status
 
@@ -39,13 +39,13 @@ Progress: [███████████████████████
 | 7 | Smooth Editing & Filler Word Control | Complete (verified 2026-02-21) | 4/4 | 100% |
 | 8 | Intelligent Cut Quality | Complete (verified 2026-02-21) | 6/6 | 100% |
 | 9 | Automated Branding, Captions, and Multi-Track Sync | Complete (verified 2026-02-24) | 11/11 | 100% |
-| 9.12 | Streamlit UI Gap Closure | Not planned | 0/TBD | 0% |
+| 9.12 | Streamlit UI Gap Closure | In progress | 1/3 | 33% |
 
 ## Performance Metrics
 
 | Metric | Value |
 |--------|-------|
-| Plans completed | 62/62 |
+| Plans completed | 63/65 |
 | Requirements done | 35/83 (21 partial) |
 | Phases complete | 9/9 |
 | Estimated completion | All phases complete |
@@ -205,6 +205,9 @@ Progress: [███████████████████████
 | Single Gemini backend replaces dual Imagen 4 / FLUX.1 Schnell routing | Eliminates Vertex AI auth complexity, VRAM/GPU requirements, and 3 optional dependencies | 2026-02-24 |
 | Image bytes via part.inline_data.data (not part.as_image) | Avoids PIL/Pillow dependency for raw image bytes access | 2026-02-24 |
 | _audit_with_gemini_pro defined but not wired into generation flow | Supports future compositional auditing without scope creep in this plan | 2026-02-24 |
+| decisions.captions_enabled replaces config.branding.captions.enabled as burn-in gate | UI decision takes precedence over config.yaml — prevents Production sidebar from being silently ignored | 2026-02-24 |
+| decisions.sound_kit_enabled gates _mix_stingers unconditionally | Stingers skip when False regardless of configured sound files — consistent UI-as-source-of-truth | 2026-02-24 |
+| effective_profile_name resolved once from decisions.branding_profile_name with config fallback | Single resolution point before both _burn_captions and _mix_stingers — avoids redundant override logic | 2026-02-24 |
 
 ### Roadmap Evolution
 
@@ -352,16 +355,17 @@ Progress: [███████████████████████
 - 2026-02-24: Completed 09-11-PLAN.md (Gemini Vision model pivot: replaced Imagen 4 / FLUX.1 with exclusive Gemini Vision thumbnail generation via google.genai SDK; 1031 tests passing)
 - 2026-02-24: Post-Phase 9 UI audit completed — 7 gaps identified and documented in 09-UI-GAPS.md (2 missing, 4 partial UI gaps + 1 critical render wiring gap where Production sidebar decisions are saved but never consumed by render.py)
 - 2026-02-24: Phase 9.12 added — Streamlit UI Gap Closure (closes all 7 gaps; awaiting planning)
+- 2026-02-24: Completed 09.12-01-PLAN.md (GAP-7 render wiring: decisions.captions_enabled/sound_kit_enabled/branding_profile_name now gate render passes; youtube_ultra registered; caption_aspect_ratio and auto_duck_enabled fields added; 6 regression tests)
 
 ## Session Continuity
 
 ### Last session
 
-2026-02-24 — Phase 9 complete (11/11 plans). Post-execution UI audit found 7 gaps. Phase 9.12 added to roadmap.
+2026-02-24 — Phase 9.12 execution started. Completed 09.12-01 (GAP-7 render wiring + export target registration).
 
 ### Stopped at
 
-Phase 9.12 added — next step is `/gsd:plan-phase 9.12` (after research on the gaps).
+Completed 09.12-01-PLAN.md — next step is 09.12-02 (caption safe-zone + auto-duck wiring).
 
 ### Resume file
 
@@ -369,4 +373,4 @@ None
 
 ---
 
-*State updated: 2026-02-24 (09-11 executed -- Gemini Vision model pivot; Phase 9 complete 11/11 plans; 62/62 overall)*
+*State updated: 2026-02-24 (09.12-01 executed -- GAP-7 render wiring fix; Phase 9.12 1/3 plans; 63/65 overall)*
