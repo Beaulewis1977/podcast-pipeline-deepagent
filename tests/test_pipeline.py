@@ -1469,3 +1469,207 @@ class TestRenderSyncOffset:
 
         result = stage._apply_sync_offset(input_video, temp_dir, offset_ms=100.0)
         assert result is None
+
+
+# ============================================================================
+# Phase 9: E2E Integration Tests
+# ============================================================================
+
+
+class TestPhase9BrandingWorkflow:
+    """Integration tests for Phase 9 branding + captions + sync + thumbnail workflow."""
+
+    def test_phase9_profile_selection_persists_through_review_state(
+        self, config: Config, temp_dir: Path
+    ) -> None:
+        """Profile selection flows from UI through review decisions to render."""
+        from podcast_pipeline.stages.review import ReviewDecisions
+
+        # Simulate profile selection into review decisions
+        decisions = ReviewDecisions(
+            branding_profile_name="test-brand",
+            captions_enabled=True,
+            sound_kit_enabled=True,
+            ai_thumbnails_enabled=False,
+            manual_sync_offset_ms=250.0,
+        )
+
+        # Persist and reload
+        review_dir = temp_dir / "test-job" / "review"
+        review_dir.mkdir(parents=True)
+        review_path = review_dir / "review_state.json"
+        review_path.write_text(decisions.model_dump_json(indent=2))
+
+        loaded = ReviewDecisions.model_validate_json(review_path.read_text())
+        assert loaded.branding_profile_name == "test-brand"
+        assert loaded.captions_enabled is True
+        assert loaded.sound_kit_enabled is True
+        assert loaded.ai_thumbnails_enabled is False
+        assert loaded.manual_sync_offset_ms == 250.0
+
+    def test_phase9_branding_profile_crud_lifecycle(self, temp_dir: Path) -> None:
+        """Full branding profile lifecycle: create, list, load, update, delete."""
+        from podcast_pipeline.models.branding import BrandingProfile, CaptionStyle
+        from podcast_pipeline.utils.branding import (
+            delete_profile,
+            list_profiles,
+            load_profile,
+            save_profile,
+        )
+
+        branding_dir = temp_dir / "branding"
+        branding_dir.mkdir()
+
+        # Create
+        profile = BrandingProfile(
+            profile_name="integration-test",
+            brand_voice="Bold and energetic for tech podcasts",
+            caption_style=CaptionStyle(color="#00FF00", size=72, bold=True),
+            intro_sound=Path("assets/intro.wav"),
+        )
+        save_profile(profile, branding_dir)
+
+        # List
+        names = list_profiles(branding_dir)
+        assert "integration-test" in names
+
+        # Load
+        loaded = load_profile("integration-test", branding_dir)
+        assert loaded.brand_voice == "Bold and energetic for tech podcasts"
+        assert loaded.caption_style.color == "#00FF00"
+        assert loaded.caption_style.size == 72
+        assert loaded.intro_sound == Path("assets/intro.wav")
+
+        # Update
+        loaded_updated = loaded.model_copy(
+            update={"brand_voice": "Updated voice for gaming content"}
+        )
+        save_profile(loaded_updated, branding_dir)
+        reloaded = load_profile("integration-test", branding_dir)
+        assert reloaded.brand_voice == "Updated voice for gaming content"
+
+        # Delete
+        assert delete_profile("integration-test", branding_dir) is True
+        assert "integration-test" not in list_profiles(branding_dir)
+
+    def test_phase9_review_decisions_backward_compatible(self) -> None:
+        """Phase 9 fields on ReviewDecisions must be optional with defaults."""
+        from podcast_pipeline.stages.review import ReviewDecisions
+
+        # Simulate loading a pre-Phase 9 review state (no branding fields)
+        pre_phase9_payload = {
+            "approved_filler_cuts": [0, 1],
+            "review_complete": True,
+            "export_platforms": ["youtube"],
+        }
+        decisions = ReviewDecisions.model_validate(pre_phase9_payload)
+
+        assert decisions.branding_profile_name is None
+        assert decisions.captions_enabled is False
+        assert decisions.sound_kit_enabled is False
+        assert decisions.ai_thumbnails_enabled is False
+        assert decisions.manual_sync_offset_ms is None
+        assert decisions.review_complete is True
+
+    def test_phase9_caption_style_from_profile_flows_to_review(self, temp_dir: Path) -> None:
+        """Caption style from BrandingProfile should be usable in review decisions."""
+        from podcast_pipeline.models.branding import BrandingProfile, CaptionStyle
+        from podcast_pipeline.stages.review import ReviewDecisions
+        from podcast_pipeline.utils.branding import load_profile, save_profile
+
+        branding_dir = temp_dir / "branding"
+        branding_dir.mkdir()
+
+        profile = BrandingProfile(
+            profile_name="caption-test",
+            caption_style=CaptionStyle(
+                color="#FF5500", size=56, shadow=True, bold=False, italic=True, font="Roboto"
+            ),
+        )
+        save_profile(profile, branding_dir)
+
+        # Load and confirm caption style
+        loaded = load_profile("caption-test", branding_dir)
+        assert loaded.caption_style.color == "#FF5500"
+        assert loaded.caption_style.font == "Roboto"
+
+        # Review state references this profile
+        decisions = ReviewDecisions(
+            branding_profile_name="caption-test",
+            captions_enabled=True,
+        )
+        assert decisions.branding_profile_name == "caption-test"
+        assert decisions.captions_enabled is True
+
+    def test_phase9_sound_kit_profile_fields_persist(self, temp_dir: Path) -> None:
+        """Sound kit paths from a BrandingProfile persist through YAML round-trip."""
+        from podcast_pipeline.models.branding import BrandingProfile
+        from podcast_pipeline.utils.branding import load_profile, save_profile
+
+        branding_dir = temp_dir / "branding"
+        branding_dir.mkdir()
+
+        profile = BrandingProfile(
+            profile_name="sound-test",
+            intro_sound=Path("sounds/intro.wav"),
+            transition_sound=Path("sounds/whoosh.wav"),
+            outro_sound=Path("sounds/outro.mp3"),
+        )
+        assert profile.has_sound_kit is True
+
+        save_profile(profile, branding_dir)
+        loaded = load_profile("sound-test", branding_dir)
+        assert loaded.has_sound_kit is True
+        assert loaded.intro_sound == Path("sounds/intro.wav")
+        assert loaded.transition_sound == Path("sounds/whoosh.wav")
+        assert loaded.outro_sound == Path("sounds/outro.mp3")
+
+    def test_phase9_platform_override_resolution_preserves_caption_style(
+        self, temp_dir: Path
+    ) -> None:
+        """Platform override merge should correctly apply caption style overrides."""
+        from podcast_pipeline.models.branding import (
+            BrandingProfile,
+            CaptionStyle,
+            PlatformBrandingOverride,
+        )
+
+        profile = BrandingProfile(
+            profile_name="override-test",
+            caption_style=CaptionStyle(color="#FFFFFF", size=48),
+            platform_overrides={
+                "tiktok": PlatformBrandingOverride(
+                    caption_style=CaptionStyle(color="#FF0000", size=72, bold=True),
+                ),
+            },
+        )
+
+        resolved = profile.resolved_for_platform("tiktok")
+        assert resolved.caption_style.color == "#FF0000"
+        assert resolved.caption_style.size == 72
+        assert resolved.caption_style.bold is True
+        assert resolved.platform_overrides == {}
+
+        # Non-overridden platform keeps base
+        youtube_resolved = profile.resolved_for_platform("youtube")
+        assert youtube_resolved.caption_style.color == "#FFFFFF"
+        assert youtube_resolved.caption_style.size == 48
+
+    def test_phase9_gpu_lease_supervisor_cross_job_serialization(self, temp_dir: Path) -> None:
+        """GPU lease from supervisor should serialize cross-job access."""
+        from podcast_pipeline.service.supervisor import Supervisor
+
+        pipeline_stub = type(
+            "PipelineStub",
+            (),
+            {"config": type("C", (), {"paths": type("P", (), {"jobs_dir": temp_dir})()})()},
+        )()
+        supervisor = Supervisor(pipeline_stub)  # type: ignore[arg-type]
+
+        assert not supervisor.gpu_lease.is_held()
+
+        with supervisor.gpu_lease.acquire(job_id="job-e2e", operation="flux"):
+            assert supervisor.gpu_lease.is_held()
+            assert supervisor.gpu_lease.holder_job_id == "job-e2e"
+
+        assert not supervisor.gpu_lease.is_held()
