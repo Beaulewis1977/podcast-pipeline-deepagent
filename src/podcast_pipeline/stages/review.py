@@ -85,6 +85,16 @@ class ReviewDecisions(BaseModel):
     # When True, the analyze stage will attempt AI thumbnail generation.
     ai_thumbnails_enabled: bool = False
 
+    # Phase 09-12: Caption aspect ratio for ASS burn-in safe-zone selection.
+    # None means "infer from platform spec aspect_ratio at render time".
+    # Set to "16:9", "9:16", or "1:1" for explicit override.
+    caption_aspect_ratio: str | None = None
+
+    # Phase 09-12: Independent auto-ducking toggle.
+    # When True, sidechaincompress ducking runs even if stingers are disabled.
+    # When False (default), ducking only runs as part of stinger mixing.
+    auto_duck_enabled: bool = False
+
     @field_validator("export_platforms", mode="before")
     @classmethod
     def validate_export_platforms(cls, value: Any) -> list[str]:

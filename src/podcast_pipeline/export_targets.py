@@ -36,6 +36,12 @@ EXPORT_TARGETS: tuple[ExportTarget, ...] = (
     ExportTarget("linkedin", "LinkedIn", "video", "Square or landscape business video"),
     ExportTarget("twitter", "Twitter/X", "video", "Landscape short video"),
     ExportTarget("facebook", "Facebook", "video", "Landscape social video"),
+    ExportTarget(
+        "youtube_ultra",
+        "YouTube Ultra (HEVC 10-bit)",
+        "video",
+        "4K HEVC 10-bit @ 12 Mbps — NVENC GPU or libx265 CPU fallback",
+    ),
 )
 
 SUPPORTED_EXPORT_PLATFORMS: tuple[str, ...] = tuple(target.key for target in EXPORT_TARGETS)
