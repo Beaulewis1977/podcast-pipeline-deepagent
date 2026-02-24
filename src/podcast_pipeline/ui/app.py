@@ -196,7 +196,12 @@ st.set_page_config(
 
 
 def get_config() -> Config:
-    """Get cached config."""
+    """Get cached config, reloading if schema has drifted (e.g. new fields added)."""
+    if "config" in st.session_state:
+        cached = st.session_state.config
+        # Invalidate stale cache from older schema versions that lack newer fields.
+        if not hasattr(cached, "branding") or not hasattr(cached.api_keys, "anthropic"):
+            del st.session_state["config"]
     if "config" not in st.session_state:
         st.session_state.config = load_config()
     config: Config = st.session_state.config
@@ -2274,7 +2279,10 @@ def update_export_platforms(job_dir: Path, platforms: list[str]) -> tuple[list[s
 def _get_branding_dir() -> Path:
     """Return the configured branding directory."""
     config = get_config()
-    return config.branding.branding_dir
+    branding = getattr(config, "branding", None)
+    if branding is None:
+        return Path("branding")
+    return Path(branding.branding_dir)
 
 
 def render_brand_studio() -> None:
@@ -2887,7 +2895,8 @@ def render_settings() -> None:
         st.markdown("**Status:**")
         st.markdown(f"- Gemini: {'✅ Configured' if config.api_keys.gemini else '❌ Not set'}")
         st.markdown(f"- Kimi: {'✅ Configured' if config.api_keys.kimi else '❌ Not set'}")
-        anthropic_status = "✅ Configured" if config.api_keys.anthropic else "❌ Not set"
+        anthropic_key = getattr(config.api_keys, "anthropic", None)
+        anthropic_status = "✅ Configured" if anthropic_key else "❌ Not set"
         st.markdown(f"- Anthropic (Claude): {anthropic_status}")
         st.markdown(f"- YouTube: {'✅ Configured' if config.api_keys.youtube else '❌ Not set'}")
 
