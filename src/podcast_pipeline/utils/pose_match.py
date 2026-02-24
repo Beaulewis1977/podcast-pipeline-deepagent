@@ -105,6 +105,8 @@ def scan_best_frame_pair(
     """
     if not left_frames or not right_frames:
         return 0, 0, float("inf")
+    if search_window <= 0:
+        return 0, 0, float("inf")
 
     # Clamp window to available frame counts.
     left_n = min(search_window, len(left_frames))

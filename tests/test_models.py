@@ -297,7 +297,7 @@ class TestFillerCutPhase8:
         assert cut.context_after == "it works"
         assert cut.protected is True
 
-        # Round-trip through JSON
+        # Round-trip through dict serialization
         dumped = cut.model_dump()
         reloaded = FillerCut.model_validate(dumped)
         assert reloaded.category == "hedge"
@@ -306,8 +306,6 @@ class TestFillerCutPhase8:
 
     def test_filler_cut_invalid_category_rejected(self) -> None:
         """FillerCut rejects unrecognised category values."""
-        from pydantic import ValidationError
-
         with pytest.raises(ValidationError):
             FillerCut(start=1.0, end=1.5, word="um", confidence=0.9, category="unknown")
 

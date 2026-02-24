@@ -95,8 +95,8 @@ smoothing:
   join_clamp_ratio: 0.35
   require_transition_filters: false
   # Phase 8 add-ons
-  rife_enabled: true
-  rife_script_path: /home/kngpnn/dev/practical-rife/inference_img.py
+  rife_enabled: false
+  rife_script_path: ""
 
 # Thumbnail compliance constraints by selected export target
 # YouTube values reflect official custom thumbnail guidance.

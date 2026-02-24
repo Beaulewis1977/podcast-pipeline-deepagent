@@ -350,7 +350,7 @@ class TranscribeStage(Stage):
                             FillerCut(
                                 start=start,
                                 end=end,
-                                word=word.word,
+                                word=word_text,
                                 confidence=word.confidence,
                                 category=category,
                                 pause_before_ms=pause_before_ms,

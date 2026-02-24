@@ -17,7 +17,7 @@ def _make_stage(
     *,
     enable_llm_triage: bool = True,
     gemini_key: str | None = "gemini-test-key",
-    llm_triage_model: str = "gemini-3-flash-lite",
+    llm_triage_model: str = "gemini-2.5-flash-lite",
 ) -> AnalyzeStage:
     """Build an AnalyzeStage with a minimal config for triage testing."""
     config = Config()

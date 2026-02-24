@@ -95,7 +95,7 @@ Phase 8 introduces advanced GPU-accelerated video features (RIFE frame interpola
 1. **Install GPU Support**:
 ```bash
 uv sync --extra gpu
-uv pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu128
+uv pip install 'torch==2.10.*' 'torchaudio==2.10.*' --index-url https://download.pytorch.org/whl/cu128
 ```
 1. **Verify Installation**:
 ```bash
@@ -104,6 +104,8 @@ python scripts/smoke_test_gpu_rife.py
 Expected output: `RIFE OK`.
 
 For detailed configuration of filler triage and render passes, see **[Phase 8 Operator Guide](docs/phase8-operator-guide.md)**.
+
+### Configuration
 
 1. Configure `config.yaml` (tracked in this repo) for your environment:
 

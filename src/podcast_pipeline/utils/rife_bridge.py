@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import math
 import subprocess
+import sys
 from pathlib import Path
 
 import structlog
@@ -123,6 +124,11 @@ class RifeBridge:
             logger.warning("rife_not_available", script_path=str(self.script_path))
             return []
 
+        for frame, name in ((frame_a, "frame_a"), (frame_b, "frame_b")):
+            if not frame.is_file():
+                logger.error("rife_input_missing", name=name, path=str(frame))
+                return []
+
         exp = self.frames_to_exp(num_frames)  # e.g. num_frames=4 → exp=2 (2^2=4 frames)
 
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -134,7 +140,7 @@ class RifeBridge:
         model_dir = rife_dir / "train_log"
 
         cmd = [
-            "python",
+            sys.executable,
             str(self.script_path.resolve()),
             "--img",
             str(frame_a.resolve()),
@@ -157,7 +163,13 @@ class RifeBridge:
             output_dir=str(output_dir),
         )
 
-        result = subprocess.run(cmd, cwd=str(rife_dir), capture_output=True, text=True, check=False)
+        try:
+            result = subprocess.run(
+                cmd, cwd=str(rife_dir), capture_output=True, text=True, check=False, timeout=120
+            )
+        except subprocess.TimeoutExpired:
+            logger.exception("rife_timeout", timeout=120)
+            return []
         if result.returncode != 0:
             logger.error(
                 "rife_failed",

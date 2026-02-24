@@ -208,17 +208,19 @@ class TestRifeBridgeSubprocessOutcomes:
         (out_dir / "img001.png").write_bytes(b"PNG")
         (out_dir / "img002.png").write_bytes(b"PNG")
 
+        # Input frames must exist (validation gate).
+        frame_a = tmp_path / "a.png"
+        frame_b = tmp_path / "b.png"
+        frame_a.write_bytes(b"PNG")
+        frame_b.write_bytes(b"PNG")
+
         bridge = RifeBridge(script_path=str(script))
 
         mock_result = MagicMock()
         mock_result.returncode = 0
 
         with patch("subprocess.run", return_value=mock_result):
-            result = bridge.generate(
-                tmp_path / "a.png",
-                tmp_path / "b.png",
-                out_dir,
-            )
+            result = bridge.generate(frame_a, frame_b, out_dir)
 
         assert len(result) == 3
         names = [p.name for p in result]
@@ -236,6 +238,12 @@ class TestRifeBridgeSubprocessOutcomes:
 
         assert not out_dir.exists()
 
+        # Input frames must exist (validation gate).
+        frame_a = tmp_path / "a.png"
+        frame_b = tmp_path / "b.png"
+        frame_a.write_bytes(b"PNG")
+        frame_b.write_bytes(b"PNG")
+
         mock_result = MagicMock()
         mock_result.returncode = 1  # Fail so no PNGs needed
         mock_result.stderr = "error\n"
@@ -243,7 +251,7 @@ class TestRifeBridgeSubprocessOutcomes:
 
         bridge = RifeBridge(script_path=str(script))
         with patch("subprocess.run", return_value=mock_result):
-            bridge.generate(tmp_path / "a.png", tmp_path / "b.png", out_dir)
+            bridge.generate(frame_a, frame_b, out_dir)
 
         assert out_dir.exists(), "output_dir should be created before subprocess call"
 
@@ -316,17 +324,19 @@ class TestRifeBridgeUpstreamContract:
         # Create a decoy PNG without img prefix — must NOT be collected
         (out_dir / "decoy.png").write_bytes(b"PNG")
 
+        # Input frames must exist (validation gate).
+        frame_a = tmp_path / "a.png"
+        frame_b = tmp_path / "b.png"
+        frame_a.write_bytes(b"PNG")
+        frame_b.write_bytes(b"PNG")
+
         bridge = RifeBridge(script_path=str(script))
 
         mock_result = MagicMock()
         mock_result.returncode = 0
 
         with patch("subprocess.run", return_value=mock_result):
-            result = bridge.generate(
-                tmp_path / "a.png",
-                tmp_path / "b.png",
-                out_dir,
-            )
+            result = bridge.generate(frame_a, frame_b, out_dir)
 
         assert len(result) == 2, f"Expected 2 img*.png frames, got {len(result)}"
         assert all(p.parent == out_dir for p in result), "Frames must be from output_dir directly"

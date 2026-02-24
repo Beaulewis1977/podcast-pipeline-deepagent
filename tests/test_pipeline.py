@@ -472,8 +472,8 @@ class TestPhase8LegacyCompatibility:
         assert triage_map == {}
 
         # Each filler should get a safe editorial_action using the legacy path
-        for filler in legacy_fillers:
-            action = _derive_editorial_action(filler, triage_map.get(0), None)
+        for idx, filler in enumerate(legacy_fillers):
+            action = _derive_editorial_action(filler, triage_map.get(idx), None)
             # Legacy fillers without 'protected' or 'category' default to "keep"
             assert action in ("keep", "remove")
 

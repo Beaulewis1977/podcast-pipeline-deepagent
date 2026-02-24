@@ -37,8 +37,8 @@ class FillerCutRange(BaseModel):
 
     # Phase 8: enriched triage fields — all optional/defaulted for backward compat
     protected: bool = False
-    pause_before_ms: float = 0.0
-    pause_after_ms: float = 0.0
+    pause_before_ms: float = Field(default=0.0, ge=0.0)
+    pause_after_ms: float = Field(default=0.0, ge=0.0)
     llm_safe_to_remove: bool | None = None  # None = not triaged
     llm_reason: str = ""
 

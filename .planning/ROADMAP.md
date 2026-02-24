@@ -317,7 +317,7 @@ Plans:
 - Restructure `FillerConfig` into typed `disfluencies`, `hedge_words`, `custom_words` sub-lists with backward-compatible `words` fallback
 - Enrich `FillerCut` transcript model with `category`, `pause_before_ms`, `pause_after_ms`, `context_before`, `context_after`, `protected` fields
 - Add pause-gate protection logic: fillers adjacent to >= 300ms pauses are `protected` and default to keep
-- Add LLM semantic triage sub-stage in `AnalyzeStage` for hedge fillers (batched, cheap gemini-3-flash-lite calls)
+- Add LLM semantic triage sub-stage in `AnalyzeStage` for hedge fillers (batched, cheap gemini-2.5-flash-lite calls)
 - Write `analysis/filler_triage.json` with per-filler `safe_to_remove` verdicts and LLM reasons
 - Wire triage results into review stage `FillerCutRange.default_action` (disfluency -> remove, protected -> keep, LLM-safe hedge -> remove, LLM-review hedge -> review)
 - Update Streamlit filler cards with context snippet, pause badges (ms display), protection lock, and LLM reason
@@ -344,7 +344,7 @@ Plans:
 
 Plans:
 
-- [ ] 08-01-PLAN.md -- Fix llm_triage_model default (gpt-4o-mini -> gemini-3-flash-lite) + verify config fields
+- [ ] 08-01-PLAN.md -- Fix llm_triage_model default (gpt-4o-mini -> gemini-2.5-flash-lite) + verify config fields
 - [ ] 08-02-PLAN.md -- Audit triage code for hardcoded model names + add model-default regression guard
 - [ ] 08-03-PLAN.md -- Verify review/UI editorial_action wiring + filler card Phase 8 display
 - [ ] 08-04-PLAN.md -- Update GPU dependency version floors (silero-vad 6.2, librosa 0.11, opencv 4.13)
@@ -373,7 +373,7 @@ Plans run in 4 execution waves:
 
 **Replan corrections (from 08-RESEARCH.md 2026-02-23 refresh):**
 - CRITICAL: RIFE `--output` flag removed from bridge wrapper (upstream inference_img.py does not accept it)
-- HIGH: llm_triage_model default changed from gpt-4o-mini to gemini-3-flash-lite
+- HIGH: llm_triage_model default changed from gpt-4o-mini to gemini-2.5-flash-lite
 - MEDIUM: Dependency version floors raised to current stable (silero-vad 6.2, librosa 0.11, opencv-headless 4.13)
 - MEDIUM: torch/torchaudio baseline documented as 2.10.x (was >=2.7)
 - LOW: RIFE 4.26 note corrected (exists but 4.25 remains recommended)

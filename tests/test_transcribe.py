@@ -274,12 +274,8 @@ class TestContextExtraction:
         assert um_cuts, f"Expected 'um' cut; got {cuts}"
         cut = um_cuts[0]
         # context_before: last 2 words before filler
-        assert "This" in cut.context_before or "is" in cut.context_before, (
-            f"Unexpected context_before: {cut.context_before!r}"
-        )
-        assert "very" in cut.context_after or "good" in cut.context_after, (
-            f"Unexpected context_after: {cut.context_after!r}"
-        )
+        assert cut.context_before == "This is", f"Expected 'This is', got: {cut.context_before!r}"
+        assert cut.context_after == "very good", f"Expected 'very good', got: {cut.context_after!r}"
 
     def test_detect_fillers_context_at_boundaries_first_word(self) -> None:
         """First word in segment has empty context_before."""
@@ -297,6 +293,9 @@ class TestContextExtraction:
         assert um_cuts[0].context_before == "", (
             f"First word should have empty context_before; got {um_cuts[0].context_before!r}"
         )
+        assert um_cuts[0].pause_before_ms == 0.0, (
+            f"First word should have pause_before_ms=0.0; got {um_cuts[0].pause_before_ms}"
+        )
 
     def test_detect_fillers_context_at_boundaries_last_word(self) -> None:
         """Last word in segment has empty context_after."""
@@ -313,6 +312,9 @@ class TestContextExtraction:
         assert um_cuts, f"Expected 'um' cut; got {cuts}"
         assert um_cuts[0].context_after == "", (
             f"Last word should have empty context_after; got {um_cuts[0].context_after!r}"
+        )
+        assert um_cuts[0].pause_after_ms == 0.0, (
+            f"Last word should have pause_after_ms=0.0; got {um_cuts[0].pause_after_ms}"
         )
 
     def test_detect_fillers_context_respects_n_window(self) -> None:

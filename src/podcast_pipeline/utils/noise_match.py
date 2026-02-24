@@ -56,7 +56,7 @@ def measure_rms_db(
 
     try:
         y, sr = librosa.load(str(audio_path), sr=None, mono=True)
-    except Exception as exc:
+    except (OSError, RuntimeError, ValueError) as exc:
         logger.warning(
             "noise_match_load_failed",
             audio_path=str(audio_path),
@@ -112,7 +112,8 @@ def compute_noise_floor_correction(
         RMS level (dBFS) of the head of the right keep-segment.
     threshold_db:
         Minimum dB mismatch required to apply correction (default 3.0 dB).
-        Strict less-than comparison: exactly ``threshold_db`` is NOT corrected.
+        Uses strict less-than for the no-op path: a delta of exactly
+        ``threshold_db`` **is** corrected (threshold is inclusive).
     ramp_ms:
         Duration of the gain ramp in milliseconds (default 50ms).  Documented
         for reference; the actual ramp is managed by the caller's micro-fade
@@ -127,7 +128,7 @@ def compute_noise_floor_correction(
     """
     delta_db = abs(left_rms_db - right_rms_db)
 
-    # Strict less-than: exactly at threshold → no correction.
+    # Strict less-than: exactly at threshold → correction IS applied.
     if delta_db < threshold_db:
         return None
 

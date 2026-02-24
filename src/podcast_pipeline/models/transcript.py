@@ -61,8 +61,8 @@ class FillerCut(BaseModel):
 
     # Phase 8 additions — all optional/defaulted for backward compat
     category: Literal["disfluency", "hedge", "custom"] = "disfluency"
-    pause_before_ms: float = 0.0
-    pause_after_ms: float = 0.0
+    pause_before_ms: float = Field(default=0.0, ge=0.0)
+    pause_after_ms: float = Field(default=0.0, ge=0.0)
     context_before: str = ""
     context_after: str = ""
     protected: bool = False

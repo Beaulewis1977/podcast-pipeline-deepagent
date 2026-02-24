@@ -169,7 +169,7 @@ Progress: [███████████████████████
 | Phase 8 integration tests use monkeypatch builtins.__import__ to simulate missing optional deps | Avoids uninstalling packages; simulates ImportError for silero_vad/librosa/cv2 in test environment | 2026-02-21 |
 | Triage transport is provider-aware: gemini models use google.genai, others use openai (legacy fallback) | Sending gemini model names to OpenAI API would 404; provider dispatch required for correct routing | 2026-02-23 |
 | API key gate uses provider-specific key: api_keys.gemini for gemini models, api_keys.openai for others | Key gate must match the transport layer — checking openai key for a gemini model would skip triage incorrectly | 2026-02-23 |
-| Regression test explicitly forbids gpt-4o-mini, o1, o3-mini and other reasoning/OpenAI defaults | Prevents silent drift back to OpenAI; llm_triage_model must be gemini-3-flash-lite or claude-haiku-4-5 | 2026-02-23 |
+| Regression test explicitly forbids gpt-4o-mini, o1, o3-mini and other reasoning/OpenAI defaults | Prevents silent drift back to OpenAI; llm_triage_model must be gemini-2.5-flash-lite or claude-haiku-4-5 | 2026-02-23 |
 | GPU extras use floor + upper bound pattern (>=X.Y,<NEXT_MAJOR) | Prevents silent breaking API changes from major version releases while enforcing current stable baseline | 2026-02-23 |
 | RIFE inference_img.py DOES accept --output and --model; subprocess.run uses cwd=rife_dir for Python imports, passes --model (absolute path to train_log/) and --output (absolute path to output_dir); collects from output_dir/img*.png | E2E testing confirmed upstream inference_img.py line 22 has --output argparse; original research was wrong; real issue was model weight path resolution | 2026-02-23 |
 | torch==2.10.* pinned baseline in smoke test and operator guide (not >=2.7 unpinned) | Reproducible GPU installs; prevents silent torch major-version drift on Blackwell hardware | 2026-02-23 |
@@ -237,7 +237,7 @@ Progress: [███████████████████████
 - Release workflow: tag-triggered with manual dispatch, 4 platform targets
 - GPU extras: `uv sync --extras gpu` installs silero-vad>=6.2,<7, librosa>=0.11,<1, opencv-python-headless>=4.13,<5
 - torch/torchaudio: torch==2.10.* baseline via pytorch-cu128 index (CUDA 12.8 for Blackwell sm_120 / RTX 5060 Ti)
-- LLM triage model: default gemini-3-flash-lite (google.genai transport); FORBIDDEN: o1, o1-mini, o3-mini, gemini-3-pro (reasoning/CoT too slow for per-filler batches)
+- LLM triage model: default gemini-2.5-flash-lite (google.genai transport); FORBIDDEN: o1, o1-mini, o3-mini, gemini-3-pro (reasoning/CoT too slow for per-filler batches)
 
 ### Open Questions
 
@@ -306,13 +306,13 @@ Progress: [███████████████████████
 - 2026-02-23: Re-executed 08-03-PLAN.md (review/UI wiring verification — all editorial_action paths and filler card display confirmed passing, no-op plan)
 - 2026-02-23: Re-executed 08-04-PLAN.md (GPU extras version floors updated: silero-vad>=6.2,<7; librosa>=0.11,<1; opencv-python-headless>=4.13,<5; torch/torchaudio uv.sources routing verified correct)
 - 2026-02-23: Re-executed 08-05-PLAN.md (RIFE bridge --output bug fix: removed --output flag, added cwd=work_dir + PYTHONPATH injection, changed glob to work_dir/output/img*.png; updated tests to verify upstream contract)
-- 2026-02-23: Re-executed 08-06-PLAN.md (smoke test torch 2.10.x baseline; operator guide gemini-3-flash-lite default + forbidden reasoning model list + dep version floors; integration tests verified no-op — all 133 tests pass)
+- 2026-02-23: Re-executed 08-06-PLAN.md (smoke test torch 2.10.x baseline; operator guide gemini-2.5-flash-lite default + forbidden reasoning model list + dep version floors; integration tests verified no-op — all 133 tests pass)
 
 ## Session Continuity
 
 ### Last session
 
-2026-02-23 23:40 UTC — Re-executed `08-06-PLAN.md` (smoke test torch 2.10.* baseline, opencv>=4.13, pinned install hint; operator guide: gemini-3-flash-lite default, forbidden o1/gemini-pro reasoning models, silero-vad>=6.2,<7, librosa>=0.11,<1, opencv>=4.13,<5, RIFE 4.26 note corrected; Task 2 no-op — all 133 tests pass).
+2026-02-23 23:40 UTC — Re-executed `08-06-PLAN.md` (smoke test torch 2.10.* baseline, opencv>=4.13, pinned install hint; operator guide: gemini-2.5-flash-lite default, forbidden o1/gemini-pro reasoning models, silero-vad>=6.2,<7, librosa>=0.11,<1, opencv>=4.13,<5, RIFE 4.26 note corrected; Task 2 no-op — all 133 tests pass).
 
 ### Stopped at
 

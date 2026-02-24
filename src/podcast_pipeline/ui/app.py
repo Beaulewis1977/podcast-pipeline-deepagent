@@ -1110,8 +1110,8 @@ def _filler_card_data(filler: dict[str, Any]) -> dict[str, Any]:
       - protected: bool — whether the filler has pause-gate protection
       - llm_safe_to_remove: bool | None — LLM verdict (None = not triaged)
       - llm_reason: str — LLM rationale (may be "")
-      - default_action: "keep" if protected else derived from llm_safe_to_remove,
-                        falls back to filler's editorial_action or "remove"
+      - default_action: "keep" if protected; else filler's editorial_action if set;
+                        else "remove" if llm_safe_to_remove is True; else "keep"
     """
     word = str(filler.get("word", ""))
 

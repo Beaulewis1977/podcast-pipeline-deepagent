@@ -2110,9 +2110,11 @@ class RenderStage(Stage):
                 # Use the movie source filter to embed the bridge clip inline.
                 # Escape colons in the path for filter_complex syntax.
                 safe_path = str(rife_clip).replace("\\", "/").replace(":", "\\:")
-                filter_parts.append(
-                    f"movie={safe_path}:s=dv+da[{bridge_video_label}][{bridge_audio_label}]"
-                )
+                filter_parts.append(f"movie={safe_path}:s=dv[{bridge_video_label}]")
+                # Bridge clips are video-only (-an); generate silent audio
+                # matching the bridge duration for the audio concat.
+                bridge_dur = 0.1  # negligible bridge duration
+                filter_parts.append(f"aevalsrc=0:d={bridge_dur:.3f}[{bridge_audio_label}]")
                 filter_parts.append(
                     f"[{audio_label}][{bridge_audio_label}][{next_audio}]"
                     f"concat=n=3:v=0:a=1[{join_label_audio}]"

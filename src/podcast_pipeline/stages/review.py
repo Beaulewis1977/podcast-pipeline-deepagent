@@ -323,7 +323,7 @@ def _load_filler_triage_map(job_dir: Path) -> dict[int, dict[str, Any]]:
             for entry in raw
             if isinstance(entry, dict) and "filler_index" in entry
         }
-    except Exception:
+    except (OSError, json.JSONDecodeError, ValueError, KeyError, TypeError):
         return {}
 
 
@@ -403,8 +403,8 @@ def write_edit_plan(
                     ),
                     editorial_action=action,
                     protected=bool(filler.get("protected", False)),
-                    pause_before_ms=float(filler.get("pause_before_ms", 0.0)),
-                    pause_after_ms=float(filler.get("pause_after_ms", 0.0)),
+                    pause_before_ms=float(filler.get("pause_before_ms") or 0.0),
+                    pause_after_ms=float(filler.get("pause_after_ms") or 0.0),
                     llm_safe_to_remove=llm_safe,
                     llm_reason=llm_reason,
                 )

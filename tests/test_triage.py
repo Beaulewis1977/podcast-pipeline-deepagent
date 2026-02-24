@@ -128,14 +128,14 @@ class TestFillerConfigTriageModelRegression:
     def test_filler_config_triage_model_not_openai(self) -> None:
         """Triage model default must NOT be an OpenAI or reasoning model.
 
-        Spec requires gemini-3-flash-lite or claude-haiku-4-5 — lightweight, non-reasoning,
+        Spec requires gemini-2.5-flash-lite or claude-haiku-4-5 — lightweight, non-reasoning,
         non-OpenAI models. This test prevents silent drift back to gpt-4o-mini or similar.
         """
         from podcast_pipeline.config.settings import FillerConfig
 
         config = FillerConfig()
-        # Must be gemini-3-flash-lite or claude-haiku-4-5 per spec
-        assert config.llm_triage_model in ("gemini-3-flash-lite", "claude-haiku-4-5"), (
+        # Must be gemini-2.5-flash-lite or claude-haiku-4-5 per spec
+        assert config.llm_triage_model in ("gemini-2.5-flash-lite", "claude-haiku-4-5"), (
             f"Triage model must be a lightweight non-reasoning model, got '{config.llm_triage_model}'"
         )
         # Explicitly forbidden: reasoning/CoT models are too slow/expensive for triage

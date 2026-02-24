@@ -83,7 +83,7 @@ defaults to `keep` action regardless of its category.
 ```yaml
 fillers:
   enable_llm_triage: true                  # default: true
-  llm_triage_model: gemini-3-flash-lite    # default: gemini-3-flash-lite (see below)
+  llm_triage_model: gemini-2.5-flash-lite    # default: gemini-2.5-flash-lite (see below)
   llm_triage_max_context_words: 5          # N words before/after the filler
 ```
 
@@ -91,7 +91,7 @@ fillers:
 
 | Model | Transport | Notes |
 |-------|-----------|-------|
-| `gemini-3-flash-lite` | `google.genai` | **Default** — fast, cheap, correct routing |
+| `gemini-2.5-flash-lite` | `google.genai` | **Default** — fast, cheap, correct routing |
 | `claude-haiku-4-5` | Anthropic | Alternative fast model |
 
 **Forbidden (reasoning/CoT) models — DO NOT USE:**

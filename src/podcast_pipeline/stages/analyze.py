@@ -753,9 +753,6 @@ class AnalyzeStage(Stage):
         if model.startswith("gemini"):
             api_key = self.config.api_keys.gemini
             provider_name = "gemini"
-        elif model.startswith("claude"):
-            api_key = getattr(self.config.api_keys, "anthropic", None)
-            provider_name = "anthropic"
         else:
             api_key = self.config.api_keys.openai
             provider_name = "openai"
