@@ -59,6 +59,15 @@ _NAV_LABELS_BY_PAGE = {
 }
 _NAV_PAGES_BY_LABEL = {label: page for page, label in _NAV_LABELS_BY_PAGE.items()}
 
+# Caption aspect ratio options for Production sidebar (GAP-4).
+_ASPECT_RATIO_OPTIONS: list[str | None] = [None, "16:9", "9:16", "1:1"]
+_ASPECT_RATIO_LABELS: list[str] = [
+    "Auto (match export target)",
+    "16:9 (Landscape)",
+    "9:16 (Vertical)",
+    "1:1 (Square)",
+]
+
 
 @dataclass(frozen=True, slots=True)
 class MarketingEditorPlatformSpec:
@@ -2595,6 +2604,23 @@ def render_production_controls(job_id: str, job_dir: Path) -> None:
         help="Burn ASS captions into exported video.",
     )
 
+    # Phase 09-12 (GAP-4): Caption aspect ratio selectbox.
+    caption_aspect_ratio: str | None = None
+    if captions_enabled:
+        current_ar_idx = (
+            _ASPECT_RATIO_OPTIONS.index(decisions.caption_aspect_ratio)
+            if decisions.caption_aspect_ratio in _ASPECT_RATIO_OPTIONS
+            else 0
+        )
+        caption_aspect_ratio = st.selectbox(
+            "Caption Aspect Ratio",
+            options=_ASPECT_RATIO_OPTIONS,
+            format_func=lambda x: _ASPECT_RATIO_LABELS[_ASPECT_RATIO_OPTIONS.index(x)],
+            index=current_ar_idx,
+            key=f"prod_caption_aspect_ratio_{job_id}",
+            help="Auto derives safe-zone from platform spec. Override to force a specific template for all exports.",
+        )
+
     # ── Sound Kit (Auto-Ducking) Toggle ─────────────────────────────────────
     sound_kit_enabled = st.checkbox(
         "Enable Sound Kit",
@@ -2612,11 +2638,30 @@ def render_production_controls(job_id: str, job_dir: Path) -> None:
     )
 
     # ── Manual Sync Offset Slider ───────────────────────────────────────────
+    # Phase 09-12 (GAP-3A): Display auto-detected sync offset and confidence.
+    sync_artifact_path = job_dir / "intermediate" / "sync_artifact.json"
+    if sync_artifact_path.exists():
+        sync_artifact = _read_metadata_json(sync_artifact_path)
+        if sync_artifact:
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric(
+                    "Auto-detected Offset",
+                    f"{sync_artifact.get('offset_ms', 0.0):+.0f} ms",
+                )
+            with col2:
+                confidence = sync_artifact.get("confidence", 0.0)
+                st.metric("Sync Confidence", f"{confidence:.0%}")
+            if sync_artifact.get("low_confidence"):
+                st.warning(
+                    "Low confidence sync detection — consider setting a manual override below."
+                )
+
     sync_offset_value = decisions.manual_sync_offset_ms if decisions.manual_sync_offset_ms else 0.0
     manual_sync_offset = st.slider(
         "Manual Sync Offset (ms)",
-        min_value=-2000.0,
-        max_value=2000.0,
+        min_value=-5000.0,
+        max_value=5000.0,
         value=sync_offset_value,
         step=10.0,
         key=f"prod_sync_offset_{job_id}",
@@ -2630,6 +2675,12 @@ def render_production_controls(job_id: str, job_dir: Path) -> None:
         needs_save = True
     if captions_enabled != decisions.captions_enabled:
         decisions.captions_enabled = captions_enabled
+        needs_save = True
+    if captions_enabled and caption_aspect_ratio != decisions.caption_aspect_ratio:
+        decisions.caption_aspect_ratio = caption_aspect_ratio
+        needs_save = True
+    if not captions_enabled and decisions.caption_aspect_ratio is not None:
+        decisions.caption_aspect_ratio = None
         needs_save = True
     if sound_kit_enabled != decisions.sound_kit_enabled:
         decisions.sound_kit_enabled = sound_kit_enabled

@@ -1110,7 +1110,10 @@ def test_production_controls_persist_caption_toggle(tmp_path: Path) -> None:
     mock_st.checkbox.side_effect = lambda label, **kwargs: (
         True if "Caption" in label else kwargs.get("value", False)
     )
-    mock_st.selectbox.return_value = 0  # (none) profile
+    # Branding profile selectbox returns int index; aspect ratio selectbox returns str | None.
+    mock_st.selectbox.side_effect = lambda label, *args, **kwargs: (
+        None if "Aspect Ratio" in label else kwargs.get("index", 0)
+    )
     mock_st.slider.return_value = 0.0  # no sync offset
 
     mock_config = MagicMock()
