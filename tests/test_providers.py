@@ -882,3 +882,199 @@ def test_claude_analyze_passes_trend_context_to_prompt(
     user_content = captured["messages"][0]["content"]
     assert "ai tools" in user_content
     assert "Best AI hook" in user_content
+
+
+# ---------------------------------------------------------------------------
+# ClaudeProvider — credential absence and analyze-stage regressions
+# ---------------------------------------------------------------------------
+
+
+def test_claude_missing_api_key_analyze_raises_immediately() -> None:
+    """analyze must raise ProviderError without touching the API when key is absent."""
+    provider = ClaudeProvider(api_key=None)
+    with pytest.raises(ProviderError, match="API key not configured"):
+        provider.analyze(Path("proxy.mp4"), {"text": "no key"})
+
+
+def test_claude_empty_string_api_key_analyze_raises_immediately() -> None:
+    """Empty-string key is treated as absent and must raise ProviderError."""
+    provider = ClaudeProvider(api_key="")
+    with pytest.raises(ProviderError, match="API key not configured"):
+        provider.analyze(Path("proxy.mp4"), {"text": "empty key"})
+
+
+def test_claude_rate_limit_error_retries_up_to_max_attempts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """RateLimitError triggers retries; exhaustion re-raises RateLimitError."""
+    provider = ClaudeProvider(api_key="sk-ant-test")
+    monkeypatch.setattr(provider.analyze.retry, "wait", wait_none())  # type: ignore[attr-defined]
+    monkeypatch.setattr(provider.analyze.retry, "stop", stop_after_attempt(3))  # type: ignore[attr-defined]
+
+    call_count = {"n": 0}
+
+    class _FakeRateLimitError(Exception):
+        __name__ = "RateLimitError"
+
+    def _always_rate_limit(**kwargs: Any) -> Any:
+        call_count["n"] += 1
+        raise _FakeRateLimitError("rate limit")
+
+    fake_client = SimpleNamespace(messages=SimpleNamespace(create=_always_rate_limit))
+    monkeypatch.setattr(provider, "_get_client", lambda: fake_client)
+
+    with pytest.raises(RateLimitError):
+        provider.analyze(Path("proxy.mp4"), {"text": "retry test"})
+
+    assert call_count["n"] == 3
+
+
+def test_claude_provider_parse_error_is_not_retried(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ProviderParseError (schema violation) should NOT be retried — non-retryable."""
+    provider = ClaudeProvider(api_key="sk-ant-test")
+    monkeypatch.setattr(provider.analyze.retry, "wait", wait_none())  # type: ignore[attr-defined]
+    monkeypatch.setattr(provider.analyze.retry, "stop", stop_after_attempt(3))  # type: ignore[attr-defined]
+
+    call_count = {"n": 0}
+
+    def _schema_violation(**kwargs: Any) -> Any:
+        call_count["n"] += 1
+        # Return a message with no tool_use block — triggers ProviderParseError
+        return _make_fake_empty_message()
+
+    fake_client = SimpleNamespace(messages=SimpleNamespace(create=_schema_violation))
+    monkeypatch.setattr(provider, "_get_client", lambda: fake_client)
+
+    with pytest.raises(ProviderParseError):
+        provider.analyze(Path("proxy.mp4"), {"text": "parse error test"})
+
+    # ProviderParseError is not in retry_if_exception_type so must not retry
+    assert call_count["n"] == 1
+
+
+def test_analyze_stage_routes_to_claude_when_configured(
+    tmp_path: pytest.TempPathFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AnalyzeStage should use ClaudeProvider when provider='claude' and key is set."""
+    from podcast_pipeline.config.settings import ModelConfig
+
+    config = Config()
+    config.models = ModelConfig(
+        provider="claude",
+        model="claude-sonnet-4-6",
+        fallback_provider=None,
+        fallback_model=None,
+    )
+    config.api_keys.anthropic = "sk-ant-test"
+
+    stage = AnalyzeStage(config)
+    assert len(stage.providers) == 1
+    assert stage.providers[0].name == "claude"
+
+
+def test_analyze_stage_claude_missing_key_no_provider_registered() -> None:
+    """AnalyzeStage should register no provider when claude is configured but key absent."""
+    from podcast_pipeline.config.settings import ModelConfig
+
+    config = Config()
+    config.models = ModelConfig(
+        provider="claude",
+        model="claude-sonnet-4-6",
+        fallback_provider=None,
+        fallback_model=None,
+    )
+    config.api_keys.anthropic = None  # no key
+
+    stage = AnalyzeStage(config)
+    assert not any(p.name == "claude" for p in stage.providers)
+
+
+def test_analyze_stage_fallback_provider_succeeds_when_claude_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AnalyzeStage continues to fallback provider when Claude raises ProviderError."""
+
+    class _FailingClaudeProvider:
+        name = "claude"
+        model = "claude-sonnet-4-6"
+        supports_video = False
+
+        def is_available(self) -> bool:
+            return True
+
+        def analyze(self, video_path: Path, transcript: dict[str, Any]) -> AnalysisResult:
+            raise ProviderError("Claude API failure")
+
+    class _SucceedingFallbackProvider:
+        name = "kimi"
+        model = "kimi-k2.5"
+        supports_video = False
+
+        def is_available(self) -> bool:
+            return True
+
+        def analyze(self, video_path: Path, transcript: dict[str, Any]) -> AnalysisResult:
+            return AnalysisResult.model_validate(_valid_analysis_payload())
+
+    config = Config()
+    stage = AnalyzeStage(config)
+    stage.providers = [_FailingClaudeProvider(), _SucceedingFallbackProvider()]  # type: ignore[assignment]
+    monkeypatch.setattr(stage, "_run_research", lambda *args, **kwargs: None)
+    monkeypatch.setattr(stage, "_run_viral_signals", lambda *args, **kwargs: None)
+
+    job_dir = tmp_path / "job-claude-fallback"
+    (job_dir / "analysis").mkdir(parents=True, exist_ok=True)
+    (job_dir / "analysis" / "transcript.json").write_text(json.dumps({"text": "hello"}))
+    (job_dir / "intermediate").mkdir(parents=True, exist_ok=True)
+    (job_dir / "intermediate" / "proxy.mp4").write_bytes(b"proxy")
+
+    job = Job(job_id="job-claude-fallback", input_file=str(job_dir / "input.mp4"))
+    result = stage.run(job, job_dir)
+
+    assert result.success is True
+    assert result.data["provider"] == "kimi"
+    assert result.data["degraded_mode"]["enabled"] is True
+    assert result.data["degraded_mode"]["reason"] == "fallback_provider_transcript_only"
+
+
+def test_analyze_stage_claude_primary_degraded_mode_is_enabled(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When Claude is the sole provider (no video support), degraded_mode is enabled."""
+
+    class _ClaudeTranscriptProvider:
+        name = "claude"
+        model = "claude-sonnet-4-6"
+        supports_video = False
+
+        def is_available(self) -> bool:
+            return True
+
+        def analyze(self, video_path: Path, transcript: dict[str, Any]) -> AnalysisResult:
+            return AnalysisResult.model_validate(_valid_analysis_payload())
+
+    config = Config()
+    stage = AnalyzeStage(config)
+    stage.providers = [_ClaudeTranscriptProvider()]  # type: ignore[assignment]
+    monkeypatch.setattr(stage, "_run_research", lambda *args, **kwargs: None)
+    monkeypatch.setattr(stage, "_run_viral_signals", lambda *args, **kwargs: None)
+
+    job_dir = tmp_path / "job-claude-primary"
+    (job_dir / "analysis").mkdir(parents=True, exist_ok=True)
+    (job_dir / "analysis" / "transcript.json").write_text(json.dumps({"text": "hello"}))
+    (job_dir / "intermediate").mkdir(parents=True, exist_ok=True)
+    (job_dir / "intermediate" / "proxy.mp4").write_bytes(b"proxy")
+
+    job = Job(job_id="job-claude-primary", input_file=str(job_dir / "input.mp4"))
+    result = stage.run(job, job_dir)
+
+    assert result.success is True
+    assert result.data["provider"] == "claude"
+    # Claude is transcript-only; degraded mode should be enabled
+    assert result.data["degraded_mode"]["enabled"] is True
+    assert result.data["degraded_mode"]["reason"] == "provider_transcript_only"
