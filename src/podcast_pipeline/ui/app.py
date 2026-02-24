@@ -262,6 +262,14 @@ def _persist_uploaded_video(uploaded_file: Any, jobs_dir: Path) -> Path:
     return upload_path
 
 
+def _safe_asset_filename(raw_name: str) -> str:
+    """Strip path separators from an uploaded filename to prevent directory traversal."""
+    safe = Path(raw_name).name
+    if not safe or safe in {".", ".."}:
+        raise ValueError(f"Invalid upload filename: {raw_name!r}")
+    return safe
+
+
 def _read_metadata_json(path: Path) -> dict[str, Any] | None:
     """Read metadata JSON and return a dict payload."""
     try:
@@ -2377,7 +2385,7 @@ def _render_brand_studio_create_form(branding_dir: Path) -> None:
         )
         new_logo_path_val = ""
         if new_logo_upload is not None:
-            dest = assets_dir / new_logo_upload.name
+            dest = assets_dir / _safe_asset_filename(new_logo_upload.name)
             dest.write_bytes(new_logo_upload.getvalue())
             new_logo_path_val = str(dest)
         new_logo_path = st.text_input(
@@ -2410,7 +2418,7 @@ def _render_brand_studio_create_form(branding_dir: Path) -> None:
         )
         new_font_path_val = ""
         if new_font_upload is not None:
-            dest = assets_dir / new_font_upload.name
+            dest = assets_dir / _safe_asset_filename(new_font_upload.name)
             dest.write_bytes(new_font_upload.getvalue())
             new_font_path_val = str(dest)
         new_font_path = st.text_input(
@@ -2499,7 +2507,7 @@ def _render_brand_studio_create_form(branding_dir: Path) -> None:
         )
         new_intro_val = ""
         if new_intro_upload is not None:
-            dest = assets_dir / new_intro_upload.name
+            dest = assets_dir / _safe_asset_filename(new_intro_upload.name)
             dest.write_bytes(new_intro_upload.getvalue())
             new_intro_val = str(dest)
         new_intro_sound = st.text_input(
@@ -2515,7 +2523,7 @@ def _render_brand_studio_create_form(branding_dir: Path) -> None:
         )
         new_trans_val = ""
         if new_trans_upload is not None:
-            dest = assets_dir / new_trans_upload.name
+            dest = assets_dir / _safe_asset_filename(new_trans_upload.name)
             dest.write_bytes(new_trans_upload.getvalue())
             new_trans_val = str(dest)
         new_transition_sound = st.text_input(
@@ -2531,7 +2539,7 @@ def _render_brand_studio_create_form(branding_dir: Path) -> None:
         )
         new_outro_val = ""
         if new_outro_upload is not None:
-            dest = assets_dir / new_outro_upload.name
+            dest = assets_dir / _safe_asset_filename(new_outro_upload.name)
             dest.write_bytes(new_outro_upload.getvalue())
             new_outro_val = str(dest)
         new_outro_sound = st.text_input(
@@ -2620,7 +2628,7 @@ def _render_brand_studio_editor(profile: BrandingProfile, branding_dir: Path) ->
             help="Upload a logo file. The path field below will update automatically.",
         )
         if logo_upload is not None:
-            dest = assets_dir / logo_upload.name
+            dest = assets_dir / _safe_asset_filename(logo_upload.name)
             dest.write_bytes(logo_upload.getvalue())
             logo_path_default = str(dest)
         else:
@@ -2659,7 +2667,7 @@ def _render_brand_studio_editor(profile: BrandingProfile, branding_dir: Path) ->
             help="Upload a font file for captions. The path field below will update automatically.",
         )
         if font_upload is not None:
-            dest = assets_dir / font_upload.name
+            dest = assets_dir / _safe_asset_filename(font_upload.name)
             dest.write_bytes(font_upload.getvalue())
             font_path_default = str(dest)
         else:
@@ -2769,7 +2777,7 @@ def _render_brand_studio_editor(profile: BrandingProfile, branding_dir: Path) ->
             key="brand_studio_intro_upload",
         )
         if intro_upload is not None:
-            dest = assets_dir / intro_upload.name
+            dest = assets_dir / _safe_asset_filename(intro_upload.name)
             dest.write_bytes(intro_upload.getvalue())
             intro_default = str(dest)
         else:
@@ -2788,7 +2796,7 @@ def _render_brand_studio_editor(profile: BrandingProfile, branding_dir: Path) ->
             key="brand_studio_transition_upload",
         )
         if transition_upload is not None:
-            dest = assets_dir / transition_upload.name
+            dest = assets_dir / _safe_asset_filename(transition_upload.name)
             dest.write_bytes(transition_upload.getvalue())
             transition_default = str(dest)
         else:
@@ -2807,7 +2815,7 @@ def _render_brand_studio_editor(profile: BrandingProfile, branding_dir: Path) ->
             key="brand_studio_outro_upload",
         )
         if outro_upload is not None:
-            dest = assets_dir / outro_upload.name
+            dest = assets_dir / _safe_asset_filename(outro_upload.name)
             dest.write_bytes(outro_upload.getvalue())
             outro_default = str(dest)
         else:

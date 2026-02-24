@@ -1152,7 +1152,7 @@ def test_trim_segment_wraps_ffmpeagerror() -> None:
 
 
 def test_sync_tracks_positive_offset_uses_itsoffset_on_external(tmp_path: Path) -> None:
-    """Positive offset: external track delayed, use -itsoffset on external input."""
+    """Positive offset: external track delayed via -itsoffset with explicit -map."""
     ref = tmp_path / "ref.wav"
     ext = tmp_path / "ext.wav"
     out = tmp_path / "synced.mp4"
@@ -1166,7 +1166,6 @@ def test_sync_tracks_positive_offset_uses_itsoffset_on_external(tmp_path: Path) 
         search_window_s=10.0,
     )
 
-    # Mock run_ffmpeg for extract calls + mux call; mock _correlate_audio
     with (
         patch(
             "podcast_pipeline.utils.ffmpeg_toolkit.run_ffmpeg", return_value=_completed()
@@ -1180,15 +1179,19 @@ def test_sync_tracks_positive_offset_uses_itsoffset_on_external(tmp_path: Path) 
 
     assert result.offset_ms == pytest.approx(250.0)
     assert result.confidence == pytest.approx(0.9)
-    # Mux call should contain -itsoffset
     mux_call_args: list[str] = mock_ffmpeg.call_args_list[-1][0][0]
     assert "-itsoffset" in mux_call_args
     assert "0.25" in mux_call_args  # 250ms -> 0.25s
     assert str(ext) in mux_call_args
+    assert str(ref) in mux_call_args
+    # Explicit stream mapping must be present
+    assert "-map" in mux_call_args
+    assert "0:v?" in mux_call_args
+    assert "1:a:0?" in mux_call_args
 
 
-def test_sync_tracks_negative_offset_applies_to_reference(tmp_path: Path) -> None:
-    """Negative offset: reference delayed, use -itsoffset on reference."""
+def test_sync_tracks_negative_offset_uses_external_path(tmp_path: Path) -> None:
+    """Negative offset: external_path is still the audio source, offset is negative."""
     ref = tmp_path / "ref.wav"
     ext = tmp_path / "ext.wav"
     out = tmp_path / "synced.mp4"
@@ -1211,8 +1214,14 @@ def test_sync_tracks_negative_offset_applies_to_reference(tmp_path: Path) -> Non
     assert result.offset_ms == pytest.approx(-500.0)
     mux_call_args: list[str] = mock_ffmpeg.call_args_list[-1][0][0]
     assert "-itsoffset" in mux_call_args
-    # Negative offset: applies positive offset to reference path
+    assert "-0.5" in mux_call_args  # -500ms -> -0.5s (negative passed directly)
+    # Both reference and external must be in the command
     assert str(ref) in mux_call_args
+    assert str(ext) in mux_call_args
+    # Explicit stream mapping
+    assert "-map" in mux_call_args
+    assert "0:v?" in mux_call_args
+    assert "1:a:0?" in mux_call_args
 
 
 def test_sync_tracks_wraps_ffmpeagerror_on_mux(tmp_path: Path) -> None:

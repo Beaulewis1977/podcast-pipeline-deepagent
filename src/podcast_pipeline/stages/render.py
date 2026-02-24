@@ -1970,11 +1970,6 @@ class RenderStage(Stage):
         else:
             self.logger.info("loudness_normalization_disabled", platform=platform)
         self._assert_output_exists(output_file, f"{platform} video export")
-        self._validate_video_platform_compliance(
-            platform=platform,
-            output_file=output_file,
-            spec=spec,
-        )
 
         # Phase 09-12 (GAP-7): Gate caption burn-in on ReviewDecisions toggle
         # (replaces self.config.branding.captions.enabled check — UI decision
@@ -1992,6 +1987,14 @@ class RenderStage(Stage):
             if captioned is not None:
                 output_file = captioned
                 self._assert_output_exists(output_file, f"{platform} captioned video export")
+
+        # Compliance validation runs AFTER caption burn-in so it checks the
+        # final deliverable (not an intermediate that _burn_captions re-encodes).
+        self._validate_video_platform_compliance(
+            platform=platform,
+            output_file=output_file,
+            spec=spec,
+        )
 
         self.logger.info(f"{platform}_rendered", output=str(output_file))
         return [str(output_file.relative_to(output_dir.parent.parent))]
@@ -2116,20 +2119,49 @@ class RenderStage(Stage):
         # Escape path for FFmpeg ass= filter (POSIX forward slashes).
         ass_filter = f"ass={ass_path.as_posix()}"
 
+        # Resolve encoder consistently with the main render pipeline so caption
+        # burn-in does not downgrade HEVC 10-bit → H.264 8-bit.
+        resolved_encoder, encoder_extra_args = self._resolve_video_encoder(spec, platform)
+
+        effective_pix_fmt = spec.pix_fmt
+        remaining_extra: list[str] = []
+        if encoder_extra_args:
+            try:
+                pf_idx = encoder_extra_args.index("-pix_fmt")
+                effective_pix_fmt = encoder_extra_args[pf_idx + 1]
+                remaining_extra = encoder_extra_args[:pf_idx] + encoder_extra_args[pf_idx + 2 :]
+            except ValueError:
+                remaining_extra = list(encoder_extra_args)
+
         burn_args = [
             "-i",
             str(video_path),
             "-vf",
             ass_filter,
             "-c:v",
-            "libx264",
+            resolved_encoder,
             "-preset",
-            "fast",
-            "-crf",
-            "18",
-            "-c:a",
-            "copy",
+            spec.preset,
+            "-b:v",
+            spec.video_bitrate,
+            "-pix_fmt",
+            effective_pix_fmt,
         ]
+        if remaining_extra:
+            burn_args.extend(remaining_extra)
+
+        # Profile/level/GOP flags — mirror the main render path.
+        if self._supports_profile_level_flags(resolved_encoder):
+            if spec.video_profile:
+                burn_args.extend(["-profile:v", spec.video_profile])
+            if spec.video_level:
+                burn_args.extend(["-level:v", spec.video_level])
+            if spec.gop is not None:
+                burn_args.extend(["-g", str(spec.gop)])
+            if spec.keyint_min is not None:
+                burn_args.extend(["-keyint_min", str(spec.keyint_min)])
+
+        burn_args.extend(["-c:a", "copy"])
         if ext == "mp4":
             burn_args.extend(["-movflags", "+faststart"])
         burn_args.append(str(captioned_path))

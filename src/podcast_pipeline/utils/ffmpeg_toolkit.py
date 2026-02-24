@@ -1369,20 +1369,23 @@ def sync_tracks(request: SyncTracksRequest) -> SyncTracksResult:
         # Step 2 & 3: Cross-correlation via scipy
         offset_ms, confidence = _correlate_audio(ref_wav, ext_wav, TARGET_SR)
 
-    # Step 4: Mux external track with the calculated offset
-    # Positive offset means external starts later than reference; use itsoffset
+    # Step 4: Mux video from reference + audio from external with offset applied.
+    # Positive offset_ms → external starts later → delay external (positive itsoffset).
+    # Negative offset_ms → external starts earlier → advance external (negative itsoffset).
+    # FFmpeg's -itsoffset natively handles both signs.
     offset_s = offset_ms / 1000.0
-    itsoffset_args: list[str] = []
-    if offset_s >= 0:
-        itsoffset_args = ["-itsoffset", str(offset_s), "-i", str(request.external_path)]
-    else:
-        # Negative offset: trim reference start
-        itsoffset_args = ["-itsoffset", str(-offset_s), "-i", str(request.reference_path)]
 
     mux_args = [
         "-i",
-        str(request.reference_path),
-        *itsoffset_args,
+        str(request.reference_path),  # input 0: video source
+        "-itsoffset",
+        str(offset_s),
+        "-i",
+        str(request.external_path),  # input 1: audio source (offset-adjusted)
+        "-map",
+        "0:v?",  # video from reference
+        "-map",
+        "1:a:0?",  # first audio stream from external
         "-c",
         "copy",
         str(request.output_path),

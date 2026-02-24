@@ -66,6 +66,7 @@ class GPULease:
         self._lock = threading.Lock()
         self._holder_job_id: str | None = None
         self._holder_operation: str | None = None
+        self._reentrant_depth: int = 0
 
     @property
     def holder_job_id(self) -> str | None:
@@ -110,10 +111,31 @@ class GPULease:
             operation=operation,
         )
 
+        # Check for same-job reentrancy before touching the semaphore.
+        reentrant = False
+        with self._lock:
+            if self._holder_job_id == job_id:
+                self._reentrant_depth += 1
+                reentrant = True
+
+        if reentrant:
+            logger.info(
+                "gpu_lease_reentrant",
+                job_id=job_id,
+                operation=operation,
+                depth=self._reentrant_depth,
+            )
+            try:
+                yield
+            finally:
+                with self._lock:
+                    self._reentrant_depth -= 1
+            return
+
+        # First acquisition — block on the semaphore.
         if timeout is not None:
             acquired = self._semaphore.acquire(timeout=timeout)
         else:
-            # Block indefinitely until the semaphore is available.
             acquired = self._semaphore.acquire(blocking=True)
 
         if not acquired:
@@ -124,6 +146,7 @@ class GPULease:
         with self._lock:
             self._holder_job_id = job_id
             self._holder_operation = operation
+            self._reentrant_depth = 1
 
         logger.info(
             "gpu_lease_acquired",
@@ -135,14 +158,21 @@ class GPULease:
             yield
         finally:
             with self._lock:
-                self._holder_job_id = None
-                self._holder_operation = None
-            self._semaphore.release()
-            logger.info(
-                "gpu_lease_released",
-                job_id=job_id,
-                operation=operation,
-            )
+                self._reentrant_depth -= 1
+                if self._reentrant_depth <= 0:
+                    self._holder_job_id = None
+                    self._holder_operation = None
+                    self._reentrant_depth = 0
+                    release = True
+                else:
+                    release = False
+            if release:
+                self._semaphore.release()
+                logger.info(
+                    "gpu_lease_released",
+                    job_id=job_id,
+                    operation=operation,
+                )
 
 
 class RuntimeMeta:
