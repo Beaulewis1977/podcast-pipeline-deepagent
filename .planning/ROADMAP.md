@@ -445,6 +445,48 @@ Plans run in 6 execution waves:
 
 ---
 
+### Phase 9.12: Streamlit UI Gap Closure
+
+**Goal:** Close all UI and backend wiring gaps discovered post-Phase 9 execution so that every Phase 9 feature is fully accessible, controllable, and functional from the Streamlit interface.
+**Depends on:** Phase 9
+**Status:** Not planned yet
+**Plans:** TBD
+
+**Scope / Requirements:**
+
+Seven gaps identified in `09-UI-GAPS.md`. Ordered by priority:
+
+**P0 — Critical (features broken or completely inaccessible):**
+- GAP-7: Wire `ReviewDecisions.captions_enabled`, `sound_kit_enabled`, and `branding_profile_name` into `render.py` — these fields are persisted by the UI but completely ignored by the render stage; all three Production sidebar controls silently have zero effect
+- GAP-2: Register `youtube_ultra` in `EXPORT_TARGETS` so the HEVC 10-bit export target appears in the export panel
+- GAP-1: Add Anthropic API key status to the Settings API Keys panel; add interactive provider selection so Claude can be selected without hand-editing `config.yaml`
+
+**P1 — Significant (features partially broken):**
+- GAP-4: Add caption aspect ratio selector (`16:9` / `9:16` / `1:1`) to Production sidebar; add `caption_aspect_ratio` field to `ReviewDecisions`; thread into `_burn_captions()` so captions use the correct safe-zone template for the export target
+- GAP-3: Display auto-detected sync offset and confidence from `intermediate/sync_artifact.json` above the manual slider; extend slider range from ±2000ms to ±5000ms per original spec
+
+**P2 — Minor (polish and completeness):**
+- GAP-5: Split "Enable Sound Kit" checkbox into separate "Enable Stingers" and "Enable Auto-Ducking" controls; add `auto_duck_enabled` field to `ReviewDecisions`; wire both into `_mix_stingers()`
+
+**P3 — Nice-to-have (operator UX):**
+- GAP-6: Replace logo/font path text inputs in Brand Studio with `st.file_uploader` widgets; add interactive "Add Override" form to Platform Overrides expander
+
+**Success Criteria:**
+1. `decisions.captions_enabled = True` in review_state causes captions to burn into render output; `False` skips them regardless of config.yaml setting
+2. `decisions.sound_kit_enabled = True` in review_state triggers stinger mixing; `False` bypasses it regardless of configured sound files
+3. `decisions.branding_profile_name` overrides `config.branding.active_profile` for that render run
+4. `youtube_ultra` toggle appears in export panel and successfully routes to HEVC 10-bit PlatformSpec
+5. Claude provider can be selected in Settings without touching config files; ANTHROPIC_API_KEY status visible
+6. Caption aspect ratio persists through review_state and is used by `generate_ass()` at render time
+7. Auto-detected sync offset value and confidence displayed next to slider
+8. All tests pass — no regressions in Phase 9 (09-01 through 09-11)
+
+**Gap reference:** `.planning/phases/09-automated-branding-captions-and-multi-track-sync/09-UI-GAPS.md`
+
+**Plans:** TBD — awaiting `/gsd:plan-phase 9.12`
+
+---
+
 ## Notes
 
 - Streamlit remains the short-term UI for validation and rapid iteration.

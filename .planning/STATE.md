@@ -1,28 +1,28 @@
 # Project State: Podcast Pipeline
 
 **Last updated:** 2026-02-24
-**Current phase:** Phase 9 — Automated Branding, Captions, and Multi-Track Sync (complete)
-**Overall progress:** Phase 9 complete (11/11 plans); 62 plans completed overall
+**Current phase:** Phase 9.12 — Streamlit UI Gap Closure (not planned yet)
+**Overall progress:** Phase 9 complete (11/11 plans); 62 plans completed overall; Phase 9.12 pending planning
 
 ## Project Reference
 
 See: `.planning/PROJECT.md`
 
 **Core value:** Turn raw podcast recording into multi-platform content without editing software or manual copywriting.
-**Current focus:** Phase 9 complete -- 11/11 plans executed; Gemini Vision model pivot shipped.
+**Current focus:** Phase 9.12 — Streamlit UI Gap Closure (7 gaps identified; awaiting research + planning).
 
 ## Current Position
 
 ```text
-Phase:    9 (complete -- 11/11 plans)
-Plan:     09-11 complete (Gemini Vision model pivot); 62 completed overall
-Status:   Phase 9 complete -- all 11 plans executed
-Last activity: 2026-02-24 - Executed 09-11-PLAN.md (Gemini Vision thumbnail pivot)
+Phase:    9.12 (not planned yet — pending /gsd:plan-phase 9.12)
+Plan:     n/a — no plans created yet
+Status:   Phase 9 complete; Phase 9.12 added to close UI/render-wiring gaps
+Last activity: 2026-02-24 - Added Phase 9.12 (Streamlit UI Gap Closure)
 
-Progress: [██████████████████████████████] 62/62 plans complete
+Progress: [██████████████████████████████] 62/62 plans complete (Phase 9.12 not yet counted)
 ```
 
-**Current Phase:** Phase 9 — Automated Branding, Captions, and Multi-Track Sync (complete -- 11/11 plans)
+**Current Phase:** Phase 9.12 — Streamlit UI Gap Closure (not planned yet)
 
 ## Phase Status
 
@@ -39,6 +39,7 @@ Progress: [███████████████████████
 | 7 | Smooth Editing & Filler Word Control | Complete (verified 2026-02-21) | 4/4 | 100% |
 | 8 | Intelligent Cut Quality | Complete (verified 2026-02-21) | 6/6 | 100% |
 | 9 | Automated Branding, Captions, and Multi-Track Sync | Complete (verified 2026-02-24) | 11/11 | 100% |
+| 9.12 | Streamlit UI Gap Closure | Not planned | 0/TBD | 0% |
 
 ## Performance Metrics
 
@@ -349,16 +350,18 @@ Progress: [███████████████████████
 - 2026-02-24: Completed 09-10-PLAN.md (Brand Studio Streamlit tab, production sidebar controls, GPULease cross-job GPU serialization, 21 new tests, 260-line operator runbook)
 - 2026-02-24: Phase 9 complete (10/10 plans executed, 1039 total tests passing)
 - 2026-02-24: Completed 09-11-PLAN.md (Gemini Vision model pivot: replaced Imagen 4 / FLUX.1 with exclusive Gemini Vision thumbnail generation via google.genai SDK; 1031 tests passing)
+- 2026-02-24: Post-Phase 9 UI audit completed — 7 gaps identified and documented in 09-UI-GAPS.md (2 missing, 4 partial UI gaps + 1 critical render wiring gap where Production sidebar decisions are saved but never consumed by render.py)
+- 2026-02-24: Phase 9.12 added — Streamlit UI Gap Closure (closes all 7 gaps; awaiting planning)
 
 ## Session Continuity
 
 ### Last session
 
-2026-02-24 -- Executed `09-11-PLAN.md` (Gemini Vision model pivot). Phase 9 now complete (11/11 plans). 62/62 plans overall.
+2026-02-24 — Phase 9 complete (11/11 plans). Post-execution UI audit found 7 gaps. Phase 9.12 added to roadmap.
 
 ### Stopped at
 
-Completed 09-11-PLAN.md -- Phase 9 fully complete (11/11 plans executed).
+Phase 9.12 added — next step is `/gsd:plan-phase 9.12` (after research on the gaps).
 
 ### Resume file
 
