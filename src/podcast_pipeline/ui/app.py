@@ -2385,9 +2385,26 @@ def _render_brand_studio_editor(profile: BrandingProfile, branding_dir: Path) ->
 
     # ── Visual Assets ───────────────────────────────────────────────────────
     with st.expander("Visual Assets", expanded=False):
+        # Phase 09-12 (GAP-6A): File uploaders for logo and font alongside text inputs.
+        assets_dir = branding_dir / "assets"
+        assets_dir.mkdir(parents=True, exist_ok=True)
+
+        logo_upload = st.file_uploader(
+            "Upload Logo",
+            type=["png", "svg", "jpg", "jpeg"],
+            key="brand_studio_logo_upload",
+            help="Upload a logo file. The path field below will update automatically.",
+        )
+        if logo_upload is not None:
+            dest = assets_dir / logo_upload.name
+            dest.write_bytes(logo_upload.getvalue())
+            logo_path_default = str(dest)
+        else:
+            logo_path_default = str(profile.logo_path or "")
+
         logo_path = st.text_input(
             "Logo Path",
-            value=str(profile.logo_path or ""),
+            value=logo_path_default,
             key="brand_studio_logo",
             help="Path to logo image file (PNG/SVG). Leave empty for no logo.",
         )
@@ -2410,9 +2427,23 @@ def _render_brand_studio_editor(profile: BrandingProfile, branding_dir: Path) ->
             step=0.05,
             key="brand_studio_logo_opacity",
         )
+
+        font_upload = st.file_uploader(
+            "Upload Font",
+            type=["ttf", "otf", "woff", "woff2"],
+            key="brand_studio_font_upload",
+            help="Upload a font file for captions. The path field below will update automatically.",
+        )
+        if font_upload is not None:
+            dest = assets_dir / font_upload.name
+            dest.write_bytes(font_upload.getvalue())
+            font_path_default = str(dest)
+        else:
+            font_path_default = str(profile.font_path or "")
+
         font_path = st.text_input(
             "Font Path",
-            value=str(profile.font_path or ""),
+            value=font_path_default,
             key="brand_studio_font",
             help="Path to custom font file (TTF/OTF). Leave empty for default.",
         )
