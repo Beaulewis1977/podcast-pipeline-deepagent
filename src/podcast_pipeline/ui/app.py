@@ -2621,12 +2621,20 @@ def render_production_controls(job_id: str, job_dir: Path) -> None:
             help="Auto derives safe-zone from platform spec. Override to force a specific template for all exports.",
         )
 
-    # ── Sound Kit (Auto-Ducking) Toggle ─────────────────────────────────────
+    # ── Sound Kit Controls ───────────────────────────────────────────────────
+    # Phase 09-12 (GAP-5A): Split sound kit into independent stinger and ducking controls.
     sound_kit_enabled = st.checkbox(
-        "Enable Sound Kit",
+        "Enable Stingers",
         value=decisions.sound_kit_enabled,
-        key=f"prod_sound_kit_{job_id}",
-        help="Mix intro/transition/outro stingers with auto-ducking.",
+        key=f"prod_stingers_enabled_{job_id}",
+        help="Mix intro/transition/outro stingers into exports from the active branding profile.",
+    )
+
+    auto_duck_enabled = st.checkbox(
+        "Enable Auto-Ducking",
+        value=decisions.auto_duck_enabled,
+        key=f"prod_auto_duck_enabled_{job_id}",
+        help="Apply sidechaincompress ducking to lower voice track volume under stinger music.",
     )
 
     # ── AI Thumbnail Generation Toggle ──────────────────────────────────────
@@ -2684,6 +2692,9 @@ def render_production_controls(job_id: str, job_dir: Path) -> None:
         needs_save = True
     if sound_kit_enabled != decisions.sound_kit_enabled:
         decisions.sound_kit_enabled = sound_kit_enabled
+        needs_save = True
+    if auto_duck_enabled != decisions.auto_duck_enabled:
+        decisions.auto_duck_enabled = auto_duck_enabled
         needs_save = True
     if ai_thumbnails != decisions.ai_thumbnails_enabled:
         decisions.ai_thumbnails_enabled = ai_thumbnails
