@@ -1,28 +1,28 @@
 # Project State: Podcast Pipeline
 
 **Last updated:** 2026-02-24
-**Current phase:** Phase 9 — Automated Branding, Captions, and Multi-Track Sync (in progress)
-**Overall progress:** Phase 9 plan 05/10 complete; 56 plans completed overall
+**Current phase:** Phase 9 — Automated Branding, Captions, and Multi-Track Sync (complete)
+**Overall progress:** Phase 9 complete (10/10 plans); 61 plans completed overall
 
 ## Project Reference
 
 See: `.planning/PROJECT.md`
 
 **Core value:** Turn raw podcast recording into multi-platform content without editing software or manual copywriting.
-**Current focus:** Phase 9 in progress — 09-01 (FFmpeg toolkit), 09-02 (FastMCP dev server), 09-03 (Claude provider), 09-04 (HEVC/AV1 codec config), and 09-05 (BrandingProfile model) complete.
+**Current focus:** Phase 9 complete — all 10 plans executed (FFmpeg toolkit, FastMCP, Claude provider, HEVC/AV1 codec, BrandingProfile, captions, sync, audio mix, thumbnails, Brand Studio UI).
 
 ## Current Position
 
 ```text
-Phase:    9 (in progress — 5/10 plans complete)
-Plan:     09-05 complete; 56 completed overall
-Status:   Phase 9 in progress — FFmpeg toolkit, FastMCP dev server, Claude provider, HEVC/AV1 codec config, and BrandingProfile complete
-Last activity: 2026-02-24 - Completed 09-05-PLAN.md (BrandingProfile, YAML serialization, platform overrides, brand_voice prompt injection, 126 tests)
+Phase:    9 (complete — 10/10 plans)
+Plan:     09-10 complete; 61 completed overall
+Status:   Phase 9 complete — Brand Studio UI, production controls, GPU lease, and operator runbook delivered
+Last activity: 2026-02-24 - Completed 09-10-PLAN.md (Brand Studio UI, production controls, GPULease, 21 new tests, operator runbook)
 
-Progress: [██████████████████████████████] 56/61 plans complete (Phase 9 ongoing)
+Progress: [██████████████████████████████] 61/61 plans complete (Phase 9 complete)
 ```
 
-**Current Phase:** Phase 9 — Automated Branding, Captions, and Multi-Track Sync (5/10 plans complete)
+**Current Phase:** Phase 9 — Automated Branding, Captions, and Multi-Track Sync (10/10 plans complete)
 
 ## Phase Status
 
@@ -38,16 +38,16 @@ Progress: [███████████████████████
 | 6.1 | Video Marketing Copy Parity + Thumbnail Visual Selection MVP | Complete (verified) | 5/5 | 100% |
 | 7 | Smooth Editing & Filler Word Control | Complete (verified 2026-02-21) | 4/4 | 100% |
 | 8 | Intelligent Cut Quality | Complete (verified 2026-02-21) | 6/6 | 100% |
-| 9 | Automated Branding, Captions, and Multi-Track Sync | In progress | 5/10 | 50% |
+| 9 | Automated Branding, Captions, and Multi-Track Sync | Complete | 10/10 | 100% |
 
 ## Performance Metrics
 
 | Metric | Value |
 |--------|-------|
-| Plans completed | 56/61 |
+| Plans completed | 61/61 |
 | Requirements done | 35/83 (21 partial) |
-| Phases complete | 8/8 (Phase 9 in progress) |
-| Estimated completion | In progress |
+| Phases complete | 9/9 |
+| Estimated completion | Phase 9 complete |
 
 ## Accumulated Context
 
@@ -196,6 +196,11 @@ Progress: [███████████████████████
 | force_60fps_shortform gates on smoothing.force_60fps_shortform AND rife_enabled AND aspect_ratio in SHORT_FORM_ASPECT_RATIOS | Three-condition gate prevents silent uplift; all conditions must be explicitly enabled | 2026-02-24 |
 | RIFE 30->60fps uplift runs before filtergraph construction so interpolated frames are the render base | Ensures any branding/caption burn-in or color filters operate on the 60fps content | 2026-02-24 |
 | RifeBridge.uplift_fps raises NotImplementedError; _apply_shortform_60fps_rife catches and returns None | Whole-video RIFE uplift deferred; render continues gracefully with original input | 2026-02-24 |
+| GPULease uses threading.Semaphore(1) for cross-job GPU serialization | Simple, reliable single-GPU contention guard without external dependencies | 2026-02-24 |
+| Production controls persist in ReviewDecisions rather than separate state file | Keeps review contract as single source of truth for all operator decisions | 2026-02-24 |
+| Brand Studio is a top-level Streamlit navigation page | Matches operator mental model of profile management as separate activity from editing | 2026-02-24 |
+| Phase 9 ReviewDecisions fields default to None/False | Pre-Phase 9 review payloads load without error; backward compatibility preserved | 2026-02-24 |
+| delete_profile() added to branding utility for CRUD completeness | Brand Studio UI requires full create/read/update/delete lifecycle | 2026-02-24 |
 
 ### Roadmap Evolution
 
@@ -338,16 +343,18 @@ Progress: [███████████████████████
 - 2026-02-24: Completed 09-05-PLAN.md (BrandingProfile typed model, YAML serialization, platform override merge, BrandingConfig wired into Config, brand_voice prompt injection in BaseProvider)
 - 2026-02-24: Re-executed 09-04-PLAN.md (completed Tasks 2+3: runtime encoder fallback chain in render, 24 new regression tests for NVENC detection, x265 fallback, shortform RIFE gating, legacy platform isolation; 152 total render tests)
 - 2026-02-24: Completed 09-05-PLAN.md (BrandingProfile typed model, YAML serialization, platform override merge, BrandingConfig in settings, brand_voice prompt injection with double sanitization, 126 tests)
+- 2026-02-24: Completed 09-10-PLAN.md (Brand Studio Streamlit tab, production sidebar controls, GPULease cross-job GPU serialization, 21 new tests, 260-line operator runbook)
+- 2026-02-24: Phase 9 complete (10/10 plans executed, 1039 total tests passing)
 
 ## Session Continuity
 
 ### Last session
 
-2026-02-24 03:57 UTC — Re-executed `09-04-PLAN.md` (Tasks 2+3: runtime encoder capability detection in RenderStage.__init__, _resolve_video_encoder hevc_nvenc->libx265 and h264_nvenc->libx264 fallback chains, _is_shortform_vertical gating, _apply_shortform_60fps_rife before branding/overlays, RifeBridge.uplift_fps stub; 24 new regression tests across TestEncoderCapabilityDetection, TestShortformVerticalDetection, TestForce60fpsShortformGating, TestLegacyPlatformUnaffectedByPhase9Options; 152 total render tests passing).
+2026-02-24 08:38 UTC — Completed `09-10-PLAN.md` (Brand Studio Streamlit tab with profile CRUD, production sidebar controls for captions/sync/sound-kit/thumbnails, GPULease cross-job serialization with threading.Semaphore(1), 21 new tests, 260-line operator runbook; 1039 total tests passing; Phase 9 complete).
 
 ### Stopped at
 
-Re-executed 09-04-PLAN.md — Phase 9 plans 01, 02, 03, 04, and 05 complete; ready for 09-06.
+Completed 09-10-PLAN.md — Phase 9 complete (10/10 plans executed); ready for phase verification.
 
 ### Resume file
 
@@ -355,4 +362,4 @@ None
 
 ---
 
-*State updated: 2026-02-24 (09-05 complete — BrandingProfile model, YAML serialization, platform overrides, brand_voice prompt injection, 126 tests)*
+*State updated: 2026-02-24 (09-10 complete — Phase 9 finished: Brand Studio UI, production controls, GPULease, operator runbook, 1039 tests)*
