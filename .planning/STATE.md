@@ -1,28 +1,28 @@
 # Project State: Podcast Pipeline
 
-**Last updated:** 2026-02-23
-**Current phase:** Phase 8 re-execution COMPLETE
-**Overall progress:** All 6 Phase 8 plans re-executed with current baselines
+**Last updated:** 2026-02-24
+**Current phase:** Phase 9 — Automated Branding, Captions, and Multi-Track Sync (in progress)
+**Overall progress:** Phase 9 plan 02/10 complete; 53 plans completed overall
 
 ## Project Reference
 
 See: `.planning/PROJECT.md`
 
 **Core value:** Turn raw podcast recording into multi-platform content without editing software or manual copywriting.
-**Current focus:** Phase 8 complete — all 6 plans executed; integration tests, GPU smoke test, and operator guide locked.
+**Current focus:** Phase 9 in progress — 09-01 (FFmpeg toolkit) and 09-02 (FastMCP dev server) complete.
 
 ## Current Position
 
 ```text
-Phase:    8 COMPLETE (re-executed)
-Plan:     6/6 complete in Phase 8; 51 completed overall
-Status:   Phase 8 COMPLETE; all plans 08-01 through 08-06 re-executed with current baselines
-Last activity: 2026-02-23 - Re-executed 08-06-PLAN.md (smoke test torch 2.10.x baseline, operator guide forbidden models, version floors)
+Phase:    9 (in progress — 2/10 plans complete)
+Plan:     09-02 complete; 53 completed overall
+Status:   Phase 9 in progress — FFmpeg toolkit and FastMCP developer server complete
+Last activity: 2026-02-24 - Completed 09-02-PLAN.md (FastMCP dev server: 14 tools, .mcp.json, 28 tests)
 
-Progress: [██████████████████████████████] 51/51 plans complete
+Progress: [██████████████████████████████] 53/61 plans complete (Phase 9 ongoing)
 ```
 
-**Current Phase:** Phase 8 — Intelligent Cut Quality (re-execution: all 6 plans complete)
+**Current Phase:** Phase 9 — Automated Branding, Captions, and Multi-Track Sync (2/10 plans complete)
 
 ## Phase Status
 
@@ -38,14 +38,15 @@ Progress: [███████████████████████
 | 6.1 | Video Marketing Copy Parity + Thumbnail Visual Selection MVP | Complete (verified) | 5/5 | 100% |
 | 7 | Smooth Editing & Filler Word Control | Complete (verified 2026-02-21) | 4/4 | 100% |
 | 8 | Intelligent Cut Quality | Complete (verified 2026-02-21) | 6/6 | 100% |
+| 9 | Automated Branding, Captions, and Multi-Track Sync | In progress | 2/10 | 20% |
 
 ## Performance Metrics
 
 | Metric | Value |
 |--------|-------|
-| Plans completed | 51/51 |
+| Plans completed | 53/61 |
 | Requirements done | 35/83 (21 partial) |
-| Phases complete | 8/8 |
+| Phases complete | 8/8 (Phase 9 in progress) |
 | Estimated completion | In progress |
 
 ## Accumulated Context
@@ -175,6 +176,10 @@ Progress: [███████████████████████
 | torch==2.10.* pinned baseline in smoke test and operator guide (not >=2.7 unpinned) | Reproducible GPU installs; prevents silent torch major-version drift on Blackwell hardware | 2026-02-23 |
 | Operator guide explicitly forbids reasoning/CoT models for LLM triage (o1, gemini-3-pro, etc.) | Per-filler classification needs sub-second batch responses; reasoning models are too slow/expensive | 2026-02-23 |
 | RIFE 4.26 exists (corrected from "does not exist"); 4.25 is recommended default to avoid artifacts | Research-verified: 4.26 released but 4.25 more stable for podcast content type | 2026-02-23 |
+| fastmcp added to [dependency-groups] dev only — not project.optional-dependencies | Enforces production isolation; fastmcp is never required for pipeline stages or providers | 2026-02-24 |
+| Empty __all__ = [] in mcp/__init__.py signals dev-only intent and prevents accidental re-exports | Clean import boundary between production code and dev MCP tooling | 2026-02-24 |
+| MCP tools accept scalar inputs (str/float/bool); Path/Enum construction in wrapper | JSON-wire compatible; prevents Pydantic objects from crossing MCP transport boundary | 2026-02-24 |
+| MCP error handling returns {error, operation} dict instead of raising | Prevents MCP client disconnects on toolkit failures; keeps session alive for retries | 2026-02-24 |
 
 ### Roadmap Evolution
 
@@ -224,6 +229,8 @@ Progress: [███████████████████████
 - Phase 8 execution continued: completed 08-03-PLAN.md (triage-aware editorial_action, _filler_card_data UI helper, Streamlit filler card Phase 8 display)
 - Phase 8 execution continued: completed 08-04-PLAN.md (VAD breath detector, noise-floor matcher, render de-breathing + noise-floor passes, gpu optional deps)
 - Phase 9 added: Automated Branding, Captions, and Multi-Track Sync (10 plans, 5 waves; spec v4 at docs/plans/2026-02-21-branding-automation-and-sync-spec_v4.md)
+- Phase 9 execution started: completed 09-01-PLAN.md (FFmpeg media toolkit — 14 typed operations with Pydantic I/O across 5 groups)
+- Phase 9 execution continued: completed 09-02-PLAN.md (FastMCP dev server: 14 tool wrappers, .mcp.json stdio config, 28 isolation/registration/invocation tests)
 
 ### Technical Notes
 
@@ -308,16 +315,18 @@ Progress: [███████████████████████
 - 2026-02-23: Re-executed 08-04-PLAN.md (GPU extras version floors updated: silero-vad>=6.2,<7; librosa>=0.11,<1; opencv-python-headless>=4.13,<5; torch/torchaudio uv.sources routing verified correct)
 - 2026-02-23: Re-executed 08-05-PLAN.md (RIFE bridge --output bug fix: removed --output flag, added cwd=work_dir + PYTHONPATH injection, changed glob to work_dir/output/img*.png; updated tests to verify upstream contract)
 - 2026-02-23: Re-executed 08-06-PLAN.md (smoke test torch 2.10.x baseline; operator guide gemini-2.5-flash-lite default + forbidden reasoning model list + dep version floors; integration tests verified no-op — all 133 tests pass)
+- 2026-02-24: Completed 09-01-PLAN.md (FFmpeg media toolkit — 14 typed operations, 5 operation groups, structured error model, HLS packaging)
+- 2026-02-24: Completed 09-02-PLAN.md (FastMCP dev server: 14 MCP tools, lifespan hardware-encoder cache, .mcp.json stdio config, 28 tests)
 
 ## Session Continuity
 
 ### Last session
 
-2026-02-23 23:40 UTC — Re-executed `08-06-PLAN.md` (smoke test torch 2.10.* baseline, opencv>=4.13, pinned install hint; operator guide: gemini-2.5-flash-lite default, forbidden o1/gemini-pro reasoning models, silero-vad>=6.2,<7, librosa>=0.11,<1, opencv>=4.13,<5, RIFE 4.26 note corrected; Task 2 no-op — all 133 tests pass).
+2026-02-24 03:36 UTC — Completed `09-02-PLAN.md` (FastMCP dev server: podcast_pipeline.mcp package init, ffmpeg_server.py with 14 tool wrappers, lifespan hardware-encoder cache, .mcp.json stdio config; 28 tests covering registration/invocation/isolation; all passing).
 
 ### Stopped at
 
-Completed 08-06-PLAN.md re-execution — Phase 8 fully locked with current baselines across all 6 plans.
+Completed 09-02-PLAN.md — Phase 9 plans 01 and 02 complete; ready for 09-03 (ASS caption generation).
 
 ### Resume file
 
@@ -325,4 +334,4 @@ None
 
 ---
 
-*State updated: 2026-02-23 (08-05 re-executed — RIFE bridge --output bug fixed; upstream-compatible CLI contract; all rife_bridge tests pass)*
+*State updated: 2026-02-24 (09-02 complete — FastMCP server: 14 MCP tools, .mcp.json, 28 tests, isolation boundaries verified)*
