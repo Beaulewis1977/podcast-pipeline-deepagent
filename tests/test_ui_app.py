@@ -814,3 +814,97 @@ def test_ui_app_load_normalized_export_platforms_drops_invalid_saved_keys(
 
     assert normalized == ["youtube", "spotify_video"]
     assert invalid == ["unknown"]
+
+
+# ---------------------------------------------------------------------------
+# Phase 8: filler card data display tests
+# ---------------------------------------------------------------------------
+
+
+def test_filler_card_shows_context_snippet() -> None:
+    """FillerCutRange with context fields should surface them in card data."""
+    from podcast_pipeline.ui.app import _filler_card_data
+
+    filler: dict[str, object] = {
+        "word": "like",
+        "context_before": "it was",
+        "context_after": "really great",
+        "start_seconds": 5.0,
+        "end_seconds": 5.2,
+    }
+    card = _filler_card_data(filler)
+
+    assert card["context_before"] == "it was"
+    assert card["context_after"] == "really great"
+    assert card["word"] == "like"
+
+
+def test_filler_card_shows_pause_badges() -> None:
+    """FillerCutRange with pause timing should expose ms values in card data."""
+    from podcast_pipeline.ui.app import _filler_card_data
+
+    filler: dict[str, object] = {
+        "word": "um",
+        "pause_before_ms": 350.0,
+        "pause_after_ms": 80.0,
+        "start_seconds": 10.0,
+        "end_seconds": 10.3,
+    }
+    card = _filler_card_data(filler)
+
+    assert card["pause_before_ms"] == 350.0
+    assert card["pause_after_ms"] == 80.0
+
+
+def test_filler_card_shows_protected_lock() -> None:
+    """Protected filler card should reflect protected=True and default_action='keep'."""
+    from podcast_pipeline.ui.app import _filler_card_data
+
+    filler: dict[str, object] = {
+        "word": "like",
+        "category": "hedge",
+        "protected": True,
+        "start_seconds": 3.0,
+        "end_seconds": 3.2,
+    }
+    card = _filler_card_data(filler)
+
+    assert card["protected"] is True
+    assert card["default_action"] == "keep"
+
+
+def test_filler_card_shows_llm_reason() -> None:
+    """Filler card with llm_reason should include the reason string in card data."""
+    from podcast_pipeline.ui.app import _filler_card_data
+
+    filler: dict[str, object] = {
+        "word": "well",
+        "llm_reason": "Rhetorical emphasis",
+        "llm_safe_to_remove": False,
+        "start_seconds": 7.0,
+        "end_seconds": 7.15,
+    }
+    card = _filler_card_data(filler)
+
+    assert card["llm_reason"] == "Rhetorical emphasis"
+    assert card["llm_safe_to_remove"] is False
+
+
+def test_filler_card_no_phase8_data() -> None:
+    """FillerCutRange with all defaults produces no errors and sensible fallbacks."""
+    from podcast_pipeline.ui.app import _filler_card_data
+
+    filler: dict[str, object] = {
+        "word": "uh",
+        "start_seconds": 2.0,
+        "end_seconds": 2.1,
+    }
+    card = _filler_card_data(filler)
+
+    assert card["context_before"] == ""
+    assert card["context_after"] == ""
+    assert card["pause_before_ms"] == 0.0
+    assert card["pause_after_ms"] == 0.0
+    assert card["protected"] is False
+    assert card["llm_safe_to_remove"] is None
+    assert card["llm_reason"] == ""

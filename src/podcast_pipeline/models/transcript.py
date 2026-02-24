@@ -1,6 +1,6 @@
 """Transcript models."""
 
-from typing import Self
+from typing import Literal, Self
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -58,6 +58,14 @@ class FillerCut(BaseModel):
     end: float = Field(ge=0.0)
     word: str
     confidence: float = Field(ge=0.0, le=1.0)
+
+    # Phase 8 additions — all optional/defaulted for backward compat
+    category: Literal["disfluency", "hedge", "custom"] = "disfluency"
+    pause_before_ms: float = Field(default=0.0, ge=0.0)
+    pause_after_ms: float = Field(default=0.0, ge=0.0)
+    context_before: str = ""
+    context_after: str = ""
+    protected: bool = False
 
     @model_validator(mode="after")
     def validate_range(self) -> Self:

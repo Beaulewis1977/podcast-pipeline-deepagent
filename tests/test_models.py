@@ -261,6 +261,66 @@ class TestAnalysis:
         assert round_tripped["marketing"]["apple_video"]["description"] == "Apple Video description"
 
 
+class TestFillerCutPhase8:
+    """Tests for Phase 8 FillerCut backward compat and new fields."""
+
+    def test_filler_cut_backward_compat_no_new_fields(self) -> None:
+        """Legacy filler_cuts.json payload without Phase 8 fields deserializes with safe defaults."""
+        data = {"start": 1.0, "end": 1.5, "word": "um", "confidence": 0.9}
+        cut = FillerCut.model_validate(data)
+        assert cut.category == "disfluency"
+        assert cut.pause_before_ms == 0.0
+        assert cut.pause_after_ms == 0.0
+        assert cut.context_before == ""
+        assert cut.context_after == ""
+        assert cut.protected is False
+
+    def test_filler_cut_with_phase8_fields(self) -> None:
+        """FillerCut with all Phase 8 fields present round-trips correctly."""
+        data = {
+            "start": 2.0,
+            "end": 2.6,
+            "word": "like",
+            "confidence": 0.85,
+            "category": "hedge",
+            "pause_before_ms": 350.0,
+            "pause_after_ms": 50.0,
+            "context_before": "I think",
+            "context_after": "it works",
+            "protected": True,
+        }
+        cut = FillerCut.model_validate(data)
+        assert cut.category == "hedge"
+        assert cut.pause_before_ms == pytest.approx(350.0)
+        assert cut.pause_after_ms == pytest.approx(50.0)
+        assert cut.context_before == "I think"
+        assert cut.context_after == "it works"
+        assert cut.protected is True
+
+        # Round-trip through dict serialization
+        dumped = cut.model_dump()
+        reloaded = FillerCut.model_validate(dumped)
+        assert reloaded.category == "hedge"
+        assert reloaded.protected is True
+        assert reloaded.context_before == "I think"
+
+    def test_filler_cut_invalid_category_rejected(self) -> None:
+        """FillerCut rejects unrecognised category values."""
+        with pytest.raises(ValidationError):
+            FillerCut(start=1.0, end=1.5, word="um", confidence=0.9, category="unknown")
+
+    def test_filler_cut_custom_category_accepted(self) -> None:
+        """FillerCut accepts 'custom' as a valid category."""
+        cut = FillerCut(
+            start=1.0,
+            end=1.5,
+            word="literally",
+            confidence=0.88,
+            category="custom",
+        )
+        assert cut.category == "custom"
+
+
 class TestThumbnailCandidate:
     """Tests for thumbnail candidate schema."""
 

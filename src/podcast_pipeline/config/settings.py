@@ -134,25 +134,45 @@ class TranscriptionConfig(BaseModel):
 
 
 class FillerConfig(BaseModel):
-    """Filler word detection configuration."""
+    """Filler word detection and triage configuration."""
 
-    words: list[str] = Field(
-        default_factory=lambda: [
-            "um",
-            "uh",
-            "hmm",
-            "er",
-            "ah",
-            "like",
-            "you know",
-            "basically",
-            "actually",
-            "so",
-        ]
+    # Categorised word lists (Phase 8)
+    disfluencies: list[str] = Field(default_factory=lambda: ["um", "uh", "hmm", "er", "ah"])
+    hedge_words: list[str] = Field(
+        default_factory=lambda: ["like", "you know", "basically", "actually", "so"]
     )
+    custom_words: list[str] = Field(default_factory=list)
+
+    # Backward-compat flat list — treated as extra disfluencies when present
+    words: list[str] = Field(default_factory=list)
+
+    # Existing detection thresholds (unchanged)
     min_confidence: float = 0.5
     min_duration_ms: int = 150
     padding_ms: int = 50
+
+    # Phase 8: Pause-based protection gate
+    protect_pause_threshold_ms: float = Field(default=300.0, ge=0.0)
+
+    # Phase 8: LLM semantic triage (hedge words only)
+    enable_llm_triage: bool = True
+    llm_triage_model: str = "gemini-2.5-flash-lite"
+    llm_triage_max_context_words: int = 5
+
+    @field_validator("llm_triage_model")
+    @classmethod
+    def reject_reasoning_models(cls, v: str) -> str:
+        """Reject known reasoning/CoT models — too slow and expensive for per-filler triage."""
+        forbidden_prefixes = ("o1", "o3", "gemini-3-pro", "gemini-pro-thinking")
+        lowered = v.lower()
+        for prefix in forbidden_prefixes:
+            if lowered.startswith(prefix):
+                raise ValueError(
+                    f"llm_triage_model '{v}' is a reasoning/CoT model and is forbidden "
+                    f"for filler triage (too slow and expensive). "
+                    f"Use 'gemini-2.5-flash-lite' instead."
+                )
+        return v
 
 
 class AudioConfig(BaseModel):
@@ -255,6 +275,27 @@ class SmoothingConfig(BaseModel):
     max_snap_shift_ms: float = Field(default=250.0, ge=0.0, le=1000.0)
     join_clamp_ratio: float = Field(default=0.35, gt=0.0, le=0.5)
     require_transition_filters: bool = False
+
+    # Phase 8: De-breathing at cut boundaries
+    de_breathing_enabled: bool = True
+    de_breathing_window_ms: float = Field(default=200.0, ge=0.0, le=500.0)
+    de_breathing_max_extend_ms: float = Field(default=150.0, ge=0.0, le=300.0)
+
+    # Phase 8: Noise-floor matching across joins
+    noise_floor_match_enabled: bool = True
+    noise_floor_match_threshold_db: float = Field(default=3.0, ge=0.0, le=20.0)
+    noise_floor_match_ramp_ms: float = Field(default=50.0, ge=0.0, le=200.0)
+
+    # Phase 8: Pose matching for optimal cut-point frame selection
+    pose_match_enabled: bool = True
+    pose_match_search_window_ms: float = Field(default=200.0, ge=0.0, le=500.0)
+    pose_match_rife_threshold: float = Field(default=2.5, gt=0.0)
+
+    # Phase 8: RIFE AI frame interpolation (disabled by default — requires manual RIFE setup)
+    rife_enabled: bool = False
+    rife_num_bridge_frames: int = Field(default=4, ge=1, le=16)
+    rife_script_path: str = ""
+    rife_fallback_to_xfade: bool = True
 
 
 class HLSConfig(BaseModel):

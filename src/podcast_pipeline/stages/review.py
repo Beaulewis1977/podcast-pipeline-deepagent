@@ -215,12 +215,24 @@ class ReviewStage(Stage):
 
         decisions = ReviewDecisions()
 
-        # Default: approve all filler cuts
+        # Default: set per-filler actions using triage-aware derivation.
+        # Phase 8: protected fillers default to "keep"; disfluencies and
+        # LLM-confirmed safe hedges default to "remove"; uncertain hedges
+        # default to "keep" so editors can review them.
         if filler_path.exists():
             fillers = json.loads(filler_path.read_text())
+            triage_map = _load_filler_triage_map(job_dir)
             decisions.approved_filler_cuts = list(range(len(fillers)))
             decisions.filler_decisions = [
-                FillerDecision(index=i, action="remove") for i in range(len(fillers))
+                FillerDecision(
+                    index=i,
+                    action=_derive_editorial_action(
+                        f,
+                        triage_map.get(i),
+                        None,
+                    ),
+                )
+                for i, f in enumerate(fillers)
             ]
 
         # Default: no content cuts approved (require explicit approval)
@@ -297,6 +309,50 @@ def approve_review(job_dir: Path, platforms: list[str] | None = None) -> ReviewD
     return decisions
 
 
+def _load_filler_triage_map(job_dir: Path) -> dict[int, dict[str, Any]]:
+    """Load filler_triage.json and return a dict keyed by filler_index."""
+    triage_path = job_dir / "analysis" / "filler_triage.json"
+    if not triage_path.exists():
+        return {}
+    try:
+        raw = json.loads(triage_path.read_text())
+        if not isinstance(raw, list):
+            return {}
+        return {
+            int(entry["filler_index"]): entry
+            for entry in raw
+            if isinstance(entry, dict) and "filler_index" in entry
+        }
+    except (OSError, json.JSONDecodeError, ValueError, KeyError, TypeError):
+        return {}
+
+
+def _derive_editorial_action(
+    filler: dict[str, Any],
+    triage: dict[str, Any] | None,
+    explicit_action: Literal["remove", "keep"] | None,
+) -> Literal["remove", "keep"]:
+    """Derive default editorial_action from category, protection flag, and LLM verdict.
+
+    Priority:
+    1. Explicit user decision overrides everything.
+    2. protected=True -> keep
+    3. category == "disfluency" -> remove
+    4. triage.safe_to_remove == True -> remove
+    5. Default -> keep (review/no-triage hedge)
+    """
+    if explicit_action is not None:
+        return explicit_action
+    if filler.get("protected"):
+        return "keep"
+    category = str(filler.get("category") or "").strip().lower()
+    if category == "disfluency":
+        return "remove"
+    if triage is not None and triage.get("safe_to_remove") is True:
+        return "remove"
+    return "keep"
+
+
 def write_edit_plan(
     job_dir: Path,
     decisions: ReviewDecisions,
@@ -310,6 +366,9 @@ def write_edit_plan(
     review_dir = job_dir / "review"
     review_dir.mkdir(parents=True, exist_ok=True)
 
+    # Load LLM triage results keyed by filler index
+    triage_map = _load_filler_triage_map(job_dir)
+
     # Determine approved filler cuts
     # Support both start_seconds/end_seconds and start/end key variants
     approved_filler: list[FillerCutRange] = []
@@ -319,6 +378,16 @@ def write_edit_plan(
             if action != "remove" or idx >= len(filler_cuts):
                 continue
             filler = filler_cuts[idx]
+            triage = triage_map.get(idx)
+
+            # Populate Phase 8 enrichment fields from the filler cut dict
+            llm_safe: bool | None = None
+            llm_reason = ""
+            if triage is not None:
+                raw_safe = triage.get("safe_to_remove")
+                llm_safe = bool(raw_safe) if raw_safe is not None else None
+                llm_reason = str(triage.get("reason") or "")
+
             approved_filler.append(
                 FillerCutRange(
                     start_seconds=float(filler.get("start_seconds", filler.get("start", 0.0))),
@@ -333,6 +402,11 @@ def write_edit_plan(
                         filler.get("context_after", filler.get("after_text", "")) or ""
                     ),
                     editorial_action=action,
+                    protected=bool(filler.get("protected", False)),
+                    pause_before_ms=float(filler.get("pause_before_ms") or 0.0),
+                    pause_after_ms=float(filler.get("pause_after_ms") or 0.0),
+                    llm_safe_to_remove=llm_safe,
+                    llm_reason=llm_reason,
                 )
             )
 

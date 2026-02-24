@@ -18,6 +18,10 @@ from podcast_pipeline.stages.review import ReviewDecisions
 from podcast_pipeline.utils.editing import find_word_boundaries, snap_cut_range
 from podcast_pipeline.utils.ffmpeg import FFmpegError, get_video_info, run_ffmpeg, run_ffprobe
 from podcast_pipeline.utils.logging import get_logger
+from podcast_pipeline.utils.noise_match import compute_noise_floor_correction, measure_rms_db
+from podcast_pipeline.utils.pose_match import scan_best_frame_pair
+from podcast_pipeline.utils.rife_bridge import RifeBridge
+from podcast_pipeline.utils.vad import detect_breath_extension
 
 logger = get_logger(__name__)
 
@@ -1432,6 +1436,7 @@ class RenderStage(Stage):
             vf_filters,
             af_filters,
             transcript_words=transcript_words,
+            input_video=input_video,
         )
 
         duration_args: list[str] = []
@@ -1621,6 +1626,7 @@ class RenderStage(Stage):
             vf_filters,
             af_filters,
             transcript_words=transcript_words,
+            input_video=input_video,
         )
 
         # Handle duration limits
@@ -1936,6 +1942,7 @@ class RenderStage(Stage):
         af_filters: list[str],
         *,
         transcript_words: list[dict[str, Any]] | None = None,
+        input_video: Path | None = None,
     ) -> tuple[str, str, str] | None:
         """Build transition-aware filter_complex for edit-plan cuts."""
         if not edit_plan or duration <= 0:
@@ -1946,6 +1953,8 @@ class RenderStage(Stage):
             return None
 
         cut_ranges = self._apply_word_boundary_snapping(cut_ranges, transcript_words)
+        # Phase 8: De-breathing — extend cut boundaries to swallow trailing breaths.
+        cut_ranges = self._apply_de_breathing_pass(cut_ranges, input_video)
         cut_ranges = self._merge_ranges(cut_ranges)
         keep_ranges, join_kinds = self._invert_cut_ranges(cut_ranges, duration)
         if not keep_ranges:
@@ -1964,6 +1973,17 @@ class RenderStage(Stage):
         keep_durations = [max(end - start, 0.0) for start, end in keep_ranges]
         if not any(segment > _EPSILON for segment in keep_durations):
             return None
+
+        # Phase 8: Pose-match — optimise content-cut boundaries and optionally
+        # generate RIFE bridge frames between the best-matched frame pairs.
+        keep_ranges, join_kinds, rife_bridge_clips = self._apply_pose_match_pass(
+            keep_ranges,
+            join_kinds,
+            input_video,
+        )
+
+        # Phase 8: Noise-floor matching — compute per-join volume corrections.
+        noise_corrections = self._compute_noise_floor_corrections(keep_ranges, input_video)
 
         smoothing = self.config.smoothing
         micro_fade_s = (smoothing.micro_fade_ms / 1000.0) if smoothing.enabled else 0.0
@@ -1995,6 +2015,14 @@ class RenderStage(Stage):
                         f"{audio_chain},afade=t=in:st=0:d={fade_duration:.3f},"
                         f"afade=t=out:st={fade_out_start:.3f}:d={fade_duration:.3f}"
                     )
+            # Phase 8: Apply noise-floor gain correction to the right segment at
+            # each join.  noise_corrections[idx-1] is the correction for the join
+            # that immediately precedes segment idx (i.e., it corrects segment idx
+            # to match the noise floor of segment idx-1).
+            if idx > 0:
+                correction = noise_corrections.get(idx - 1)
+                if correction is not None:
+                    audio_chain = f"{audio_chain},{correction}"
             filter_parts.append(f"[0:a]{audio_chain}[a{idx}]")
 
         video_label = "v0"
@@ -2072,32 +2100,74 @@ class RenderStage(Stage):
                 crossfade_s = 0.0
                 dissolve_s = 0.0
 
-            if apply_content_audio and crossfade_s > _EPSILON:
+            # Phase 8: RIFE bridge clip — if a pre-rendered bridge exists for this
+            # join, insert it between the two segments using the movie source filter
+            # and 3-way concat (no extra -i input required).
+            rife_clip = rife_bridge_clips.get(idx - 1)
+            if rife_clip is not None and rife_clip.is_file():
+                bridge_video_label = f"bridge_v{idx}"
+                bridge_audio_label = f"bridge_a{idx}"
+                # Use the movie source filter to embed the bridge clip inline.
+                # Escape colons in the path for filter_complex syntax.
+                safe_path = str(rife_clip).replace("\\", "/").replace(":", "\\:")
+                filter_parts.append(f"movie={safe_path}:s=dv[{bridge_video_label}]")
+                # Bridge clips are video-only (-an); generate silent audio
+                # matching the bridge duration for the audio concat.
+                bridge_info = get_video_info(rife_clip)
+                bridge_dur = float(bridge_info.get("duration") or 0.0)
+                if bridge_dur <= _EPSILON:
+                    # Fallback: estimate from num_bridge_frames / fps.
+                    fps_guess = float(bridge_info.get("fps") or 30)
+                    bridge_dur = smoothing.rife_num_bridge_frames / fps_guess
+                filter_parts.append(f"aevalsrc=0:d={bridge_dur:.3f}[{bridge_audio_label}]")
+                filter_parts.append(
+                    f"[{audio_label}][{bridge_audio_label}][{next_audio}]"
+                    f"concat=n=3:v=0:a=1[{join_label_audio}]"
+                )
+                filter_parts.append(
+                    f"[{video_label}][{bridge_video_label}][{next_video}]"
+                    f"concat=n=3:v=1:a=0[{join_label_video}]"
+                )
+                audio_duration += bridge_dur + next_duration
+                video_duration += bridge_dur + next_duration
+            elif apply_content_audio and crossfade_s > _EPSILON:
                 filter_parts.append(
                     f"[{audio_label}][{next_audio}]"
                     f"acrossfade=d={crossfade_s:.3f}:c1=tri:c2=tri[{join_label_audio}]"
                 )
                 audio_duration = max(audio_duration + next_duration - crossfade_s, 0.0)
+                if apply_content_video and dissolve_s > _EPSILON:
+                    offset = max(video_duration - dissolve_s, 0.0)
+                    filter_parts.append(
+                        f"[{video_label}][{next_video}]"
+                        f"xfade=transition=fade:duration={dissolve_s:.3f}:offset={offset:.3f}"
+                        f"[{join_label_video}]"
+                    )
+                    video_duration = max(video_duration + next_duration - dissolve_s, 0.0)
+                else:
+                    filter_parts.append(
+                        f"[{video_label}][{next_video}]concat=n=2:v=1:a=0[{join_label_video}]"
+                    )
+                    video_duration += next_duration
             else:
                 filter_parts.append(
                     f"[{audio_label}][{next_audio}]concat=n=2:v=0:a=1[{join_label_audio}]"
                 )
                 audio_duration += next_duration
+                if apply_content_video and dissolve_s > _EPSILON:
+                    offset = max(video_duration - dissolve_s, 0.0)
+                    filter_parts.append(
+                        f"[{video_label}][{next_video}]"
+                        f"xfade=transition=fade:duration={dissolve_s:.3f}:offset={offset:.3f}"
+                        f"[{join_label_video}]"
+                    )
+                    video_duration = max(video_duration + next_duration - dissolve_s, 0.0)
+                else:
+                    filter_parts.append(
+                        f"[{video_label}][{next_video}]concat=n=2:v=1:a=0[{join_label_video}]"
+                    )
+                    video_duration += next_duration
             audio_label = join_label_audio
-
-            if apply_content_video and dissolve_s > _EPSILON:
-                offset = max(video_duration - dissolve_s, 0.0)
-                filter_parts.append(
-                    f"[{video_label}][{next_video}]"
-                    f"xfade=transition=fade:duration={dissolve_s:.3f}:offset={offset:.3f}"
-                    f"[{join_label_video}]"
-                )
-                video_duration = max(video_duration + next_duration - dissolve_s, 0.0)
-            else:
-                filter_parts.append(
-                    f"[{video_label}][{next_video}]concat=n=2:v=1:a=0[{join_label_video}]"
-                )
-                video_duration += next_duration
             video_label = join_label_video
 
         if vf_filters:
@@ -2152,6 +2222,357 @@ class RenderStage(Stage):
                 snapped_start, snapped_end = cut.start, cut.end
             snapped.append(_CutRange(start=snapped_start, end=snapped_end, kind=cut.kind))
         return snapped
+
+    def _apply_de_breathing_pass(
+        self,
+        ranges: list[_CutRange],
+        audio_path: Path | None,
+    ) -> list[_CutRange]:
+        """Extend cut-out boundaries to swallow trailing breath sounds via silero-vad.
+
+        Skips gracefully when de_breathing_enabled is False, audio_path is None,
+        or silero-vad is not installed (detect_breath_extension returns 0.0).
+        """
+        smoothing = self.config.smoothing
+        if not smoothing.de_breathing_enabled or not ranges or audio_path is None:
+            return ranges
+
+        extended: list[_CutRange] = []
+        for cut in ranges:
+            extension_s = detect_breath_extension(
+                audio_path,
+                cut.end,
+                window_ms=smoothing.de_breathing_window_ms,
+                max_extend_ms=smoothing.de_breathing_max_extend_ms,
+            )
+            if extension_s > _EPSILON:
+                new_end = cut.end + extension_s
+                self.logger.debug(
+                    "de_breathing_extended",
+                    cut_start=round(cut.start, 3),
+                    original_end=round(cut.end, 3),
+                    extended_end=round(new_end, 3),
+                    extension_ms=round(extension_s * 1000, 1),
+                )
+                extended.append(_CutRange(start=cut.start, end=new_end, kind=cut.kind))
+            else:
+                extended.append(cut)
+        return extended
+
+    def _compute_noise_floor_corrections(
+        self,
+        keep_ranges: list[tuple[float, float]],
+        audio_path: Path | None,
+    ) -> dict[int, str]:
+        """Compute FFmpeg volume-filter corrections for noise-floor mismatches at joins.
+
+        Returns a dict mapping join_index -> FFmpeg filter string for joins where
+        the RMS delta exceeds noise_floor_match_threshold_db.  Returns empty dict
+        when noise_floor_match_enabled is False, audio_path is None, or librosa
+        is not installed.
+
+        join_index is 0-based: join 0 is between keep_ranges[0] and keep_ranges[1].
+        """
+        smoothing = self.config.smoothing
+        if not smoothing.noise_floor_match_enabled or audio_path is None:
+            return {}
+        if len(keep_ranges) < 2:
+            return {}
+
+        corrections: dict[int, str] = {}
+        window_ms = 100.0  # 100ms analysis window per boundary
+        for join_idx in range(len(keep_ranges) - 1):
+            left_end = keep_ranges[join_idx][1]
+            right_start = keep_ranges[join_idx + 1][0]
+
+            # Analyse audio at boundary: tail of left segment and head of right segment.
+            left_offset_s = max(left_end - window_ms / 1000.0, 0.0)
+            right_offset_s = right_start
+
+            left_rms = measure_rms_db(
+                audio_path,
+                window_ms=window_ms,
+                tail=True,
+                offset_s=left_offset_s,
+            )
+            right_rms = measure_rms_db(
+                audio_path,
+                window_ms=window_ms,
+                tail=False,
+                offset_s=right_offset_s,
+            )
+
+            correction = compute_noise_floor_correction(
+                left_rms_db=left_rms,
+                right_rms_db=right_rms,
+                threshold_db=smoothing.noise_floor_match_threshold_db,
+                ramp_ms=smoothing.noise_floor_match_ramp_ms,
+            )
+            if correction is not None:
+                corrections[join_idx] = correction
+                self.logger.debug(
+                    "noise_floor_correction_applied",
+                    join_idx=join_idx,
+                    left_end=round(left_end, 3),
+                    right_start=round(right_start, 3),
+                    left_rms_db=round(left_rms, 2),
+                    right_rms_db=round(right_rms, 2),
+                    filter=correction,
+                )
+
+        return corrections
+
+    def _apply_pose_match_pass(
+        self,
+        keep_ranges: list[tuple[float, float]],
+        join_kinds: list[Literal["filler", "content"]],
+        video_path: Path | None,
+    ) -> tuple[list[tuple[float, float]], list[Literal["filler", "content"]], dict[int, Path]]:
+        """Optimise content-cut frame boundaries and optionally generate RIFE bridge frames.
+
+        For each content-cut join, extracts frames from the search window around the
+        boundary, selects the frame pair with minimum optical-flow distance (via
+        scan_best_frame_pair), and optionally generates AI bridge frames with RIFE.
+
+        Returns
+        -------
+        tuple
+            ``(keep_ranges, join_kinds, rife_bridge_clips)`` where ``rife_bridge_clips``
+            is a dict mapping join_index (0-based) to a pre-rendered bridge video Path.
+            When pose matching is disabled or unavailable, returns inputs unchanged with
+            an empty bridge clip dict.
+        """
+        smoothing = self.config.smoothing
+        rife_bridge_clips: dict[int, Path] = {}
+
+        if not smoothing.pose_match_enabled:
+            return keep_ranges, join_kinds, rife_bridge_clips
+
+        if video_path is None:
+            self.logger.info("pose_match_skipped", reason="audio_only_job")
+            return keep_ranges, join_kinds, rife_bridge_clips
+
+        if len(keep_ranges) < 2:
+            return keep_ranges, join_kinds, rife_bridge_clips
+
+        # Compute search window in frames (assume 30 fps for frame extraction).
+        fps = 30
+        window_frames = max(1, round(smoothing.pose_match_search_window_ms / 1000.0 * fps))
+
+        rife = RifeBridge(script_path=smoothing.rife_script_path)
+        updated_ranges = list(keep_ranges)
+
+        with tempfile.TemporaryDirectory(prefix="pose_match_") as tmpdir:
+            tmp = Path(tmpdir)
+
+            for join_idx in range(len(keep_ranges) - 1):
+                if join_idx >= len(join_kinds) or join_kinds[join_idx] != "content":
+                    # Only process content-cut joins.
+                    continue
+
+                # Use updated_ranges so prior join adjustments are reflected.
+                left_seg_start, left_end = updated_ranges[join_idx]
+                right_start, right_end = updated_ranges[join_idx + 1]
+
+                # Extract frames: tail of left segment and head of right segment.
+                left_dir = tmp / f"join{join_idx}_left"
+                right_dir = tmp / f"join{join_idx}_right"
+                left_dir.mkdir()
+                right_dir.mkdir()
+
+                left_start_extract = max(left_end - window_frames / fps, left_seg_start)
+                self._extract_frames(
+                    video_path,
+                    left_start_extract,
+                    min(window_frames / fps, left_end - left_start_extract),
+                    left_dir,
+                    window_frames,
+                )
+                self._extract_frames(
+                    video_path,
+                    right_start,
+                    min(window_frames / fps, right_end - right_start),
+                    right_dir,
+                    window_frames,
+                )
+
+                left_frames = sorted(left_dir.glob("*.png"))
+                right_frames = sorted(right_dir.glob("*.png"))
+
+                if not left_frames or not right_frames:
+                    self.logger.debug(
+                        "pose_match_no_frames",
+                        join_idx=join_idx,
+                        left_count=len(left_frames),
+                        right_count=len(right_frames),
+                    )
+                    continue
+
+                best_left_idx, best_right_idx, best_dist = scan_best_frame_pair(
+                    left_frames, right_frames, search_window=window_frames
+                )
+
+                self.logger.debug(
+                    "pose_match_result",
+                    join_idx=join_idx,
+                    best_dist=round(best_dist, 4) if best_dist != float("inf") else "inf",
+                    threshold=smoothing.pose_match_rife_threshold,
+                    rife_enabled=smoothing.rife_enabled,
+                )
+
+                # Adjust trim boundaries to the best-matched frames.
+                # Convert frame index offsets back to timestamps.
+                if len(left_frames) > 1:
+                    left_frame_offset = best_left_idx / fps
+                    new_left_end = min(left_start_extract + left_frame_offset, left_end)
+                    left_seg = updated_ranges[join_idx]
+                    updated_ranges[join_idx] = (left_seg[0], new_left_end)
+
+                if len(right_frames) > 1:
+                    right_frame_offset = best_right_idx / fps
+                    new_right_start = min(right_start + right_frame_offset, right_end)
+                    right_seg = updated_ranges[join_idx + 1]
+                    updated_ranges[join_idx + 1] = (new_right_start, right_seg[1])
+
+                # Optionally generate RIFE bridge frames if pose distance exceeds threshold.
+                if (
+                    best_dist > smoothing.pose_match_rife_threshold
+                    and smoothing.rife_enabled
+                    and rife.available()
+                ):
+                    bridge_dir = tmp / f"join{join_idx}_rife"
+                    bridge_dir.mkdir()
+                    bridge_frames = rife.generate(
+                        left_frames[best_left_idx],
+                        right_frames[best_right_idx],
+                        bridge_dir,
+                        num_frames=smoothing.rife_num_bridge_frames,
+                    )
+                    if bridge_frames:
+                        # Encode bridge frames into a short video clip.
+                        bridge_clip = tmp / f"join{join_idx}_bridge.mp4"
+                        self._encode_bridge_frames(bridge_frames, bridge_clip, fps=fps)
+                        if bridge_clip.is_file():
+                            # Move the bridge clip out of the temp directory to a
+                            # stable location so it survives TemporaryDirectory cleanup.
+                            stable_dir = video_path.parent.parent / "render" / "bridge_clips"
+                            stable_dir.mkdir(parents=True, exist_ok=True)
+                            stable_clip = stable_dir / f"join{join_idx}_bridge.mp4"
+                            shutil.copy2(str(bridge_clip), str(stable_clip))
+                            rife_bridge_clips[join_idx] = stable_clip
+                            self.logger.info(
+                                "rife_bridge_clip_ready",
+                                join_idx=join_idx,
+                                path=str(stable_clip),
+                            )
+                        elif smoothing.rife_fallback_to_xfade:
+                            self.logger.warning(
+                                "rife_bridge_encode_failed_xfade_fallback",
+                                join_idx=join_idx,
+                            )
+                    elif smoothing.rife_fallback_to_xfade:
+                        self.logger.warning("rife_no_frames_xfade_fallback", join_idx=join_idx)
+                elif (
+                    best_dist > smoothing.pose_match_rife_threshold
+                    and smoothing.rife_enabled
+                    and not rife.available()
+                    and smoothing.rife_fallback_to_xfade
+                ):
+                    self.logger.warning(
+                        "rife_unavailable_xfade_fallback",
+                        join_idx=join_idx,
+                        script_path=smoothing.rife_script_path,
+                    )
+
+        return updated_ranges, join_kinds, rife_bridge_clips
+
+    def _extract_frames(
+        self,
+        video_path: Path,
+        start_s: float,
+        duration_s: float,
+        output_dir: Path,
+        max_frames: int,
+    ) -> None:
+        """Extract PNG frames from a video segment using FFmpeg.
+
+        Writes up to ``max_frames`` frames at native video fps into ``output_dir``.
+        Silently skips on FFmpeg failure — pose matching degrades gracefully.
+        """
+        if duration_s <= 0 or max_frames <= 0:
+            return
+        try:
+            run_ffmpeg(
+                [
+                    "-ss",
+                    f"{start_s:.3f}",
+                    "-i",
+                    str(video_path),
+                    "-t",
+                    f"{duration_s:.3f}",
+                    "-frames:v",
+                    str(max_frames),
+                    "-q:v",
+                    "2",
+                    str(output_dir / "%03d.png"),
+                ],
+            )
+        except (FFmpegError, FileNotFoundError, RuntimeError) as exc:
+            self.logger.debug(
+                "pose_match_extract_frames_failed",
+                video=str(video_path),
+                start=start_s,
+                error=str(exc),
+            )
+
+    def _encode_bridge_frames(
+        self,
+        frames: list[Path],
+        output_path: Path,
+        fps: int = 30,
+    ) -> None:
+        """Encode a list of PNG frames into a short MP4 bridge clip.
+
+        Silently skips on FFmpeg failure — caller checks ``output_path.is_file()``.
+        """
+        if not frames:
+            return
+
+        sorted_frames = sorted(frames)
+        # Write a concat file so FFmpeg can read arbitrary frame lists.
+        concat_file = output_path.parent / "bridge_concat.txt"
+        lines = [f"file '{f.resolve()}'\nduration {1.0 / fps:.6f}" for f in sorted_frames]
+        # Duplicate the last frame entry to satisfy FFmpeg concat demuxer.
+        lines.append(f"file '{sorted_frames[-1].resolve()}'")
+        concat_file.write_text("\n".join(lines))
+
+        try:
+            run_ffmpeg(
+                [
+                    "-f",
+                    "concat",
+                    "-safe",
+                    "0",
+                    "-i",
+                    str(concat_file),
+                    "-c:v",
+                    "libx264",
+                    "-preset",
+                    "ultrafast",
+                    "-crf",
+                    "18",
+                    "-pix_fmt",
+                    "yuv420p",
+                    "-an",
+                    str(output_path),
+                ],
+            )
+        except (FFmpegError, FileNotFoundError, RuntimeError) as exc:
+            self.logger.warning(
+                "rife_bridge_encode_failed",
+                output=str(output_path),
+                error=str(exc),
+            )
 
     def _merge_ranges(self, ranges: list[_CutRange]) -> list[_CutRange]:
         """Merge overlapping cut ranges while preserving content-cut priority."""

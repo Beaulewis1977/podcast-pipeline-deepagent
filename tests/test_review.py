@@ -11,9 +11,11 @@ from podcast_pipeline.export_targets import (
     SUPPORTED_EXPORT_PLATFORMS,
     normalize_export_platforms,
 )
+from podcast_pipeline.models.edit_plan import FillerCutRange
 from podcast_pipeline.stages.review import (
     FillerDecision,
     ReviewDecisions,
+    _derive_editorial_action,
     approve_review,
     write_edit_plan,
 )
@@ -282,3 +284,143 @@ def test_write_edit_plan_emits_filler_ranges_in_index_order(tmp_path: Path) -> N
     exported_words = [item["word"] for item in payload["filler_cuts"]]
 
     assert exported_words == ["a", "c"]
+
+
+# ---------------------------------------------------------------------------
+# Phase 8: editorial_action derivation tests
+# ---------------------------------------------------------------------------
+
+
+def test_editorial_action_protected_filler_defaults_keep() -> None:
+    """Protected fillers must default to keep regardless of category or triage."""
+    filler = {"word": "like", "category": "hedge", "protected": True}
+    action = _derive_editorial_action(filler, triage=None, explicit_action=None)
+    assert action == "keep"
+
+
+def test_editorial_action_disfluency_defaults_remove() -> None:
+    """Disfluency fillers auto-remove when no explicit decision is present."""
+    filler = {"word": "um", "category": "disfluency", "protected": False}
+    action = _derive_editorial_action(filler, triage=None, explicit_action=None)
+    assert action == "remove"
+
+
+def test_editorial_action_hedge_llm_safe_defaults_remove() -> None:
+    """Hedge fillers confirmed safe by LLM triage default to remove."""
+    filler = {"word": "like", "category": "hedge", "protected": False}
+    triage = {"filler_index": 0, "safe_to_remove": True, "reason": "Filler phrase"}
+    action = _derive_editorial_action(filler, triage=triage, explicit_action=None)
+    assert action == "remove"
+
+
+def test_editorial_action_hedge_llm_review_defaults_review() -> None:
+    """Hedge fillers where LLM says NOT safe default to keep (editor should review)."""
+    filler = {"word": "well", "category": "hedge", "protected": False}
+    triage = {"filler_index": 1, "safe_to_remove": False, "reason": "Rhetorical transition"}
+    action = _derive_editorial_action(filler, triage=triage, explicit_action=None)
+    assert action == "keep"
+
+
+def test_editorial_action_hedge_no_triage_defaults_review() -> None:
+    """Hedge fillers with no triage result default to keep so editors can review."""
+    filler = {"word": "kind of", "category": "hedge", "protected": False}
+    action = _derive_editorial_action(filler, triage=None, explicit_action=None)
+    assert action == "keep"
+
+
+def test_editorial_action_explicit_decision_overrides_default() -> None:
+    """Explicit user filler decision takes priority over category-derived default."""
+    # Disfluency would normally default to "remove", but explicit "keep" overrides.
+    filler = {"word": "um", "category": "disfluency", "protected": False}
+    action = _derive_editorial_action(filler, triage=None, explicit_action="keep")
+    assert action == "keep"
+
+    # Explicit "remove" also overrides protected status.
+    protected_filler = {"word": "like", "category": "hedge", "protected": True}
+    action_remove = _derive_editorial_action(
+        protected_filler, triage=None, explicit_action="remove"
+    )
+    assert action_remove == "remove"
+
+
+def test_filler_cut_range_backward_compat_no_phase8_fields() -> None:
+    """Legacy FillerCutRange JSON without Phase 8 fields deserialises with safe defaults."""
+    legacy_payload = {
+        "start_seconds": 1.0,
+        "end_seconds": 1.3,
+        "word": "um",
+        "confidence": 0.9,
+        "category": "disfluency",
+        "editorial_action": "remove",
+    }
+    cut = FillerCutRange.model_validate(legacy_payload)
+
+    assert cut.protected is False
+    assert cut.pause_before_ms == 0.0
+    assert cut.pause_after_ms == 0.0
+    assert cut.llm_safe_to_remove is None
+    assert cut.llm_reason == ""
+
+
+def test_write_edit_plan_populates_phase8_enrichment_fields_from_filler_cut(
+    tmp_path: Path,
+) -> None:
+    """FillerCutRange in edit plan carries Phase 8 enrichment fields from filler_cuts.json."""
+    filler_cuts = [
+        {
+            "start_seconds": 1.0,
+            "end_seconds": 1.2,
+            "word": "um",
+            "category": "disfluency",
+            "protected": False,
+            "pause_before_ms": 320.0,
+            "pause_after_ms": 50.0,
+        }
+    ]
+    decisions = ReviewDecisions(filler_decisions=[FillerDecision(index=0, action="remove")])
+
+    edit_path = write_edit_plan(tmp_path, decisions, analysis={}, filler_cuts=filler_cuts)
+    payload = json.loads(edit_path.read_text())
+
+    assert len(payload["filler_cuts"]) == 1
+    cut = payload["filler_cuts"][0]
+    assert cut["pause_before_ms"] == 320.0
+    assert cut["pause_after_ms"] == 50.0
+    assert cut["protected"] is False
+    assert cut["llm_safe_to_remove"] is None
+    assert cut["llm_reason"] == ""
+
+
+def test_write_edit_plan_loads_triage_json_and_sets_llm_fields(tmp_path: Path) -> None:
+    """write_edit_plan reads filler_triage.json and populates llm_safe_to_remove/llm_reason."""
+    analysis_dir = tmp_path / "analysis"
+    analysis_dir.mkdir(parents=True, exist_ok=True)
+    triage = [
+        {
+            "filler_index": 0,
+            "word": "like",
+            "category": "hedge",
+            "safe_to_remove": True,
+            "reason": "Filler phrase without semantic content",
+        }
+    ]
+    (analysis_dir / "filler_triage.json").write_text(json.dumps(triage))
+
+    filler_cuts = [
+        {
+            "start_seconds": 2.0,
+            "end_seconds": 2.3,
+            "word": "like",
+            "category": "hedge",
+            "protected": False,
+        }
+    ]
+    decisions = ReviewDecisions(filler_decisions=[FillerDecision(index=0, action="remove")])
+
+    edit_path = write_edit_plan(tmp_path, decisions, analysis={}, filler_cuts=filler_cuts)
+    payload = json.loads(edit_path.read_text())
+
+    assert len(payload["filler_cuts"]) == 1
+    cut = payload["filler_cuts"][0]
+    assert cut["llm_safe_to_remove"] is True
+    assert "Filler phrase" in cut["llm_reason"]

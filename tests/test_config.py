@@ -23,8 +23,8 @@ class TestConfig:
     def test_filler_config(self):
         """Test filler word configuration."""
         config = FillerConfig()
-        assert "um" in config.words
-        assert "uh" in config.words
+        assert "um" in config.disfluencies
+        assert "uh" in config.disfluencies
         assert config.min_confidence == 0.5
         assert config.min_duration_ms == 150
 
