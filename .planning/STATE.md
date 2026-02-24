@@ -2,27 +2,27 @@
 
 **Last updated:** 2026-02-24
 **Current phase:** Phase 9 — Automated Branding, Captions, and Multi-Track Sync (complete)
-**Overall progress:** Phase 9 complete (10/10 plans); 61 plans completed overall
+**Overall progress:** Phase 9 complete (11/11 plans); 62 plans completed overall
 
 ## Project Reference
 
 See: `.planning/PROJECT.md`
 
 **Core value:** Turn raw podcast recording into multi-platform content without editing software or manual copywriting.
-**Current focus:** Phase 9 complete — all 10 plans executed (FFmpeg toolkit, FastMCP, Claude provider, HEVC/AV1 codec, BrandingProfile, captions, sync, audio mix, thumbnails, Brand Studio UI).
+**Current focus:** Phase 9 complete -- 11/11 plans executed; Gemini Vision model pivot shipped.
 
 ## Current Position
 
 ```text
-Phase:    9 (complete — 10/10 plans)
-Plan:     09-10 complete; 61 completed overall
-Status:   Phase 9 complete — Brand Studio UI, production controls, GPU lease, and operator runbook delivered
-Last activity: 2026-02-24 - Completed 09-10-PLAN.md (Brand Studio UI, production controls, GPULease, 21 new tests, operator runbook)
+Phase:    9 (complete -- 11/11 plans)
+Plan:     09-11 complete (Gemini Vision model pivot); 62 completed overall
+Status:   Phase 9 complete -- all 11 plans executed
+Last activity: 2026-02-24 - Executed 09-11-PLAN.md (Gemini Vision thumbnail pivot)
 
-Progress: [██████████████████████████████] 61/61 plans complete (Phase 9 complete)
+Progress: [██████████████████████████████] 62/62 plans complete
 ```
 
-**Current Phase:** Phase 9 — Automated Branding, Captions, and Multi-Track Sync (10/10 plans complete)
+**Current Phase:** Phase 9 — Automated Branding, Captions, and Multi-Track Sync (complete -- 11/11 plans)
 
 ## Phase Status
 
@@ -38,16 +38,16 @@ Progress: [███████████████████████
 | 6.1 | Video Marketing Copy Parity + Thumbnail Visual Selection MVP | Complete (verified) | 5/5 | 100% |
 | 7 | Smooth Editing & Filler Word Control | Complete (verified 2026-02-21) | 4/4 | 100% |
 | 8 | Intelligent Cut Quality | Complete (verified 2026-02-21) | 6/6 | 100% |
-| 9 | Automated Branding, Captions, and Multi-Track Sync | Complete | 10/10 | 100% |
+| 9 | Automated Branding, Captions, and Multi-Track Sync | Complete | 11/11 | 100% |
 
 ## Performance Metrics
 
 | Metric | Value |
 |--------|-------|
-| Plans completed | 61/61 |
+| Plans completed | 62/62 |
 | Requirements done | 35/83 (21 partial) |
 | Phases complete | 9/9 |
-| Estimated completion | Phase 9 complete |
+| Estimated completion | All phases complete |
 
 ## Accumulated Context
 
@@ -201,6 +201,9 @@ Progress: [███████████████████████
 | Brand Studio is a top-level Streamlit navigation page | Matches operator mental model of profile management as separate activity from editing | 2026-02-24 |
 | Phase 9 ReviewDecisions fields default to None/False | Pre-Phase 9 review payloads load without error; backward compatibility preserved | 2026-02-24 |
 | delete_profile() added to branding utility for CRUD completeness | Brand Studio UI requires full create/read/update/delete lifecycle | 2026-02-24 |
+| Single Gemini backend replaces dual Imagen 4 / FLUX.1 Schnell routing | Eliminates Vertex AI auth complexity, VRAM/GPU requirements, and 3 optional dependencies | 2026-02-24 |
+| Image bytes via part.inline_data.data (not part.as_image) | Avoids PIL/Pillow dependency for raw image bytes access | 2026-02-24 |
+| _audit_with_gemini_pro defined but not wired into generation flow | Supports future compositional auditing without scope creep in this plan | 2026-02-24 |
 
 ### Roadmap Evolution
 
@@ -345,16 +348,17 @@ Progress: [███████████████████████
 - 2026-02-24: Completed 09-05-PLAN.md (BrandingProfile typed model, YAML serialization, platform override merge, BrandingConfig in settings, brand_voice prompt injection with double sanitization, 126 tests)
 - 2026-02-24: Completed 09-10-PLAN.md (Brand Studio Streamlit tab, production sidebar controls, GPULease cross-job GPU serialization, 21 new tests, 260-line operator runbook)
 - 2026-02-24: Phase 9 complete (10/10 plans executed, 1039 total tests passing)
+- 2026-02-24: Completed 09-11-PLAN.md (Gemini Vision model pivot: replaced Imagen 4 / FLUX.1 with exclusive Gemini Vision thumbnail generation via google.genai SDK; 1031 tests passing)
 
 ## Session Continuity
 
 ### Last session
 
-2026-02-24 08:38 UTC — Completed `09-10-PLAN.md` (Brand Studio Streamlit tab with profile CRUD, production sidebar controls for captions/sync/sound-kit/thumbnails, GPULease cross-job serialization with threading.Semaphore(1), 21 new tests, 260-line operator runbook; 1039 total tests passing; Phase 9 complete).
+2026-02-24 -- Executed `09-11-PLAN.md` (Gemini Vision model pivot). Phase 9 now complete (11/11 plans). 62/62 plans overall.
 
 ### Stopped at
 
-Completed 09-10-PLAN.md — Phase 9 complete (10/10 plans executed); ready for phase verification.
+Completed 09-11-PLAN.md -- Phase 9 fully complete (11/11 plans executed).
 
 ### Resume file
 
@@ -362,4 +366,4 @@ None
 
 ---
 
-*State updated: 2026-02-24 (09-10 complete — Phase 9 finished: Brand Studio UI, production controls, GPULease, operator runbook, 1039 tests)*
+*State updated: 2026-02-24 (09-11 executed -- Gemini Vision model pivot; Phase 9 complete 11/11 plans; 62/62 overall)*

@@ -383,8 +383,8 @@ Plans run in 4 execution waves:
 
 **Goal:** Transform the pipeline from a "Cutter" into a "Fully Branded Production Suite" — delivering dynamic BrandingProfile data model + brand voice injection, automated ASS caption engine with word-level highlighting, bounded cross-correlation multi-track audio sync, production sound kits with auto-ducking, AI thumbnail studio (Imagen 4 + local FLUX.1 Schnell), HEVC 10-bit NVENC export profiles, Claude as an analysis provider, FFmpeg media toolkit (14 tools), developer-mode FFmpeg MCP server, and Streamlit Brand Studio UI — without breaking existing Phase 7/8 smoothing and filler-control contracts.
 **Depends on:** Phase 8
-**Status:** Not started
-**Plans:** 10 plans
+**Status:** In progress
+**Plans:** 11 plans
 
 **Scope / Requirements:**
 - Build FFmpeg media toolkit (`utils/ffmpeg_toolkit.py`) — 14 typed tools across 5 groups (Probe, Encode, Filter, Edit, Package) with Pydantic I/O models
@@ -422,14 +422,16 @@ Plans:
 - [ ] 09-08-PLAN.md — Production sound kits (stingers, auto-ducking sidechaincompress, branding/sounds/ library)
 - [ ] 09-09-PLAN.md — AI Thumbnail Studio (Imagen 4 + FLUX.1 Schnell FP8/INT8, VRAM preflight, auto-branding overlay, `[thumbnails]` extras)
 - [ ] 09-10-PLAN.md — Streamlit Brand Studio tab + Production sidebar + full end-to-end pipeline demo integration
+- [ ] 09-11-PLAN.md — Gemini Vision model pivot: replace Imagen 4 / FLUX.1 with exclusive Gemini Vision thumbnail generation
 
 **Details:**
-Plans run in 5 execution waves:
+Plans run in 6 execution waves:
 - Wave 1: `09-01` (toolkit foundation) — required by all subsequent plans
 - Wave 2: `09-02` (MCP server) and `09-03` (Claude provider) in parallel — both depend on `09-01` only
 - Wave 3: `09-04` (codec profiles) and `09-05` (branding model) in parallel — depend on `09-01`
 - Wave 4: `09-06` (captions), `09-07` (sync), `09-08` (sound kits) in parallel — depend on `09-05`
 - Wave 5: `09-09` (thumbnail studio) and `09-10` (Streamlit UI) in parallel — depend on Waves 3–4; `09-10` depends on all
+- Wave 6: `09-11` (Gemini Vision pivot) — replaces Imagen 4 / FLUX.1 with Gemini Vision models; depends on `09-09`
 
 **Spec reference:** `docs/plans/2026-02-21-branding-automation-and-sync-spec_v4.md`
 
