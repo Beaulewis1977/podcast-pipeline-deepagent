@@ -2,24 +2,24 @@
 
 **Last updated:** 2026-02-25
 **Current phase:** Phase 10 — Tauri Desktop Application Distribution
-**Overall progress:** Phase 9 complete (11/11 plans); 67 plans completed overall; Phase 10 in progress (5/6 plans)
+**Overall progress:** Phase 9 complete (11/11 plans); 67 plans completed overall; Phase 10 in progress (6/6 plans, Task 2 checkpoint pending human verification)
 
 ## Project Reference
 
 See: `.planning/PROJECT.md`
 
 **Core value:** Turn raw podcast recording into multi-platform content without editing software or manual copywriting.
-**Current focus:** Phase 10 — Tauri desktop app distribution. Plans 01, 02, 03, 04, and 05 complete; Plan 06 pending.
+**Current focus:** Phase 10 — Tauri desktop app distribution. Plans 01-06 complete (Task 1); Plan 06 Task 2 requires human visual verification.
 
 ## Current Position
 
 ```text
 Phase:    10 (Tauri Desktop Application Distribution)
-Plan:     05/06 complete — 10-01 Backend infra gaps + 10-02 Frontend toolchain setup + 10-03 State management + layout shell + 10-04 IngestionView + 10-05 AudioSyncView + BrandingView
-Status:   In progress — Plans 01-05 complete; Plan 06 (TranscriptView) pending
-Last activity: 2026-02-25 - Completed 10-05-PLAN.md (AudioSyncView wavesurfer.js waveform editor, BrandingView brand profile/export settings)
+Plan:     06/06 Task 1 complete — 10-01 Backend infra + 10-02 Frontend toolchain + 10-03 State management + layout shell + 10-04 IngestionView + TranscriptView + 10-05 AudioSyncView + BrandingView + 10-06 App.tsx rebuild
+Status:   Checkpoint — Task 1 (App.tsx rebuild) committed; Task 2 (visual verification) awaiting human confirmation
+Last activity: 2026-02-25 - Completed 10-06 Task 1: rebuilt App.tsx (277 lines) with AppShell + 4-view routing, boot sequence wired to useSidecarStore, RecoveryBanner, BootScreen, ConnectionError
 
-Progress: [██████████████████████████████] 67/67 plans complete (Phase 9 closed; Phase 10 ongoing)
+Progress: [██████████████████████████████] 67/67 plans complete (Phase 9 closed; Phase 10 Task 1 of final plan done)
 ```
 
 **Current Phase:** Phase 10 — Tauri Desktop Application Distribution (5/6 plans complete)
@@ -40,7 +40,7 @@ Progress: [███████████████████████
 | 8 | Intelligent Cut Quality | Complete (verified 2026-02-21) | 6/6 | 100% |
 | 9 | Automated Branding, Captions, and Multi-Track Sync | Complete (verified 2026-02-24) | 11/11 | 100% |
 | 9.12 | Streamlit UI Gap Closure | Complete (verified 2026-02-24) | 3/3 | 100% |
-| 10 | Tauri Desktop Application Distribution | In progress | 2/6 | 33% |
+| 10 | Tauri Desktop Application Distribution | Checkpoint (visual verify pending) | 6/6 | 99% |
 
 ## Performance Metrics
 
@@ -229,12 +229,16 @@ Progress: [███████████████████████
 | WaveSurfer instance in wsRef (not useState) | wavesurfer fires events constantly; state would trigger infinite re-renders | 2026-02-25 |
 | convertFileSrc() wraps all audio paths before ws.load() | Tauri webview security model silently rejects raw file:// and absolute paths | 2026-02-25 |
 | BrandingView form state is fully local (no backend CRUD) | /branding/profiles REST endpoint does not exist yet; local state with simulated save | 2026-02-25 |
+| RecoveryBanner rendered inside AppShell (mx-6 mt-4) above ViewRouter | Stays within sidebar/header chrome; only shown when resumable_jobs.length > 0 or corrected > 0 | 2026-02-25 |
+| handleRetry calls checkHealth() not bootBackend() | Avoids starting a duplicate sidecar when backend is already running but temporarily unreachable | 2026-02-25 |
+| ViewRouter is a pure component receiving activeView: string (not ActiveView type) | Loosely coupled — any string routes to IngestionView by default; avoids tight store coupling | 2026-02-25 |
 
 ### Roadmap Evolution
 
 - Phase 10 added: Tauri Desktop Application Distribution
 - Phase 10 execution started: completed 10-02-PLAN.md (CI --onedir + frontend toolchain: TailwindCSS v4, TanStack Query v5, Zustand v5, wavesurfer.js v7, shadcn/ui, Tauri window config)
 - Phase 10 execution continued: completed 10-05-PLAN.md (AudioSyncView wavesurfer.js waveform editor + BrandingView brand profile/export settings — 4/4 views now built)
+- Phase 10 plan 06 Task 1 complete: rebuilt App.tsx (277 lines, down from 911) with AppShell + 4-view routing, boot sequence wired to useSidecarStore, RecoveryBanner, BootScreen, ConnectionError; pnpm build passes
 - Phase 4 added: Post-release hardening
 - Phase 4 planned: research complete + 10 plan files created
 - Phase 4 execution started: completed 04-01 runtime invariants hardening
@@ -387,16 +391,17 @@ Progress: [███████████████████████
 - 2026-02-25: Completed 10-03-PLAN.md (Zustand uiStore+sidecarStore; TanStack Query useJobs/useJobDetail/useSidecarReady/useSystemStatus replacing manual setInterval; AppShell/Sidebar/Header layout with lucide-react icons and Tailwind v4 design tokens; pnpm build passes 80 modules)
 - 2026-02-25: Completed 10-04-PLAN.md (useJobMutations TanStack Query hooks: createJob/runJob/resumeJob/deleteJob; IngestionView with Tauri v2 native drag-drop via onDragDropEvent + system readiness banner + pipeline stage progress bars; TranscriptView with filler word toggle + speaker labels + stats footer; pnpm build passes)
 - 2026-02-25: Completed 10-05-PLAN.md (AudioSyncView with wavesurfer.js v7 waveform + convertFileSrc audio loading + sync offset slider; BrandingView with brand profile/caption style + 9 export platform targets + thumbnail/sound kit settings; pnpm build passes)
+- 2026-02-25: Completed 10-06 Task 1 (App.tsx rebuilt: 911 → 277 lines; AppShell + 4-view routing via ViewRouter; boot sequence wired to useSidecarStore; BootScreen/ConnectionError/RecoveryBanner; beforeunload → stopSidecar; pnpm build passes 1813 modules)
 
 ## Session Continuity
 
 ### Last session
 
-2026-02-25 — Phase 10 Plan 05 execution completed. AudioSyncView with wavesurfer.js v7 waveform visualization and BrandingView with brand profile/export settings built. Both views follow established store/hook patterns. pnpm build passes.
+2026-02-25 — Phase 10 Plan 06 Task 1 executed. App.tsx rebuilt (911→277 lines): AppShell + 4-view routing via ViewRouter, boot sequence wired to useSidecarStore (setStatus/setSidecar/setError), BootScreen/ConnectionError/RecoveryBanner inline components, beforeunload stopSidecar handler. pnpm build passes (1813 modules, 375 kB).
 
 ### Stopped at
 
-Completed 10-05-PLAN.md — Phase 10 Plans 01-05 are done. Next: Plan 06 (TranscriptView + app wiring).
+10-06-PLAN.md Task 2 — checkpoint:human-verify. Task 1 committed (9556532). Human must visually confirm all 4 views render and navigation works at http://localhost:1420 after running `cd desktop && pnpm dev`.
 
 ### Resume file
 
@@ -404,4 +409,4 @@ None
 
 ---
 
-*State updated: 2026-02-25 (10-03 executed -- Zustand stores, TanStack Query hooks, AppShell/Sidebar/Header layout; Phase 10 3/6 plans complete; 67 plans overall)*
+*State updated: 2026-02-25 (10-06 Task 1 executed -- App.tsx rebuilt with AppShell + 4-view routing; Phase 10 6/6 plans started, checkpoint at Task 2 visual verify; 67 plans overall)*
