@@ -2,27 +2,27 @@
 
 **Last updated:** 2026-02-25
 **Current phase:** Phase 10 — Tauri Desktop Application Distribution
-**Overall progress:** Phase 9 complete (11/11 plans); 67 plans completed overall; Phase 10 in progress (2/6 plans)
+**Overall progress:** Phase 9 complete (11/11 plans); 67 plans completed overall; Phase 10 in progress (5/6 plans)
 
 ## Project Reference
 
 See: `.planning/PROJECT.md`
 
 **Core value:** Turn raw podcast recording into multi-platform content without editing software or manual copywriting.
-**Current focus:** Phase 10 — Tauri desktop app distribution. Plans 01, 02, and 03 complete; Plans 04-06 pending.
+**Current focus:** Phase 10 — Tauri desktop app distribution. Plans 01, 02, 03, 04, and 05 complete; Plan 06 pending.
 
 ## Current Position
 
 ```text
 Phase:    10 (Tauri Desktop Application Distribution)
-Plan:     03/06 complete — 10-01 Backend infra gaps + 10-02 Frontend toolchain setup + 10-03 State management + layout shell
-Status:   In progress — Plans 01, 02, and 03 complete; Plans 04-06 pending
-Last activity: 2026-02-25 - Completed 10-03-PLAN.md (Zustand stores, TanStack Query hooks, AppShell/Sidebar/Header layout components)
+Plan:     05/06 complete — 10-01 Backend infra gaps + 10-02 Frontend toolchain setup + 10-03 State management + layout shell + 10-04 IngestionView + 10-05 AudioSyncView + BrandingView
+Status:   In progress — Plans 01-05 complete; Plan 06 (TranscriptView) pending
+Last activity: 2026-02-25 - Completed 10-05-PLAN.md (AudioSyncView wavesurfer.js waveform editor, BrandingView brand profile/export settings)
 
 Progress: [██████████████████████████████] 67/67 plans complete (Phase 9 closed; Phase 10 ongoing)
 ```
 
-**Current Phase:** Phase 10 — Tauri Desktop Application Distribution (3/6 plans complete)
+**Current Phase:** Phase 10 — Tauri Desktop Application Distribution (5/6 plans complete)
 
 ## Phase Status
 
@@ -224,11 +224,15 @@ Progress: [███████████████████████
 | shadcn/ui installed manually (no npx shadcn init) | Interactive init not suitable for automated execution; manual component files give full control | 2026-02-25 |
 | @/* path alias added to both tsconfig.json and vite.config.ts | TypeScript resolution alone insufficient; Vite needs alias for runtime module resolution | 2026-02-25 |
 | tauri.conf.json bundle.resources for _internal/**/* | Tauri externalBin only bundles single files; _internal/ Python deps silently dropped without resources entry | 2026-02-25 |
+| WaveSurfer instance in wsRef (not useState) | wavesurfer fires events constantly; state would trigger infinite re-renders | 2026-02-25 |
+| convertFileSrc() wraps all audio paths before ws.load() | Tauri webview security model silently rejects raw file:// and absolute paths | 2026-02-25 |
+| BrandingView form state is fully local (no backend CRUD) | /branding/profiles REST endpoint does not exist yet; local state with simulated save | 2026-02-25 |
 
 ### Roadmap Evolution
 
 - Phase 10 added: Tauri Desktop Application Distribution
 - Phase 10 execution started: completed 10-02-PLAN.md (CI --onedir + frontend toolchain: TailwindCSS v4, TanStack Query v5, Zustand v5, wavesurfer.js v7, shadcn/ui, Tauri window config)
+- Phase 10 execution continued: completed 10-05-PLAN.md (AudioSyncView wavesurfer.js waveform editor + BrandingView brand profile/export settings — 4/4 views now built)
 - Phase 4 added: Post-release hardening
 - Phase 4 planned: research complete + 10 plan files created
 - Phase 4 execution started: completed 04-01 runtime invariants hardening
@@ -379,16 +383,17 @@ Progress: [███████████████████████
 - 2026-02-25: Completed 10-01-PLAN.md (service/cli.py PyInstaller entry point with BACKEND_READY stdout marker; CORSMiddleware with explicit Tauri/dev origins in app.py; TAURI_OWNS_SIDECAR + backend_is_healthy() coexistence check in lib.rs)
 - 2026-02-25: Completed 10-02-PLAN.md (CI: --onefile→--onedir + full directory artifact upload; Tauri window 1440x900, minWidth 1024, CSP+media permissions, externalBin directory path, bundle.resources for _internal/**; prepare-sidecars.mjs onedir detection; TailwindCSS v4, TanStack Query v5, Zustand v5, wavesurfer.js v7, shadcn/ui components; pnpm build passes)
 - 2026-02-25: Completed 10-03-PLAN.md (Zustand uiStore+sidecarStore; TanStack Query useJobs/useJobDetail/useSidecarReady/useSystemStatus replacing manual setInterval; AppShell/Sidebar/Header layout with lucide-react icons and Tailwind v4 design tokens; pnpm build passes 80 modules)
+- 2026-02-25: Completed 10-05-PLAN.md (AudioSyncView with wavesurfer.js v7 waveform + convertFileSrc audio loading + sync offset slider; BrandingView with brand profile/caption style + 9 export platform targets + thumbnail/sound kit settings; pnpm build passes)
 
 ## Session Continuity
 
 ### Last session
 
-2026-02-25 — Phase 10 Plan 01 execution completed. Three critical infrastructure gaps fixed: service/cli.py entry point (BACKEND_READY stdout marker for Tauri), CORSMiddleware in app.py (explicit Tauri/dev origins), and TAURI_OWNS_SIDECAR + backend_is_healthy() coexistence check in lib.rs. 77 service tests passing.
+2026-02-25 — Phase 10 Plan 05 execution completed. AudioSyncView with wavesurfer.js v7 waveform visualization and BrandingView with brand profile/export settings built. Both views follow established store/hook patterns. pnpm build passes.
 
 ### Stopped at
 
-Completed 10-03-PLAN.md — Phase 10 Plans 01, 02, and 03 are done. Next: Plan 04 (IngestionView).
+Completed 10-05-PLAN.md — Phase 10 Plans 01-05 are done. Next: Plan 06 (TranscriptView + app wiring).
 
 ### Resume file
 
