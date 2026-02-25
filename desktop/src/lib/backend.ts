@@ -400,10 +400,19 @@ export async function bootBackend(): Promise<{
 }> {
   const noSidecar: SidecarStatus = { running: false, pid: null, port: BACKEND_PORT };
 
+  // Always probe health first — works in all modes:
+  //   • Vite dev mode: connects immediately if backend is running manually
+  //   • Tauri coexistence: connects without spawning a duplicate sidecar
+  //   • Tauri cold start: falls through to sidecar spawn below
+  const existingHealth = await checkHealth();
+  if (existingHealth !== null) {
+    return { sidecar: noSidecar, health: existingHealth };
+  }
+
+  // Backend is not reachable. Spawn a sidecar if inside Tauri; otherwise report
+  // disconnected so the UI can show "start the backend" instructions.
   if (!isTauriContext()) {
-    // Browser / Vite dev mode — no sidecar management, just probe the backend.
-    const health = await checkHealth();
-    return { sidecar: noSidecar, health };
+    return { sidecar: noSidecar, health: null };
   }
 
   const sidecar = await startSidecar();

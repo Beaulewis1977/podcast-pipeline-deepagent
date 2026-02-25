@@ -12,7 +12,11 @@
  * All connection state lives in useSidecarStore (no local useState for status).
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+
+// Module-level flag — survives React StrictMode double-mount (where a useRef
+// would be reset). Boot must only run once per page load.
+let _bootStarted = false;
 import { AppShell } from "./components/layout/AppShell";
 import { IngestionView } from "./views/IngestionView";
 import { AudioSyncView } from "./views/AudioSyncView";
@@ -173,24 +177,21 @@ function App() {
   const { activeView } = useUIStore();
 
   const [recoveryStatus, setRecoveryStatus] = useState<RecoveryStatus | null>(null);
-  const bootAttempted = useRef(false);
 
   // --- Boot sequence ---
+  // Uses module-level _bootStarted so React StrictMode's double-invoke does not
+  // cancel the async boot before it updates the Zustand store. Zustand setters
+  // are safe to call after an apparent unmount — the store is global.
   useEffect(() => {
-    if (bootAttempted.current) {
+    if (_bootStarted) {
       return;
     }
-    bootAttempted.current = true;
-
-    let cancelled = false;
+    _bootStarted = true;
 
     async function boot() {
       setStatus("connecting");
       try {
         const result = await bootBackend();
-        if (cancelled) {
-          return;
-        }
         setSidecar(result.sidecar);
         if (result.health !== null) {
           setStatus("connected");
@@ -200,10 +201,7 @@ function App() {
           setError("Backend did not become ready within startup timeout.");
         }
       } catch (err) {
-        if (cancelled) {
-          return;
-        }
-        // Fallback: maybe a backend is already running (coexistence mode)
+        // Fallback: coexistence mode — backend already running externally
         const healthy = await checkHealth();
         if (healthy !== null) {
           setStatus("connected");
@@ -216,9 +214,6 @@ function App() {
     }
 
     void boot();
-    return () => {
-      cancelled = true;
-    };
   }, [setError, setSidecar, setStatus]);
 
   // --- Recovery check after connection ---
