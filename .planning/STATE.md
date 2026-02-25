@@ -2,27 +2,27 @@
 
 **Last updated:** 2026-02-25
 **Current phase:** Phase 10 — Tauri Desktop Application Distribution
-**Overall progress:** Phase 9 complete (11/11 plans); 66 plans completed overall; Phase 10 in progress (1/6 plans)
+**Overall progress:** Phase 9 complete (11/11 plans); 67 plans completed overall; Phase 10 in progress (2/6 plans)
 
 ## Project Reference
 
 See: `.planning/PROJECT.md`
 
 **Core value:** Turn raw podcast recording into multi-platform content without editing software or manual copywriting.
-**Current focus:** Phase 10 — Tauri desktop app distribution. Plan 02 complete (frontend toolchain + CI --onedir migration).
+**Current focus:** Phase 10 — Tauri desktop app distribution. Plans 01 and 02 complete; Plans 03-06 pending.
 
 ## Current Position
 
 ```text
 Phase:    10 (Tauri Desktop Application Distribution)
-Plan:     02/06 complete — 10-02 Frontend toolchain setup (CI --onedir + TailwindCSS v4 + TanStack Query + shadcn/ui)
-Status:   In progress — Plan 01 pending, Plan 02 complete; Plans 03-06 pending
-Last activity: 2026-02-25 - Completed 10-02-PLAN.md (CI migration + frontend deps + Tauri window config)
+Plan:     02/06 complete — 10-01 Backend infra gaps + 10-02 Frontend toolchain setup
+Status:   In progress — Plans 01 and 02 complete; Plans 03-06 pending
+Last activity: 2026-02-25 - Completed 10-01-PLAN.md (service/cli.py entry point, CORS middleware, Tauri coexistence health check)
 
-Progress: [██████████████████████████████] 66/66 plans complete (Phase 9 closed; Phase 10 ongoing)
+Progress: [██████████████████████████████] 67/67 plans complete (Phase 9 closed; Phase 10 ongoing)
 ```
 
-**Current Phase:** Phase 10 — Tauri Desktop Application Distribution (1/6 plans complete)
+**Current Phase:** Phase 10 — Tauri Desktop Application Distribution (2/6 plans complete)
 
 ## Phase Status
 
@@ -40,13 +40,13 @@ Progress: [███████████████████████
 | 8 | Intelligent Cut Quality | Complete (verified 2026-02-21) | 6/6 | 100% |
 | 9 | Automated Branding, Captions, and Multi-Track Sync | Complete (verified 2026-02-24) | 11/11 | 100% |
 | 9.12 | Streamlit UI Gap Closure | Complete (verified 2026-02-24) | 3/3 | 100% |
-| 10 | Tauri Desktop Application Distribution | In progress | 1/6 | 17% |
+| 10 | Tauri Desktop Application Distribution | In progress | 2/6 | 33% |
 
 ## Performance Metrics
 
 | Metric | Value |
 |--------|-------|
-| Plans completed | 66/71 |
+| Plans completed | 67/71 |
 | Requirements done | 35/83 (21 partial) |
 | Phases complete | 9/10 (Phase 10 in progress) |
 | Estimated completion | Phase 10 in progress |
@@ -215,6 +215,10 @@ Progress: [███████████████████████
 | Enable Stingers maps to decisions.sound_kit_enabled (existing render-wired field) | Render stage uses sound_kit_enabled to gate _mix_stingers; stingers checkbox directly controls existing render behavior | 2026-02-24 |
 | Enable Auto-Ducking maps to decisions.auto_duck_enabled — UI persistence only | Render-side granular ducking control deferred; current _mix_stingers always applies ducking when stingers present | 2026-02-24 |
 | Brand Studio file uploaders use branding_dir function parameter (not get_config()) | Avoids redundant config load inside Visual Assets expander; branding_dir already passed to _render_brand_studio_editor | 2026-02-24 |
+| BACKEND_READY printed before uvicorn.run() in service/cli.py | Tauri frontend watches stdout from process spawn; printing before the blocking call prevents frontend timeout | 2026-02-25 |
+| CORS allow_origins uses explicit list (never wildcard) sourced from PODCAST_PIPELINE_CORS_ORIGINS env var or DEFAULT_CORS_ORIGINS | Security requirement; Tauri production uses tauri://localhost, dev uses http://localhost:1420 | 2026-02-25 |
+| backend_is_healthy() check placed BEFORE PID mutex in start_sidecar | reqwest await cannot be held inside a Mutex lock; early-return health gate avoids async/sync boundary complexity | 2026-02-25 |
+| TAURI_OWNS_SIDECAR is static AtomicBool (not in SidecarState) | Process-global ownership flag; avoids async mutex complexity for a boolean that is meaningless per-instance | 2026-02-25 |
 | PyInstaller --onedir (not --onefile) for backend sidecar | Avoids Python stdlib extraction overhead on startup; _internal/ dir bundled via bundle.resources | 2026-02-25 |
 | TailwindCSS v4 CSS-first config (no tailwind.config.js) | v4 uses @import "tailwindcss" + @theme block in CSS; eliminates separate config file | 2026-02-25 |
 | shadcn/ui installed manually (no npx shadcn init) | Interactive init not suitable for automated execution; manual component files give full control | 2026-02-25 |
@@ -372,17 +376,18 @@ Progress: [███████████████████████
 - 2026-02-24: Completed 09.12-01-PLAN.md (GAP-7 render wiring: decisions.captions_enabled/sound_kit_enabled/branding_profile_name now gate render passes; youtube_ultra registered; caption_aspect_ratio and auto_duck_enabled fields added; 6 regression tests)
 - 2026-02-24: Completed 09.12-02-PLAN.md (GAP-1/3A/3B/4: Settings provider selectbox for Claude/Gemini/Kimi; Anthropic API key status in Settings; caption aspect ratio selectbox in Production sidebar; sync artifact offset+confidence metrics display; slider range +/-5000ms; 1034 tests passing)
 - 2026-02-24: Completed 09.12-03-PLAN.md (GAP-5A/6A: Split sound kit into Enable Stingers + Enable Auto-Ducking checkboxes; logo/font file uploaders in Brand Studio Visual Assets; 1041 tests passing; Phase 9.12 complete)
+- 2026-02-25: Completed 10-01-PLAN.md (service/cli.py PyInstaller entry point with BACKEND_READY stdout marker; CORSMiddleware with explicit Tauri/dev origins in app.py; TAURI_OWNS_SIDECAR + backend_is_healthy() coexistence check in lib.rs)
 - 2026-02-25: Completed 10-02-PLAN.md (CI: --onefile→--onedir + full directory artifact upload; Tauri window 1440x900, minWidth 1024, CSP+media permissions, externalBin directory path, bundle.resources for _internal/**; prepare-sidecars.mjs onedir detection; TailwindCSS v4, TanStack Query v5, Zustand v5, wavesurfer.js v7, shadcn/ui components; pnpm build passes)
 
 ## Session Continuity
 
 ### Last session
 
-2026-02-25 — Phase 10 Plan 02 execution completed. CI migrated to --onedir, Tauri window config updated, frontend toolchain fully configured (TailwindCSS v4, TanStack Query v5, Zustand v5, wavesurfer.js v7, shadcn/ui components). pnpm build passes.
+2026-02-25 — Phase 10 Plan 01 execution completed. Three critical infrastructure gaps fixed: service/cli.py entry point (BACKEND_READY stdout marker for Tauri), CORSMiddleware in app.py (explicit Tauri/dev origins), and TAURI_OWNS_SIDECAR + backend_is_healthy() coexistence check in lib.rs. 77 service tests passing.
 
 ### Stopped at
 
-Completed 10-02-PLAN.md — Phase 10 Plan 02 (frontend toolchain + CI --onedir migration) is done. Next: Plan 03 (Shell layout + navigation).
+Completed 10-01-PLAN.md — Phase 10 Plans 01 and 02 are done. Next: Plan 03 (Shell layout + navigation).
 
 ### Resume file
 
@@ -390,4 +395,4 @@ None
 
 ---
 
-*State updated: 2026-02-25 (10-02 executed -- CI --onedir migration + frontend toolchain; Phase 10 1/6 plans complete; 66 plans overall)*
+*State updated: 2026-02-25 (10-01 executed -- service/cli.py entry point + CORS + coexistence health check; Phase 10 2/6 plans complete; 67 plans overall)*
