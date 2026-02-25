@@ -527,7 +527,7 @@ def test_probe_media_non_hdr_video() -> None:
     assert result.video.fps == pytest.approx(30000 / 1001)
 
 
-def test_probe_media_wraps_ffmpeagerror() -> None:
+def test_probe_media_wraps_ffmpeg_error() -> None:
     with (
         patch(
             "podcast_pipeline.utils.ffmpeg_toolkit.run_ffprobe",
@@ -583,7 +583,7 @@ def test_extract_frame_command_shape() -> None:
     assert result.output_path == _FAKE_OUT
 
 
-def test_extract_frame_wraps_ffmpeagerror() -> None:
+def test_extract_frame_wraps_ffmpeg_error() -> None:
     req = ExtractFrameRequest(path=_FAKE_PATH, timestamp_s=5.0, output_path=_FAKE_OUT)
     with (
         patch(
@@ -621,7 +621,7 @@ def test_transcode_software_hevc_default_args(tmp_path: Path) -> None:
     assert "-c:v" in args_used
     idx = args_used.index("-c:v")
     assert args_used[idx + 1] == "libx265"
-    assert "p010le" in args_used  # 10-bit pix_fmt
+    assert "yuv420p10le" in args_used  # 10-bit pix_fmt for libx265 (not p010le which is NV12)
     assert "-c:a" in args_used
     assert "copy" in args_used
     assert result.output_path == out
@@ -756,7 +756,7 @@ def test_transcode_film_grain_non_av1_raises() -> None:
     assert exc_info.value.operation == "transcode"
 
 
-def test_transcode_wraps_ffmpeagerror() -> None:
+def test_transcode_wraps_ffmpeg_error() -> None:
     req = TranscodeRequest(
         input_path=_FAKE_PATH,
         output_path=_FAKE_OUT,
@@ -830,7 +830,7 @@ def test_normalize_loudness_missing_json_defaults_to_zero(tmp_path: Path) -> Non
     assert result.input_lufs == 0.0
 
 
-def test_normalize_loudness_wraps_ffmpeagerror_pass1() -> None:
+def test_normalize_loudness_wraps_ffmpeg_error_pass1() -> None:
     req = NormalizeLoudnessRequest(input_path=_FAKE_PATH, output_path=_FAKE_OUT)
     with (
         patch(
@@ -888,7 +888,7 @@ def test_burn_captions_force_style_included() -> None:
     assert "force_style=" in vf_val
 
 
-def test_burn_captions_wraps_ffmpeagerror() -> None:
+def test_burn_captions_wraps_ffmpeg_error() -> None:
     req = BurnCaptionsRequest(
         video_path=_FAKE_PATH,
         ass_path=_FAKE_ASS,
@@ -974,7 +974,7 @@ def test_overlay_image_opacity_reflected_in_colorchannelmixer() -> None:
     assert "aa=0.4" in fc_val
 
 
-def test_overlay_image_wraps_ffmpeagerror() -> None:
+def test_overlay_image_wraps_ffmpeg_error() -> None:
     req = OverlayImageRequest(
         video_path=_FAKE_PATH,
         image_path=_FAKE_IMG,
@@ -1056,7 +1056,7 @@ def test_concat_segments_xfade_path_uses_filter_complex(tmp_path: Path) -> None:
     assert "xfade" in fc_val
 
 
-def test_concat_segments_wraps_ffmpeagerror_demuxer(tmp_path: Path) -> None:
+def test_concat_segments_wraps_ffmpeg_error_demuxer(tmp_path: Path) -> None:
     seg = tmp_path / "seg.mp4"
     seg.write_bytes(b"x")
     out = tmp_path / "out.mp4"
@@ -1130,7 +1130,7 @@ def test_trim_segment_no_end_no_duration_arg() -> None:
     assert "-t" not in args_used
 
 
-def test_trim_segment_wraps_ffmpeagerror() -> None:
+def test_trim_segment_wraps_ffmpeg_error() -> None:
     req = TrimSegmentRequest(input_path=_FAKE_PATH, output_path=_FAKE_OUT, start_s=0.0)
     with (
         patch(
@@ -1222,7 +1222,7 @@ def test_sync_tracks_negative_offset_uses_external_path(tmp_path: Path) -> None:
     assert "1:a:0?" in mux_call_args
 
 
-def test_sync_tracks_wraps_ffmpeagerror_on_mux(tmp_path: Path) -> None:
+def test_sync_tracks_wraps_ffmpeg_error_on_mux(tmp_path: Path) -> None:
     ref = tmp_path / "ref.wav"
     ext = tmp_path / "ext.wav"
     out = tmp_path / "synced.mp4"
@@ -1317,7 +1317,7 @@ def test_package_hls_segment_duration_passed(tmp_path: Path) -> None:
     assert args_used[idx + 1] == "4"
 
 
-def test_package_hls_wraps_ffmpeagerror(tmp_path: Path) -> None:
+def test_package_hls_wraps_ffmpeg_error(tmp_path: Path) -> None:
     out_dir = tmp_path / "hls"
     req = PackageHlsRequest(
         input_path=_FAKE_PATH,
@@ -1379,7 +1379,7 @@ def test_denoise_nlmeans_heavy_filter() -> None:
     assert vf_val == "nlmeans=s=6.0:p=7:r=15"
 
 
-def test_denoise_wraps_ffmpeagerror() -> None:
+def test_denoise_wraps_ffmpeg_error() -> None:
     req = DenoiseRequest(input_path=_FAKE_PATH, output_path=_FAKE_OUT)
     with (
         patch(
@@ -1441,7 +1441,7 @@ def test_mix_audio_with_ducking_uses_sidechaincompress() -> None:
     assert "ratio=4.0" in fc_val
 
 
-def test_mix_audio_wraps_ffmpeagerror() -> None:
+def test_mix_audio_wraps_ffmpeg_error() -> None:
     req = MixAudioRequest(
         speech_path=_FAKE_PATH,
         music_path=Path("/fake/music.mp3"),

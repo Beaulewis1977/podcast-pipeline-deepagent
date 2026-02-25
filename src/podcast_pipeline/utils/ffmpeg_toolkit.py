@@ -533,16 +533,21 @@ def _select_video_encoder(
         return "libx264", []
 
     if codec == VideoCodec.HEVC:
-        pix_fmt = "p010le" if bit_depth == 10 else "yuv420p"
         profile = "main10" if bit_depth == 10 else "main"
         if hw_accel != HwAccel.NONE and hw and hw.nvenc_hevc:
-            return "hevc_nvenc", ["-pix_fmt", pix_fmt, "-profile:v", profile]
-        # Software fallback
-        return "libx265", ["-pix_fmt", pix_fmt, "-x265-params", f"profile={profile}"]
+            nvenc_pix_fmt = "p010le" if bit_depth == 10 else "yuv420p"
+            return "hevc_nvenc", ["-pix_fmt", nvenc_pix_fmt, "-profile:v", profile]
+        # Software fallback — libx265 uses yuv420p10le for 10-bit (not p010le which is NV12)
+        sw_pix_fmt = "yuv420p10le" if bit_depth == 10 else "yuv420p"
+        return "libx265", ["-pix_fmt", sw_pix_fmt, "-x265-params", f"profile={profile}"]
 
     if codec == VideoCodec.AV1:
-        # AV1 NVENC not recommended for stability; use software only
-        return "libsvtav1", []
+        # AV1 NVENC not recommended for stability; use software encoder only.
+        # Fall back to libx265 if SVT-AV1 is not available on this build.
+        sw_check = hw if hw is not None else detect_hardware_encoders()
+        if sw_check.software_av1:
+            return "libsvtav1", []
+        return "libx265", []
 
     raise FFmpegToolkitError(f"Unsupported codec: {codec}", operation="select_encoder")
 
@@ -919,10 +924,26 @@ def overlay_image(request: OverlayImageRequest) -> OverlayImageResult:
     alpha_val = request.opacity
     color_filter = f"colorchannelmixer=aa={alpha_val}"
 
-    # Combine overlay filters
-    overlay_filter = (
-        f"[1:v]{scale_filter},{color_filter}[ovrl];[0:v][ovrl]overlay={x_expr}:{y_expr}"
-    )
+    # Build optional alpha-aware fade filters for the overlay stream
+    fade_filters: list[str] = []
+    if request.fade_in_s > 0:
+        fade_filters.append(f"fade=t=in:st=0:d={request.fade_in_s:.3f}:alpha=1")
+    if request.fade_out_s > 0:
+        # Probe video duration so we can anchor the fade-out start time
+        video_duration = 0.0
+        try:
+            probe_data = run_ffprobe(request.video_path)
+            video_duration = float(probe_data.get("format", {}).get("duration", 0.0))
+        except (FFmpegError, OSError, ValueError):
+            pass
+        if video_duration > 0:
+            fade_start = max(0.0, video_duration - request.fade_out_s)
+            fade_filters.append(
+                f"fade=t=out:st={fade_start:.3f}:d={request.fade_out_s:.3f}:alpha=1"
+            )
+
+    overlay_chain = ",".join(filter(None, [scale_filter, color_filter, *fade_filters]))
+    overlay_filter = f"[1:v]{overlay_chain}[ovrl];[0:v][ovrl]overlay={x_expr}:{y_expr}"
 
     args = [
         "-i",

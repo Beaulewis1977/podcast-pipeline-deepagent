@@ -107,6 +107,25 @@ class GPULease:
             return len(self._holders) > 0
 
     @contextmanager
+    def _acquire_reentrant(self, job_id: str, operation: str) -> Generator[None, None, None]:
+        """Handle the reentrant fast-path for an already-held lease."""
+        with self._lock:
+            depth = self._holders[job_id].reentrant_depth
+        logger.info("gpu_lease_reentrant", job_id=job_id, operation=operation, depth=depth)
+        try:
+            yield
+        finally:
+            with self._lock:
+                holder = self._holders.get(job_id)
+                if holder is None:
+                    logger.warning("gpu_lease_reentrant_holder_missing", job_id=job_id)
+                else:
+                    holder.reentrant_depth -= 1
+                    if holder.reentrant_depth <= 0:
+                        del self._holders[job_id]
+                        self._semaphore.release()
+
+    @contextmanager
     def acquire(
         self,
         job_id: str,
@@ -133,24 +152,16 @@ class GPULease:
         )
 
         # Check for same-job reentrancy before touching the semaphore.
-        reentrant = False
         with self._lock:
             if job_id in self._holders:
                 self._holders[job_id].reentrant_depth += 1
                 reentrant = True
+            else:
+                reentrant = False
 
         if reentrant:
-            logger.info(
-                "gpu_lease_reentrant",
-                job_id=job_id,
-                operation=operation,
-                depth=self._holders[job_id].reentrant_depth,
-            )
-            try:
+            with self._acquire_reentrant(job_id, operation):
                 yield
-            finally:
-                with self._lock:
-                    self._holders[job_id].reentrant_depth -= 1
             return
 
         # First acquisition for this job — block on the semaphore.

@@ -203,8 +203,16 @@ def get_config() -> Config:
 
     Config construction is cheap (YAML parse + env read) — no need to cache
     across Streamlit reruns at the cost of stale API keys or missing fields.
+
+    Applies the session-level provider override (set in Settings → AI Models)
+    so the chosen provider is actually used during analysis execution.
     """
     config = load_config()
+    session_provider = st.session_state.get("models_provider")
+    if session_provider and session_provider != config.models.provider:
+        config = config.model_copy(
+            update={"models": config.models.model_copy(update={"provider": session_provider})}
+        )
     st.session_state.config = config
     return config
 
@@ -2967,6 +2975,7 @@ def _render_brand_studio_editor(profile: BrandingProfile, branding_dir: Path) ->
                     f"_brand_studio_overrides_{profile.profile_name}", {}
                 )
                 built_overrides: dict[str, PlatformBrandingOverride] = {}
+                existing_platform_overrides = profile.platform_overrides or {}
                 for plat_key, ovr_dict in raw_overrides.items():
                     if not isinstance(ovr_dict, dict):
                         continue
@@ -2974,13 +2983,18 @@ def _render_brand_studio_editor(profile: BrandingProfile, branding_dir: Path) ->
                     cap_style = CaptionStyle(**cap_data) if isinstance(cap_data, dict) else None
                     save_placement = ovr_dict.get("logo_placement")
                     save_opacity = ovr_dict.get("logo_opacity")
+                    # Preserve fields not editable in the override form from the existing override
+                    existing_ovr = existing_platform_overrides.get(plat_key)
                     built_overrides[plat_key] = PlatformBrandingOverride(
                         logo_placement=str(save_placement) if save_placement else None,
                         logo_opacity=float(save_opacity) if save_opacity is not None else None,
                         caption_style=cap_style,
-                        highlight_color=None,
-                        bg_padding=None,
-                        thumbnail_border=None,
+                        highlight_color=ovr_dict.get("highlight_color")
+                        or (existing_ovr.highlight_color if existing_ovr else None),
+                        bg_padding=ovr_dict.get("bg_padding")
+                        or (existing_ovr.bg_padding if existing_ovr else None),
+                        thumbnail_border=ovr_dict.get("thumbnail_border")
+                        or (existing_ovr.thumbnail_border if existing_ovr else None),
                     )
 
                 updated_profile = BrandingProfile(
@@ -3132,13 +3146,17 @@ def render_production_controls(job_id: str, job_dir: Path) -> None:
         if sync_artifact:
             col1, col2 = st.columns(2)
             with col1:
-                st.metric(
-                    "Auto-detected Offset",
-                    f"{sync_artifact.get('offset_ms', 0.0):+.0f} ms",
-                )
+                try:
+                    offset_display = float(sync_artifact.get("offset_ms", 0.0))
+                except (ValueError, TypeError):
+                    offset_display = 0.0
+                st.metric("Auto-detected Offset", f"{offset_display:+.0f} ms")
             with col2:
-                confidence = sync_artifact.get("confidence", 0.0)
-                st.metric("Sync Confidence", f"{confidence:.0%}")
+                try:
+                    confidence_display = float(sync_artifact.get("confidence", 0.0))
+                except (ValueError, TypeError):
+                    confidence_display = 0.0
+                st.metric("Sync Confidence", f"{confidence_display:.0%}")
             if sync_artifact.get("low_confidence"):
                 st.warning(
                     "Low confidence sync detection — consider setting a manual override below."

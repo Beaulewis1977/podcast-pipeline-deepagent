@@ -1388,7 +1388,15 @@ class RenderStage(Stage):
             self.logger.warning("sync_artifact_load_failed", error=str(exc))
             return None, {"source": None, "error": str(exc)}
 
-        offset_ms = float(artifact.get("offset_ms", 0.0))
+        raw_offset = artifact.get("offset_ms", 0.0)
+        try:
+            offset_ms = float(raw_offset)
+        except (ValueError, TypeError):
+            self.logger.warning(
+                "sync_artifact_offset_malformed",
+                offset_ms=raw_offset,
+            )
+            offset_ms = 0.0
         return offset_ms, {
             "source": "auto",
             "offset_ms": offset_ms,
@@ -1427,7 +1435,7 @@ class RenderStage(Stage):
             audio_stream_count = sum(
                 1 for s in probe_data.get("streams", []) if s.get("codec_type") == "audio"
             )
-        except (subprocess.SubprocessError, OSError, FileNotFoundError):
+        except (FFmpegError, subprocess.SubprocessError, OSError, FileNotFoundError):
             audio_stream_count = 0
 
         if audio_stream_count < 2:
