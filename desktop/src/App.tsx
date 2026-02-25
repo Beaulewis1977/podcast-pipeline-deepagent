@@ -94,6 +94,15 @@ function ConnectionError({ errorMessage, onRetry }: ConnectionErrorProps) {
           Expected at{" "}
           <code className="font-mono">http://127.0.0.1:{BACKEND_PORT}</code>
         </p>
+        <p className="text-xs text-[var(--color-text-secondary)] leading-relaxed border-t border-[var(--color-border)] pt-3 mt-1">
+          Start the backend in a separate terminal:
+          <br />
+          <code className="font-mono text-[var(--color-accent)] select-all">
+            uv run python src/podcast_pipeline/service/cli.py
+          </code>
+          <br />
+          Then click Retry Connection.
+        </p>
         <button
           type="button"
           onClick={onRetry}

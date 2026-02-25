@@ -167,7 +167,22 @@ type InvokeFn = <T>(
 ) => Promise<T>;
 
 let cachedInvoke: InvokeFn | null = null;
-let invokeUnavailable = false;
+
+/**
+ * Returns true when running inside a Tauri webview (desktop app).
+ * Returns false when running in a plain browser (Vite dev server, tests).
+ *
+ * Tauri v2 injects ``window.__TAURI_INTERNALS__`` before any JS runs.
+ * Checking this synchronously avoids the hang caused by importing and calling
+ * the Tauri invoke function outside the Tauri IPC bridge — the npm package
+ * loads fine but the call never resolves in a plain browser context.
+ */
+function isTauriContext(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    "__TAURI_INTERNALS__" in window
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Sidecar lifecycle (Tauri invoke)
@@ -177,17 +192,13 @@ async function tauriInvoke<T>(
   command: string,
   args?: Record<string, unknown>,
 ): Promise<T> {
-  if (cachedInvoke === null && !invokeUnavailable) {
-    try {
-      const tauri = await import("@tauri-apps/api/core");
-      cachedInvoke = tauri.invoke as InvokeFn;
-    } catch {
-      invokeUnavailable = true;
-    }
+  if (!isTauriContext()) {
+    throw new Error("Tauri IPC is unavailable — not running inside a Tauri webview");
   }
 
   if (cachedInvoke === null) {
-    throw new Error("Tauri invoke is unavailable in this runtime");
+    const tauri = await import("@tauri-apps/api/core");
+    cachedInvoke = tauri.invoke as InvokeFn;
   }
 
   return cachedInvoke<T>(command, args);
@@ -373,14 +384,28 @@ export async function getRuntimeDiagnostics(): Promise<RuntimeDiagnostics> {
 // ---------------------------------------------------------------------------
 
 /**
- * Full startup sequence: start sidecar, wait for health, return status.
+ * Full startup sequence: start sidecar (Tauri mode) or probe health (dev mode).
  *
- * This is the primary entry point for the App component on mount.
+ * In Tauri desktop mode: invokes ``start_sidecar``, which already performs a
+ * pre-spawn health check (coexistence); then waits for readiness.
+ *
+ * In plain browser mode (Vite dev server, ``pnpm dev``): Tauri IPC is not
+ * available, so we skip sidecar management entirely and probe the backend
+ * directly. Start the backend manually in this case:
+ *   ``uv run python src/podcast_pipeline/service/cli.py``
  */
 export async function bootBackend(): Promise<{
   sidecar: SidecarStatus;
   health: HealthResponse | null;
 }> {
+  const noSidecar: SidecarStatus = { running: false, pid: null, port: BACKEND_PORT };
+
+  if (!isTauriContext()) {
+    // Browser / Vite dev mode — no sidecar management, just probe the backend.
+    const health = await checkHealth();
+    return { sidecar: noSidecar, health };
+  }
+
   const sidecar = await startSidecar();
   const health = await waitForReady();
   return { sidecar, health };
