@@ -9,20 +9,20 @@
 See: `.planning/PROJECT.md`
 
 **Core value:** Turn raw podcast recording into multi-platform content without editing software or manual copywriting.
-**Current focus:** Phase 10 — Tauri desktop app distribution. Plans 01 and 02 complete; Plans 03-06 pending.
+**Current focus:** Phase 10 — Tauri desktop app distribution. Plans 01, 02, and 03 complete; Plans 04-06 pending.
 
 ## Current Position
 
 ```text
 Phase:    10 (Tauri Desktop Application Distribution)
-Plan:     02/06 complete — 10-01 Backend infra gaps + 10-02 Frontend toolchain setup
-Status:   In progress — Plans 01 and 02 complete; Plans 03-06 pending
-Last activity: 2026-02-25 - Completed 10-01-PLAN.md (service/cli.py entry point, CORS middleware, Tauri coexistence health check)
+Plan:     03/06 complete — 10-01 Backend infra gaps + 10-02 Frontend toolchain setup + 10-03 State management + layout shell
+Status:   In progress — Plans 01, 02, and 03 complete; Plans 04-06 pending
+Last activity: 2026-02-25 - Completed 10-03-PLAN.md (Zustand stores, TanStack Query hooks, AppShell/Sidebar/Header layout components)
 
 Progress: [██████████████████████████████] 67/67 plans complete (Phase 9 closed; Phase 10 ongoing)
 ```
 
-**Current Phase:** Phase 10 — Tauri Desktop Application Distribution (2/6 plans complete)
+**Current Phase:** Phase 10 — Tauri Desktop Application Distribution (3/6 plans complete)
 
 ## Phase Status
 
@@ -378,6 +378,7 @@ Progress: [███████████████████████
 - 2026-02-24: Completed 09.12-03-PLAN.md (GAP-5A/6A: Split sound kit into Enable Stingers + Enable Auto-Ducking checkboxes; logo/font file uploaders in Brand Studio Visual Assets; 1041 tests passing; Phase 9.12 complete)
 - 2026-02-25: Completed 10-01-PLAN.md (service/cli.py PyInstaller entry point with BACKEND_READY stdout marker; CORSMiddleware with explicit Tauri/dev origins in app.py; TAURI_OWNS_SIDECAR + backend_is_healthy() coexistence check in lib.rs)
 - 2026-02-25: Completed 10-02-PLAN.md (CI: --onefile→--onedir + full directory artifact upload; Tauri window 1440x900, minWidth 1024, CSP+media permissions, externalBin directory path, bundle.resources for _internal/**; prepare-sidecars.mjs onedir detection; TailwindCSS v4, TanStack Query v5, Zustand v5, wavesurfer.js v7, shadcn/ui components; pnpm build passes)
+- 2026-02-25: Completed 10-03-PLAN.md (Zustand uiStore+sidecarStore; TanStack Query useJobs/useJobDetail/useSidecarReady/useSystemStatus replacing manual setInterval; AppShell/Sidebar/Header layout with lucide-react icons and Tailwind v4 design tokens; pnpm build passes 80 modules)
 
 ## Session Continuity
 
@@ -387,7 +388,7 @@ Progress: [███████████████████████
 
 ### Stopped at
 
-Completed 10-01-PLAN.md — Phase 10 Plans 01 and 02 are done. Next: Plan 03 (Shell layout + navigation).
+Completed 10-03-PLAN.md — Phase 10 Plans 01, 02, and 03 are done. Next: Plan 04 (IngestionView).
 
 ### Resume file
 
@@ -395,4 +396,4 @@ None
 
 ---
 
-*State updated: 2026-02-25 (10-01 executed -- service/cli.py entry point + CORS + coexistence health check; Phase 10 2/6 plans complete; 67 plans overall)*
+*State updated: 2026-02-25 (10-03 executed -- Zustand stores, TanStack Query hooks, AppShell/Sidebar/Header layout; Phase 10 3/6 plans complete; 67 plans overall)*
