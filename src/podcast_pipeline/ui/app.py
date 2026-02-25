@@ -2767,8 +2767,7 @@ def _render_brand_studio_editor(profile: BrandingProfile, branding_dir: Path) ->
 
     # ── Sound Kit ───────────────────────────────────────────────────────────
     with st.expander("Sound Kit", expanded=False):
-        assets_dir = branding_dir / "assets"
-        assets_dir.mkdir(parents=True, exist_ok=True)
+        # assets_dir already created by Visual Assets expander above.
 
         # Intro stinger
         intro_upload = st.file_uploader(
@@ -2835,7 +2834,7 @@ def _render_brand_studio_editor(profile: BrandingProfile, branding_dir: Path) ->
         )
 
         # Initialize working copy of overrides in session_state
-        override_key = "_brand_studio_overrides"
+        override_key = f"_brand_studio_overrides_{profile.profile_name}"
         if override_key not in st.session_state:
             st.session_state[override_key] = {
                 k: v.model_dump() for k, v in profile.platform_overrides.items()
@@ -2964,7 +2963,9 @@ def _render_brand_studio_editor(profile: BrandingProfile, branding_dir: Path) ->
         if st.button("Save Profile", key="brand_studio_save"):
             try:
                 # Collect platform overrides from session_state
-                raw_overrides: dict[str, Any] = st.session_state.get("_brand_studio_overrides", {})
+                raw_overrides: dict[str, Any] = st.session_state.get(
+                    f"_brand_studio_overrides_{profile.profile_name}", {}
+                )
                 built_overrides: dict[str, PlatformBrandingOverride] = {}
                 for plat_key, ovr_dict in raw_overrides.items():
                     if not isinstance(ovr_dict, dict):
@@ -3010,7 +3011,7 @@ def _render_brand_studio_editor(profile: BrandingProfile, branding_dir: Path) ->
                 )
                 save_profile(updated_profile, branding_dir)
                 # Clear override cache so next load picks up saved state
-                st.session_state.pop("_brand_studio_overrides", None)
+                st.session_state.pop(f"_brand_studio_overrides_{profile.profile_name}", None)
                 st.success(f"Profile '{profile.profile_name}' saved.")
             except (ValueError, OSError) as exc:
                 st.error(f"Failed to save profile: {exc}")
@@ -3143,7 +3144,9 @@ def render_production_controls(job_id: str, job_dir: Path) -> None:
                     "Low confidence sync detection — consider setting a manual override below."
                 )
 
-    sync_offset_value = decisions.manual_sync_offset_ms if decisions.manual_sync_offset_ms else 0.0
+    sync_offset_value = (
+        decisions.manual_sync_offset_ms if decisions.manual_sync_offset_ms is not None else 0.0
+    )
     manual_sync_offset = st.slider(
         "Manual Sync Offset (ms)",
         min_value=-5000.0,
@@ -3314,7 +3317,7 @@ def render_settings() -> None:
             help="Select the AI provider for analysis. Session-only — does not persist to config.yaml.",
         )
         if selected_provider != config.models.provider:
-            config.models.provider = selected_provider
+            st.session_state["models_provider"] = selected_provider
         st.caption(
             "To change provider permanently, set `models.provider` in config.yaml "
             "or start with `MODELS__PROVIDER=claude`."
@@ -3334,9 +3337,10 @@ def render_settings() -> None:
         st.markdown("**Status:**")
         st.markdown(f"- Gemini: {'✅ Configured' if config.api_keys.gemini else '❌ Not set'}")
         st.markdown(f"- Kimi: {'✅ Configured' if config.api_keys.kimi else '❌ Not set'}")
-        anthropic_key = getattr(config.api_keys, "anthropic", None)
-        anthropic_status = "✅ Configured" if anthropic_key else "❌ Not set"
-        st.markdown(f"- Anthropic (Claude): {anthropic_status}")
+        st.markdown(
+            f"- Anthropic (Claude): "
+            f"{'✅ Configured' if config.api_keys.anthropic else '❌ Not set'}"
+        )
         st.markdown(f"- YouTube: {'✅ Configured' if config.api_keys.youtube else '❌ Not set'}")
 
         st.info("API keys are configured via environment variables or .env file")

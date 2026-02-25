@@ -37,13 +37,24 @@ RUN_TIMEOUT_SECONDS = 1800.0
 # ──────────────────────────────────────────────────────────────────────────────
 
 
+class _HolderInfo:
+    """Per-job GPU lease holder state."""
+
+    __slots__ = ("operation", "reentrant_depth")
+
+    def __init__(self, operation: str, reentrant_depth: int = 1) -> None:
+        self.operation = operation
+        self.reentrant_depth = reentrant_depth
+
+
 class GPULease:
     """Semaphore-based context manager for serializing GPU-heavy operations.
 
     Thumbnail generation and NVENC-heavy encoding stages must not run
     concurrently across different jobs on a single-GPU machine.  The
-    ``GPULease`` wraps a :class:`threading.Semaphore` with ``permits=1``
-    so that at most one GPU-heavy workload is active at any time.
+    ``GPULease`` wraps a :class:`threading.Semaphore` with configurable
+    ``permits`` (default 1) so that at most *permits* GPU-heavy workloads
+    are active at any time.
 
     Same-job stages already execute sequentially (the pipeline processes
     stages in order), so the lease only gates concurrent **cross-job**
@@ -57,33 +68,43 @@ class GPULease:
             # run GPU-heavy work
             ...
 
-    The lease is non-blocking for the **same** job if it already holds it;
-    different jobs block until the lease is released.
+    The lease is non-blocking for the **same** job if it already holds it
+    (reentrant); different jobs block until a permit becomes available.
     """
 
     def __init__(self, permits: int = 1) -> None:
         self._semaphore = threading.Semaphore(permits)
         self._lock = threading.Lock()
-        self._holder_job_id: str | None = None
-        self._holder_operation: str | None = None
-        self._reentrant_depth: int = 0
+        self._holders: dict[str, _HolderInfo] = {}
 
     @property
     def holder_job_id(self) -> str | None:
-        """Return the job_id currently holding the GPU lease, or None."""
+        """Return a job_id currently holding the GPU lease, or None.
+
+        When multiple permits are in use, returns the first holder found
+        (iteration order). For single-permit usage this is deterministic.
+        """
         with self._lock:
-            return self._holder_job_id
+            for job_id in self._holders:
+                return job_id
+            return None
 
     @property
     def holder_operation(self) -> str | None:
-        """Return the operation name of the current lease holder."""
+        """Return the operation name of a current lease holder, or None.
+
+        When multiple permits are in use, returns the operation of the
+        first holder found (iteration order).
+        """
         with self._lock:
-            return self._holder_operation
+            for info in self._holders.values():
+                return info.operation
+            return None
 
     def is_held(self) -> bool:
         """Return True if the GPU lease is currently held by any job."""
         with self._lock:
-            return self._holder_job_id is not None
+            return len(self._holders) > 0
 
     @contextmanager
     def acquire(
@@ -114,8 +135,8 @@ class GPULease:
         # Check for same-job reentrancy before touching the semaphore.
         reentrant = False
         with self._lock:
-            if self._holder_job_id == job_id:
-                self._reentrant_depth += 1
+            if job_id in self._holders:
+                self._holders[job_id].reentrant_depth += 1
                 reentrant = True
 
         if reentrant:
@@ -123,16 +144,16 @@ class GPULease:
                 "gpu_lease_reentrant",
                 job_id=job_id,
                 operation=operation,
-                depth=self._reentrant_depth,
+                depth=self._holders[job_id].reentrant_depth,
             )
             try:
                 yield
             finally:
                 with self._lock:
-                    self._reentrant_depth -= 1
+                    self._holders[job_id].reentrant_depth -= 1
             return
 
-        # First acquisition — block on the semaphore.
+        # First acquisition for this job — block on the semaphore.
         if timeout is not None:
             acquired = self._semaphore.acquire(timeout=timeout)
         else:
@@ -144,9 +165,7 @@ class GPULease:
             )
 
         with self._lock:
-            self._holder_job_id = job_id
-            self._holder_operation = operation
-            self._reentrant_depth = 1
+            self._holders[job_id] = _HolderInfo(operation=operation, reentrant_depth=1)
 
         logger.info(
             "gpu_lease_acquired",
@@ -158,11 +177,10 @@ class GPULease:
             yield
         finally:
             with self._lock:
-                self._reentrant_depth -= 1
-                if self._reentrant_depth <= 0:
-                    self._holder_job_id = None
-                    self._holder_operation = None
-                    self._reentrant_depth = 0
+                info = self._holders[job_id]
+                info.reentrant_depth -= 1
+                if info.reentrant_depth <= 0:
+                    del self._holders[job_id]
                     release = True
                 else:
                     release = False

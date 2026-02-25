@@ -1407,6 +1407,15 @@ class TestRenderSyncOffset:
             synced_path.write_bytes(b"synced_fake_video")
 
         monkeypatch.setattr("podcast_pipeline.stages.render.run_ffmpeg", _fake_run_ffmpeg)
+        monkeypatch.setattr(
+            "podcast_pipeline.stages.render.run_ffprobe",
+            lambda *_a, **_kw: {
+                "streams": [
+                    {"codec_type": "audio"},
+                    {"codec_type": "audio"},
+                ]
+            },
+        )
 
         input_video = temp_dir / "input" / "raw.mp4"
         input_video.parent.mkdir(parents=True, exist_ok=True)
@@ -1437,6 +1446,15 @@ class TestRenderSyncOffset:
             synced_path.write_bytes(b"synced_fake_video")
 
         monkeypatch.setattr("podcast_pipeline.stages.render.run_ffmpeg", _fake_run_ffmpeg)
+        monkeypatch.setattr(
+            "podcast_pipeline.stages.render.run_ffprobe",
+            lambda *_a, **_kw: {
+                "streams": [
+                    {"codec_type": "audio"},
+                    {"codec_type": "audio"},
+                ]
+            },
+        )
 
         input_video = temp_dir / "input" / "raw.mp4"
         input_video.parent.mkdir(parents=True, exist_ok=True)
@@ -1462,6 +1480,15 @@ class TestRenderSyncOffset:
             raise FFmpegError("mux failed")
 
         monkeypatch.setattr("podcast_pipeline.stages.render.run_ffmpeg", _raise)
+        monkeypatch.setattr(
+            "podcast_pipeline.stages.render.run_ffprobe",
+            lambda *_a, **_kw: {
+                "streams": [
+                    {"codec_type": "audio"},
+                    {"codec_type": "audio"},
+                ]
+            },
+        )
 
         input_video = temp_dir / "input" / "raw.mp4"
         input_video.parent.mkdir(parents=True, exist_ok=True)
