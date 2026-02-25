@@ -11,12 +11,25 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Literal
 
 from podcast_pipeline.config import Config, PlatformSpec, ThumbnailTargetSpec
+from podcast_pipeline.config.settings import (
+    AV1_CODECS,
+    H264_CODECS,
+    H265_CODECS,
+    SHORT_FORM_ASPECT_RATIOS,
+)
 from podcast_pipeline.models.edit_plan import EditPlan
 from podcast_pipeline.models.job import Job
 from podcast_pipeline.stages.base import Stage, StageResult
 from podcast_pipeline.stages.review import ReviewDecisions
+from podcast_pipeline.utils.audio_mix import (
+    apply_intro_stinger,
+    apply_outro_stinger,
+    apply_transition_stingers,
+    resolve_sound_kit_paths,
+)
 from podcast_pipeline.utils.editing import find_word_boundaries, snap_cut_range
 from podcast_pipeline.utils.ffmpeg import FFmpegError, get_video_info, run_ffmpeg, run_ffprobe
+from podcast_pipeline.utils.ffmpeg_toolkit import HardwareEncoderInfo, detect_hardware_encoders
 from podcast_pipeline.utils.logging import get_logger
 from podcast_pipeline.utils.noise_match import compute_noise_floor_correction, measure_rms_db
 from podcast_pipeline.utils.pose_match import scan_best_frame_pair
@@ -38,9 +51,21 @@ VIDEO_QUALITY_BITRATE_FACTOR = {
 }
 MAX_THUMBNAIL_EXPORTS = 4
 MIN_THUMBNAIL_OFFSET_SECONDS = 0.5
-PROFILE_LEVEL_CODECS = {"h264", "libx264", "h265", "hevc", "libx265"}
+PROFILE_LEVEL_CODECS = {"h264", "libx264", "h265", "hevc", "libx265", "h264_nvenc", "hevc_nvenc"}
 THUMBNAIL_COMPLIANCE_PLATFORMS = ("youtube", "spotify_video", "apple_video")
 _EPSILON = 1e-6
+
+# FFmpeg filtergraph metacharacters that must be backslash-escaped in option values.
+_FFMPEG_FILTERGRAPH_META_RE = re.compile(r"([\[\]:;,\\'])")
+
+
+def _escape_ffmpeg_filter_value(value: str) -> str:
+    """Escape FFmpeg filtergraph metacharacters in an option value.
+
+    Characters ``[ ] : ; , \\ '`` are prefixed with a backslash so they are
+    treated as literal characters inside FFmpeg filter option strings.
+    """
+    return _FFMPEG_FILTERGRAPH_META_RE.sub(r"\\\1", value)
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,6 +100,15 @@ class RenderStage(Stage):
 
     def __init__(self, config: Config):
         super().__init__(config)
+        # Phase 9: Detect hardware encoder capabilities at startup.
+        # Results are cached process-wide via detect_hardware_encoders(use_cache=True).
+        # The MCP server pre-warms this cache on lifespan startup; here we just read it.
+        try:
+            self._hw_encoders: HardwareEncoderInfo = detect_hardware_encoders()
+        except (subprocess.SubprocessError, OSError, FileNotFoundError) as exc:
+            # Encoder detection is best-effort — fall back to software-only capability.
+            self.logger.warning("hw_encoder_detection_failed", error=str(exc))
+            self._hw_encoders = HardwareEncoderInfo()  # all False / software defaults
 
     def run(self, job: Job, job_dir: Path) -> StageResult:
         """Execute render stage.
@@ -106,6 +140,21 @@ class RenderStage(Stage):
                 success=False,
                 error="Input video not found",
             )
+
+        # Phase 9.7: Apply persisted or manual sync offset when available.
+        sync_offset_ms, sync_meta = self._resolve_sync_offset(job_dir, decisions)
+        if sync_offset_ms is not None and abs(sync_offset_ms) >= 1.0:
+            synced_input = self._apply_sync_offset(input_video, job_dir, sync_offset_ms)
+            if synced_input is not None:
+                self.logger.info(
+                    "sync_offset_applied",
+                    offset_ms=sync_offset_ms,
+                    source=sync_meta.get("source", "unknown"),
+                    synced_input=str(synced_input),
+                )
+                input_video = synced_input
+            else:
+                self.logger.warning("sync_offset_apply_failed", offset_ms=sync_offset_ms)
 
         # Get video info for aspect ratio calculations
         video_info = get_video_info(input_video)
@@ -316,6 +365,7 @@ class RenderStage(Stage):
                     "platform_results": platform_results,
                     "quality_controls": quality_controls,
                     "thumbnail_result": thumbnail_result,
+                    "sync": sync_meta,
                 },
             )
 
@@ -328,6 +378,7 @@ class RenderStage(Stage):
                 "platform_results": platform_results,
                 "quality_controls": quality_controls,
                 "thumbnail_result": thumbnail_result,
+                "sync": sync_meta,
             },
         )
 
@@ -1295,6 +1346,177 @@ class RenderStage(Stage):
                 return path
         return None
 
+    # -------------------------------------------------------------------------
+    # Phase 9.7 — Sync helpers
+    # -------------------------------------------------------------------------
+
+    def _resolve_sync_offset(
+        self,
+        job_dir: Path,
+        decisions: ReviewDecisions,
+    ) -> tuple[float | None, dict[str, object]]:
+        """Determine the effective sync offset for this render.
+
+        Priority:
+            1. ``decisions.manual_sync_offset_ms`` if operator set an override.
+            2. Auto-detected offset from ``intermediate/sync_artifact.json``.
+            3. ``None`` (no sync) if no artifact exists or single-track job.
+
+        Args:
+            job_dir: Job directory containing intermediate artifacts.
+            decisions: Review decisions with optional manual override.
+
+        Returns:
+            Tuple of ``(offset_ms, meta_dict)`` where *meta_dict* documents
+            which source was used (``"manual"``, ``"auto"``, or ``None``).
+        """
+        # Operator manual override takes precedence.
+        if decisions.manual_sync_offset_ms is not None:
+            return decisions.manual_sync_offset_ms, {
+                "source": "manual",
+                "offset_ms": decisions.manual_sync_offset_ms,
+            }
+
+        # Load auto-detected artifact.
+        artifact_path = job_dir / "intermediate" / "sync_artifact.json"
+        if not artifact_path.exists():
+            return None, {"source": None}
+
+        try:
+            artifact = json.loads(artifact_path.read_text())
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            self.logger.warning("sync_artifact_load_failed", error=str(exc))
+            return None, {"source": None, "error": str(exc)}
+
+        if not isinstance(artifact, dict):
+            self.logger.warning(
+                "sync_artifact_malformed_type",
+                actual_type=type(artifact).__name__,
+            )
+            return None, {"source": None, "error": "artifact is not a JSON object"}
+
+        raw_offset = artifact.get("offset_ms", 0.0)
+        try:
+            offset_ms = float(raw_offset)
+        except (ValueError, TypeError):
+            self.logger.warning(
+                "sync_artifact_offset_malformed",
+                offset_ms=raw_offset,
+            )
+            offset_ms = 0.0
+        return offset_ms, {
+            "source": "auto",
+            "offset_ms": offset_ms,
+            "confidence": artifact.get("confidence"),
+            "low_confidence": artifact.get("low_confidence"),
+            "no_clap": artifact.get("no_clap"),
+        }
+
+    def _apply_sync_offset(
+        self,
+        input_video: Path,
+        job_dir: Path,
+        offset_ms: float,
+    ) -> Path | None:
+        """Apply a sync offset to the input video by re-muxing with -itsoffset.
+
+        The second audio stream is delayed by ``offset_ms`` ms when
+        ``offset_ms > 0`` (external track lags reference), or the first
+        video/audio stream is delayed when ``offset_ms < 0``.
+
+        The synced output is written to ``intermediate/synced_input.*`` to
+        keep the job directory deterministic.
+
+        Args:
+            input_video: Original input video path.
+            job_dir: Job directory (output goes to intermediate/).
+            offset_ms: Offset in ms; positive = external track starts later.
+
+        Returns:
+            Path to the synced file, or ``None`` on FFmpeg failure or
+            when the input has fewer than 2 audio streams.
+        """
+        # Probe audio stream count — mapping "1:a:1" requires at least 2 streams.
+        try:
+            probe_data = run_ffprobe(input_video)
+            audio_stream_count = sum(
+                1 for s in probe_data.get("streams", []) if s.get("codec_type") == "audio"
+            )
+        except (FFmpegError, subprocess.SubprocessError, OSError, FileNotFoundError):
+            audio_stream_count = 0
+
+        if audio_stream_count < 2:
+            self.logger.warning(
+                "sync_offset_skipped_single_audio_stream",
+                offset_ms=offset_ms,
+                path=str(input_video),
+                audio_streams=audio_stream_count,
+            )
+            return None
+
+        intermediate_dir = job_dir / "intermediate"
+        intermediate_dir.mkdir(parents=True, exist_ok=True)
+        suffix = input_video.suffix
+        synced_path = intermediate_dir / f"synced_input{suffix}"
+
+        offset_s = abs(offset_ms) / 1000.0
+        itsoffset_str = f"{offset_s:.6f}"
+
+        if offset_ms > 0:
+            # External (second) audio stream lags reference: delay it.
+            args = [
+                "-i",
+                str(input_video),
+                "-itsoffset",
+                itsoffset_str,
+                "-i",
+                str(input_video),
+                "-map",
+                "0:v",
+                "-map",
+                "0:a:0",
+                "-map",
+                "1:a:1",
+                "-c",
+                "copy",
+                str(synced_path),
+            ]
+        else:
+            # Reference track lags external: delay reference video/audio.
+            args = [
+                "-itsoffset",
+                itsoffset_str,
+                "-i",
+                str(input_video),
+                "-i",
+                str(input_video),
+                "-map",
+                "0:v",
+                "-map",
+                "0:a:0",
+                "-map",
+                "1:a:1",
+                "-c",
+                "copy",
+                str(synced_path),
+            ]
+
+        try:
+            run_ffmpeg(args, timeout=600)
+        except FFmpegError as exc:
+            self.logger.warning(
+                "sync_offset_ffmpeg_failed",
+                offset_ms=offset_ms,
+                error=str(exc),
+            )
+            return None
+
+        if not synced_path.exists() or synced_path.stat().st_size == 0:
+            self.logger.warning("sync_offset_output_missing", path=str(synced_path))
+            return None
+
+        return synced_path
+
     def _load_edit_plan(self, job_dir: Path) -> EditPlan | None:
         """Load edit plan if present."""
         edit_path = job_dir / "review" / "edit_plan.json"
@@ -1602,6 +1824,37 @@ class RenderStage(Stage):
         """Render video export with aspect ratio conversion."""
         output_file = output_dir / f"final.{spec.container}"
 
+        # Phase 9: Resolve encoder — NVENC fallback chain runs at render time.
+        # RIFE 60fps uplift for short-form vertical exports runs BEFORE any overlay/caption
+        # burn-in so the interpolated frames are the base for subsequent filter operations.
+        resolved_encoder, encoder_extra_args = self._resolve_video_encoder(spec, platform)
+
+        # Phase 9: force_60fps_shortform — apply RIFE 30→60fps uplift to short-form
+        # vertical targets ONLY (9:16 aspect ratio). Long-form exports are never affected.
+        # This runs first — before any filter construction — so RIFE output is the base.
+        active_input = input_video
+        smoothing = self.config.smoothing
+        if (
+            smoothing.force_60fps_shortform
+            and smoothing.rife_enabled
+            and self._is_shortform_vertical(spec)
+        ):
+            uplifted = self._apply_shortform_60fps_rife(input_video, output_dir, platform)
+            if uplifted is not None:
+                active_input = uplifted
+                self.logger.info(
+                    "shortform_60fps_applied",
+                    platform=platform,
+                    source=str(input_video),
+                    uplifted=str(uplifted),
+                )
+        elif smoothing.force_60fps_shortform and not self._is_shortform_vertical(spec):
+            self.logger.debug(
+                "force_60fps_shortform_skipped_longform",
+                platform=platform,
+                aspect_ratio=spec.aspect_ratio,
+            )
+
         # Get source dimensions
         src_width = video_info.get("width", 1920)
         src_height = video_info.get("height", 1080)
@@ -1626,7 +1879,7 @@ class RenderStage(Stage):
             vf_filters,
             af_filters,
             transcript_words=transcript_words,
-            input_video=input_video,
+            input_video=active_input,
         )
 
         # Handle duration limits
@@ -1641,7 +1894,7 @@ class RenderStage(Stage):
             )
 
         # Build FFmpeg command
-        args = ["-i", str(input_video)]
+        args = ["-i", str(active_input)]
 
         # Duration limit
         args.extend(duration_args)
@@ -1658,21 +1911,29 @@ class RenderStage(Stage):
             if af_filters:
                 args.extend(["-af", ",".join(af_filters)])
 
-        # Video encoding
+        # Video encoding — use resolved encoder (NVENC/software fallback)
+        # encoder_extra_args may override pix_fmt for NVENC→libx265 fallback
+        effective_pix_fmt, remaining_extra = self._split_pix_fmt_from_extra_args(
+            encoder_extra_args, spec
+        )
+
         args.extend(
             [
                 "-c:v",
-                spec.video_codec,
+                resolved_encoder,
                 "-preset",
                 spec.preset,
                 "-b:v",
                 spec.video_bitrate,
                 "-pix_fmt",
-                spec.pix_fmt,
+                effective_pix_fmt,
             ]
         )
 
-        codec_supports_profile_level = self._supports_profile_level_flags(spec.video_codec)
+        if remaining_extra:
+            args.extend(remaining_extra)
+
+        codec_supports_profile_level = self._supports_profile_level_flags(resolved_encoder)
         if codec_supports_profile_level and spec.video_profile:
             args.extend(["-profile:v", spec.video_profile])
         if codec_supports_profile_level and spec.video_level:
@@ -1682,9 +1943,16 @@ class RenderStage(Stage):
         if codec_supports_profile_level and spec.keyint_min is not None:
             args.extend(["-keyint_min", str(spec.keyint_min)])
 
-        # FPS if specified
-        if spec.fps:
-            args.extend(["-r", str(spec.fps)])
+        # FPS if specified (respect 60fps uplift for short-form when RIFE was applied)
+        target_fps = spec.fps
+        if (
+            smoothing.force_60fps_shortform
+            and self._is_shortform_vertical(spec)
+            and active_input != input_video
+        ):
+            target_fps = 60
+        if target_fps:
+            args.extend(["-r", str(target_fps)])
 
         # Audio encoding
         args.extend(
@@ -1707,6 +1975,27 @@ class RenderStage(Stage):
         run_ffmpeg(args)
         self._assert_output_exists(output_file, f"{platform} video export")
 
+        # Phase 09-12 (GAP-7): Resolve effective branding profile — decisions
+        # take precedence over config.yaml active_profile.
+        effective_profile_name: str | None = (
+            decisions.branding_profile_name
+            if decisions.branding_profile_name is not None
+            else self.config.branding.active_profile
+        )
+
+        # Phase 9.8: Apply production sound-kit stingers after cut assembly but before
+        # loudness normalization so the ducked mix is part of the normalized output.
+        # Phase 09-12 (GAP-7): Gate stinger mixing on ReviewDecisions toggle.
+        if decisions.sound_kit_enabled:
+            output_file = self._mix_stingers(
+                video_path=output_file,
+                output_dir=output_dir,
+                platform=platform,
+                edit_plan=edit_plan,
+                src_duration=src_duration,
+                profile_name_override=effective_profile_name,
+            )
+
         if normalize_audio:
             self._normalize_loudness(
                 output_file,
@@ -1717,26 +2006,420 @@ class RenderStage(Stage):
         else:
             self.logger.info("loudness_normalization_disabled", platform=platform)
         self._assert_output_exists(output_file, f"{platform} video export")
+
+        # Phase 09-12 (GAP-7): Gate caption burn-in on ReviewDecisions toggle
+        # (replaces self.config.branding.captions.enabled check — UI decision
+        # takes precedence over config.yaml).
+        if decisions.captions_enabled:
+            captioned = self._burn_captions(
+                video_path=output_file,
+                output_dir=output_dir,
+                job_dir=output_dir.parent.parent,
+                platform=platform,
+                spec=spec,
+                aspect_ratio_override=decisions.caption_aspect_ratio,
+                profile_name_override=effective_profile_name,
+            )
+            if captioned is not None:
+                output_file = captioned
+                self._assert_output_exists(output_file, f"{platform} captioned video export")
+
+        # Compliance validation runs AFTER caption burn-in so it checks the
+        # final deliverable (not an intermediate that _burn_captions re-encodes).
+        # When encoder fallback changed pix_fmt or codec (e.g. AV1 -> libx265),
+        # create a shallow spec copy so compliance checks the actual output format.
+        compliance_update: dict[str, str] = {}
+        if effective_pix_fmt != spec.pix_fmt:
+            compliance_update["pix_fmt"] = effective_pix_fmt
+        if resolved_encoder != spec.video_codec:
+            compliance_update["video_codec"] = resolved_encoder
+        compliance_spec = spec.model_copy(update=compliance_update) if compliance_update else spec
         self._validate_video_platform_compliance(
             platform=platform,
             output_file=output_file,
-            spec=spec,
+            spec=compliance_spec,
         )
 
         self.logger.info(f"{platform}_rendered", output=str(output_file))
         return [str(output_file.relative_to(output_dir.parent.parent))]
 
+    def _burn_captions(
+        self,
+        video_path: Path,
+        output_dir: Path,
+        job_dir: Path,
+        platform: str,
+        spec: PlatformSpec,
+        *,
+        aspect_ratio_override: str | None = None,
+        profile_name_override: str | None = None,
+    ) -> Path | None:
+        """Generate ASS captions from word alignment and burn them into the video.
+
+        Generates a per-aspect-ratio ``.ass`` file from ``word_alignment.json``,
+        then re-encodes ``video_path`` with the FFmpeg ``ass=`` libass filter,
+        producing ``<output_dir>/captioned.<ext>`` (using the spec container).
+
+        Returns the captioned output path on success, or ``None`` when
+        the aspect ratio is unsupported (rare — logged as warning).  Any
+        failure to find the required alignment artifact raises ``RuntimeError``
+        with an actionable diagnostic.
+
+        Args:
+            video_path: Path to the rendered (and loudness-normalised) video.
+            output_dir: Platform output directory (``jobs/<id>/output/<platform>``).
+            job_dir: Job root directory (``jobs/<id>``).
+            platform: Platform identifier string (for logging).
+            spec: Platform specification used to derive the target aspect ratio.
+
+        Returns:
+            Path to the captioned video, or ``None`` when the aspect ratio
+            is not supported by the ASS template library (a warning is logged).
+
+        Raises:
+            RuntimeError: When ``word_alignment.json`` is missing and captions
+                are enabled, or when FFmpeg's libass filter fails.  The message
+                includes actionable diagnostics for the operator.
+        """
+        caption_cfg = self.config.branding.captions
+        # Phase 09-12 (GAP-4): Use aspect ratio override from decisions when set;
+        # otherwise infer from platform spec.
+        aspect_ratio = (
+            aspect_ratio_override
+            if aspect_ratio_override is not None
+            else (spec.aspect_ratio or "16:9").strip()
+        )
+
+        # Locate word alignment artifact — required when captions enabled.
+        alignment_path = job_dir / "transcribe" / caption_cfg.alignment_filename
+        if not alignment_path.exists():
+            # Also check legacy location under analysis/
+            alignment_path_legacy = job_dir / "analysis" / caption_cfg.alignment_filename
+            if alignment_path_legacy.exists():
+                alignment_path = alignment_path_legacy
+            else:
+                raise RuntimeError(
+                    f"Caption burn-in is enabled but '{caption_cfg.alignment_filename}' "
+                    f"was not found at '{alignment_path}' or '{alignment_path_legacy}'. "
+                    "Run the transcription stage with word-level alignment enabled before "
+                    "rendering with captions."
+                )
+
+        # Generate per-ratio ASS file.
+        ass_path = output_dir / f"captions_{aspect_ratio.replace(':', '_')}.ass"
+
+        # Load caption utilities and branding profile for style (best-effort; fall back to defaults).
+        from podcast_pipeline.utils.branding import load_profile as load_branding_profile
+        from podcast_pipeline.utils.captions import (
+            CaptionStyleConfig,
+            generate_ass_from_json,
+        )
+
+        branding_cfg = self.config.branding
+        branding_profile = None
+        # Phase 09-12 (GAP-7): Use profile name override from decisions when set.
+        active_profile_name = (
+            profile_name_override
+            if profile_name_override is not None
+            else branding_cfg.active_profile
+        )
+        if active_profile_name:
+            try:
+                branding_profile = load_branding_profile(
+                    active_profile_name,
+                    branding_cfg.branding_dir,
+                )
+            except (FileNotFoundError, ValueError, TypeError, OSError) as exc:
+                self.logger.warning(
+                    "caption_branding_load_failed",
+                    platform=platform,
+                    profile=active_profile_name,
+                    error=str(exc),
+                )
+
+        style = CaptionStyleConfig.from_branding(branding_profile)
+
+        try:
+            generate_ass_from_json(
+                alignment_path=alignment_path,
+                style=style,
+                output_path=ass_path,
+                aspect_ratio=aspect_ratio,
+            )
+        except ValueError as exc:
+            # Unsupported aspect ratio — log and skip, do not hard fail.
+            self.logger.warning(
+                "caption_unsupported_ratio",
+                platform=platform,
+                aspect_ratio=aspect_ratio,
+                error=str(exc),
+            )
+            return None
+
+        # Re-encode video with captions burned in via libass.
+        ext = spec.container if spec.container not in {"hls"} else "mp4"
+        captioned_path = output_dir / f"captioned.{ext}"
+
+        # Escape path for FFmpeg ass= filter (POSIX forward slashes, metachar-safe).
+        escaped_ass_path = _escape_ffmpeg_filter_value(ass_path.as_posix())
+        ass_filter = f"ass={escaped_ass_path}"
+
+        # Resolve encoder consistently with the main render pipeline so caption
+        # burn-in does not downgrade HEVC 10-bit → H.264 8-bit.
+        resolved_encoder, encoder_extra_args = self._resolve_video_encoder(spec, platform)
+
+        effective_pix_fmt, remaining_extra = self._split_pix_fmt_from_extra_args(
+            encoder_extra_args, spec
+        )
+
+        burn_args = [
+            "-i",
+            str(video_path),
+            "-vf",
+            ass_filter,
+            "-c:v",
+            resolved_encoder,
+            "-preset",
+            spec.preset,
+            "-b:v",
+            spec.video_bitrate,
+            "-pix_fmt",
+            effective_pix_fmt,
+        ]
+        if remaining_extra:
+            burn_args.extend(remaining_extra)
+
+        # Profile/level/GOP flags — mirror the main render path.
+        if self._supports_profile_level_flags(resolved_encoder):
+            if spec.video_profile:
+                burn_args.extend(["-profile:v", spec.video_profile])
+            if spec.video_level:
+                burn_args.extend(["-level:v", spec.video_level])
+            if spec.gop is not None:
+                burn_args.extend(["-g", str(spec.gop)])
+            if spec.keyint_min is not None:
+                burn_args.extend(["-keyint_min", str(spec.keyint_min)])
+
+        burn_args.extend(["-c:a", "copy"])
+        if ext == "mp4":
+            burn_args.extend(["-movflags", "+faststart"])
+        burn_args.append(str(captioned_path))
+
+        self.logger.info(
+            "caption_burn_start",
+            platform=platform,
+            ass=str(ass_path),
+            input=str(video_path),
+            output=str(captioned_path),
+        )
+
+        try:
+            run_ffmpeg(burn_args)
+        except FFmpegError as exc:
+            raise RuntimeError(
+                f"Caption burn-in failed for platform '{platform}': {exc}. "
+                "Verify that FFmpeg was built with libass support (--enable-libass)."
+            ) from exc
+
+        self.logger.info(
+            "caption_burn_complete",
+            platform=platform,
+            output=str(captioned_path),
+        )
+        return captioned_path
+
     def _supports_profile_level_flags(self, video_codec: str) -> bool:
         """Return whether a codec supports profile/level and GOP cadence flags."""
         return video_codec.strip().lower() in PROFILE_LEVEL_CODECS
 
+    @staticmethod
+    def _split_pix_fmt_from_extra_args(
+        encoder_extra_args: list[str],
+        spec: PlatformSpec,
+    ) -> tuple[str, list[str]]:
+        """Extract ``-pix_fmt`` override from encoder extra args.
+
+        When ``_resolve_video_encoder`` returns extra args (e.g. libx265
+        software fallback), those args may contain a ``-pix_fmt`` override
+        that must be applied instead of ``spec.pix_fmt``.
+
+        Args:
+            encoder_extra_args: Extra args list from ``_resolve_video_encoder``.
+            spec: Platform specification carrying the default ``pix_fmt``.
+
+        Returns:
+            Tuple of ``(effective_pix_fmt, remaining_extra_args)``.
+        """
+        if not encoder_extra_args:
+            return spec.pix_fmt, []
+        try:
+            pf_idx = encoder_extra_args.index("-pix_fmt")
+            effective_pix_fmt = encoder_extra_args[pf_idx + 1]
+            remaining_extra = encoder_extra_args[:pf_idx] + encoder_extra_args[pf_idx + 2 :]
+        except (ValueError, IndexError):
+            effective_pix_fmt = spec.pix_fmt
+            remaining_extra = list(encoder_extra_args)
+        return effective_pix_fmt, remaining_extra
+
+    def _resolve_video_encoder(
+        self,
+        spec: PlatformSpec,
+        platform: str,
+    ) -> tuple[str, list[str]]:
+        """Resolve the actual FFmpeg encoder and extra args for a platform spec.
+
+        Applies the hardware fallback chain:
+        - hevc_nvenc preferred codec → NVENC HEVC (if GPU present) else libx265 software
+        - h264_nvenc preferred codec → NVENC H.264 (if GPU present) else libx264 software
+        - AV1 (libsvtav1) → software only; logs warning if unavailable (av1_experimental must be set)
+        - All other codecs → use spec.video_codec verbatim
+
+        Returns:
+            Tuple of (encoder_name, extra_args) where extra_args are codec-specific flags.
+        """
+        codec = (spec.video_codec or "libx264").strip().lower()
+        hw = self._hw_encoders
+
+        # HEVC 10-bit NVENC → libx265 fallback chain
+        if codec == "hevc_nvenc":
+            if hw.nvenc_hevc:
+                self.logger.info(
+                    "encoder_selected",
+                    platform=platform,
+                    encoder="hevc_nvenc",
+                    reason="nvenc_available",
+                )
+                return "hevc_nvenc", []
+            # Software fallback: translate NVENC pix_fmt (p010le) to x265 equivalent
+            pix_fmt = spec.pix_fmt.strip().lower()
+            x265_pix = "yuv420p10le" if pix_fmt == "p010le" else "yuv420p"
+            profile = spec.video_profile or "main"
+            x265_params = f"profile={profile}"
+            self.logger.info(
+                "encoder_fallback",
+                platform=platform,
+                requested="hevc_nvenc",
+                fallback="libx265",
+                pix_fmt=x265_pix,
+                reason="nvenc_unavailable",
+            )
+            return "libx265", ["-pix_fmt", x265_pix, "-x265-params", x265_params]
+
+        # H.264 NVENC → libx264 fallback chain
+        if codec == "h264_nvenc":
+            if hw.nvenc_h264:
+                self.logger.info(
+                    "encoder_selected",
+                    platform=platform,
+                    encoder="h264_nvenc",
+                    reason="nvenc_available",
+                )
+                return "h264_nvenc", []
+            self.logger.info(
+                "encoder_fallback",
+                platform=platform,
+                requested="h264_nvenc",
+                fallback="libx264",
+                reason="nvenc_unavailable",
+            )
+            return "libx264", []
+
+        # AV1 — software-only experimental path; fall back to libx265 when unavailable.
+        if codec in AV1_CODECS:
+            resolved_codec: str = codec
+            extra: list[str] = []
+            if hw.software_av1:
+                self.logger.info(
+                    "encoder_selected",
+                    platform=platform,
+                    encoder=codec,
+                    reason="av1_experimental_enabled",
+                )
+            else:
+                resolved_codec = "libx265"
+                self.logger.warning(
+                    "av1_encoder_fallback",
+                    platform=platform,
+                    requested=codec,
+                    fallback="libx265",
+                    reason=(
+                        "libsvtav1 not found in FFmpeg build; falling back to libx265. "
+                        "Install FFmpeg with SVT-AV1 support to use AV1 encoding."
+                    ),
+                )
+            return resolved_codec, extra
+
+        # All other codecs (libx264, libx265, etc.) — verbatim
+        return codec, []
+
+    def _is_shortform_vertical(self, spec: PlatformSpec) -> bool:
+        """Return True when the platform spec targets a short-form vertical export (9:16).
+
+        Used to gate force_60fps_shortform RIFE uplift to TikTok/Reels/Shorts targets only.
+        Long-form exports (16:9, 1:1, etc.) are never affected.
+        """
+        return (spec.aspect_ratio or "").strip() in SHORT_FORM_ASPECT_RATIOS
+
+    def _apply_shortform_60fps_rife(
+        self,
+        input_video: Path,
+        output_dir: Path,
+        platform: str,
+    ) -> Path | None:
+        """Apply RIFE 30→60fps uplift for short-form vertical exports.
+
+        Returns path to the 60fps-uplifted video when successful, or None when
+        RIFE is unavailable/fails (render continues with original input).
+
+        This runs BEFORE branding/caption burn-in to ensure the interpolated
+        frames are the base for overlay operations.
+        """
+        smoothing = self.config.smoothing
+        rife = RifeBridge(script_path=smoothing.rife_script_path)
+
+        if not rife.available():
+            self.logger.warning(
+                "force_60fps_rife_unavailable",
+                platform=platform,
+                script_path=smoothing.rife_script_path,
+                action=(
+                    "Set smoothing.rife_script_path to a valid RIFE inference_img.py path "
+                    "to enable 60fps short-form uplift."
+                ),
+            )
+            return None
+
+        uplifted_path = output_dir / "_60fps_uplifted.mp4"
+        try:
+            rife.uplift_fps(
+                input_video,
+                uplifted_path,
+                num_frames=smoothing.rife_num_bridge_frames,
+            )
+            if uplifted_path.is_file() and uplifted_path.stat().st_size > 0:
+                self.logger.info(
+                    "force_60fps_uplift_complete",
+                    platform=platform,
+                    output=str(uplifted_path),
+                )
+                return uplifted_path
+        except (NotImplementedError, subprocess.SubprocessError, OSError) as exc:
+            self.logger.warning(
+                "force_60fps_uplift_failed",
+                platform=platform,
+                error=str(exc),
+            )
+        return None
+
     def _expected_probe_codec(self, configured_codec: str) -> str | None:
         """Map encoder names to ffprobe codec_name values for compliance checks."""
         normalized = configured_codec.strip().lower()
-        if normalized in {"h264", "libx264"}:
+        if normalized in H264_CODECS:
             return "h264"
-        if normalized in {"h265", "hevc", "libx265"}:
+        if normalized in H265_CODECS:
             return "hevc"
+        if normalized in AV1_CODECS:
+            return "av1"
         return None
 
     def _parse_numeric_probe_value(self, value: Any) -> float | None:
@@ -3108,3 +3791,179 @@ class RenderStage(Stage):
         self.logger.info("marketing_doc_generated", path=str(doc_path))
 
         return str(doc_path.relative_to(job_dir))
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Phase 9.8: Production sound-kit stinger mixing
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def _mix_stingers(
+        self,
+        video_path: Path,
+        output_dir: Path,
+        platform: str,
+        edit_plan: EditPlan | None,
+        src_duration: float,
+        *,
+        profile_name_override: str | None = None,
+    ) -> Path:
+        """Mix intro/transition/outro stingers into the rendered video.
+
+        Called after cut assembly (FFmpeg render pass) but before loudness
+        normalization so the ducked stinger mix participates in normalization.
+
+        Sound assets are resolved from the active BrandingProfile and/or
+        ``BrandingConfig.sound_kit`` paths.  Missing assets log a warning and
+        are skipped — the original ``video_path`` is returned unchanged if no
+        stingers are successfully applied.
+
+        Per-stinger normalization to canonical PCM avoids VBR/container timing
+        drift destabilising the sidechaincompress chain.
+
+        Args:
+            video_path: Path to the rendered video output (input for stinger pass).
+            output_dir: Platform output directory for intermediate files.
+            platform: Platform string (for logging context only).
+            edit_plan: Optional resolved edit plan supplying content-cut boundaries
+                for transition-stinger placement.
+            src_duration: Duration (seconds) of the main voice/video track.
+
+        Returns:
+            Path to the stinger-mixed output, or ``video_path`` unchanged when
+            no stingers were configured or all stinger operations were skipped.
+        """
+        branding_cfg = self.config.branding
+        kit_config = branding_cfg.sound_kit
+
+        # Phase 09-12 (GAP-7): Use profile name override from decisions when set.
+        active_profile_name = (
+            profile_name_override
+            if profile_name_override is not None
+            else branding_cfg.active_profile
+        )
+
+        # Resolve the active branding profile for sound-kit field access.
+        # best-effort: if profile loading fails we fall back to kit_config paths only.
+        profile_intro: Path | None = None
+        profile_transition: Path | None = None
+        profile_outro: Path | None = None
+
+        if active_profile_name:
+            try:
+                from podcast_pipeline.utils.branding import load_profile as _load_bp
+
+                branding_profile = _load_bp(
+                    active_profile_name,
+                    branding_cfg.branding_dir,
+                )
+                if branding_profile is not None:
+                    profile_intro = branding_profile.intro_sound
+                    profile_transition = branding_profile.transition_sound
+                    profile_outro = branding_profile.outro_sound
+            except (FileNotFoundError, ValueError, TypeError, OSError) as exc:
+                self.logger.warning(
+                    "sound_kit_profile_load_failed",
+                    profile=active_profile_name,
+                    error=str(exc),
+                )
+
+        # Resolve final paths (profile overrides kit_config)
+        intro_path, transition_path, outro_path = resolve_sound_kit_paths(
+            profile_intro=profile_intro,
+            profile_transition=profile_transition,
+            profile_outro=profile_outro,
+            kit_config=kit_config,
+            branding_dir=branding_cfg.branding_dir,
+        )
+
+        has_any_sound = any(p is not None for p in (intro_path, transition_path, outro_path))
+        if not has_any_sound:
+            self.logger.debug("sound_kit_no_assets_configured", platform=platform)
+            return video_path
+
+        current = video_path
+        # Use the same container/extension as the input so intermediates don't
+        # leak a mismatched container (e.g. .mkv) into final platform outputs.
+        container_ext = video_path.suffix or ".mkv"
+
+        # ── Intro stinger ──────────────────────────────────────────────────────
+        if intro_path is not None:
+            intro_out = output_dir / f"__with_intro{container_ext}"
+            result = apply_intro_stinger(
+                video_path=current,
+                stinger_path=intro_path,
+                output_path=intro_out,
+                kit_config=kit_config,
+                work_dir=output_dir,
+            )
+            if result is not None:
+                current = result
+                self.logger.info("sound_kit_intro_applied", platform=platform)
+            else:
+                self.logger.warning(
+                    "sound_kit_intro_skipped",
+                    platform=platform,
+                    path=str(intro_path),
+                )
+
+        # ── Transition stingers ────────────────────────────────────────────────
+        if transition_path is not None and edit_plan is not None:
+            # Collect content-cut boundaries for transition stinger placement.
+            content_boundaries: list[float] = []
+            for content_cut in edit_plan.content_cuts:
+                start_s = float(content_cut.start_seconds)
+                if start_s > 0.0:
+                    content_boundaries.append(start_s)
+            content_boundaries.sort()
+
+            if content_boundaries:
+                trans_out = output_dir / f"__with_transitions{container_ext}"
+                result = apply_transition_stingers(
+                    video_path=current,
+                    stinger_path=transition_path,
+                    cut_boundaries_s=content_boundaries,
+                    output_path=trans_out,
+                    kit_config=kit_config,
+                    work_dir=output_dir,
+                )
+                if result is not None:
+                    current = result
+                    self.logger.info(
+                        "sound_kit_transitions_applied",
+                        platform=platform,
+                        count=len(content_boundaries),
+                    )
+                else:
+                    self.logger.warning(
+                        "sound_kit_transitions_skipped",
+                        platform=platform,
+                        path=str(transition_path),
+                        boundaries=content_boundaries,
+                    )
+            else:
+                self.logger.debug(
+                    "sound_kit_no_content_cuts_for_transition",
+                    platform=platform,
+                )
+
+        # ── Outro stinger ──────────────────────────────────────────────────────
+        if outro_path is not None:
+            outro_out = output_dir / f"__with_outro{container_ext}"
+            result = apply_outro_stinger(
+                video_path=current,
+                stinger_path=outro_path,
+                output_path=outro_out,
+                kit_config=kit_config,
+                total_duration_s=src_duration,
+                work_dir=output_dir,
+            )
+            if result is not None:
+                current = result
+                self.logger.info("sound_kit_outro_applied", platform=platform)
+            else:
+                self.logger.warning(
+                    "sound_kit_outro_skipped",
+                    platform=platform,
+                    path=str(outro_path),
+                )
+
+        return current

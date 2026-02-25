@@ -1,0 +1,570 @@
+# Specification: Automated Branding, Captions, and Multi-Track Sync (V4)
+
+**Status:** Draft / Planning-Ready
+**Estimated Phase:** Phase 9 (Post-Intelligent Cut Quality)
+**Goal:** Transform the pipeline from a "Cutter" into a "Fully Branded Production Suite" with automated typography, watermarking, and perfect multi-track synchronization — while strictly avoiding over-engineering.
+
+---
+
+## Summary of Design Principles (V1 → V4 Evolution)
+
+1.  **No Agentic Media Orchestration:** LLMs will *not* dynamically write or chain FFmpeg filtergraphs in production. The pipeline will use deterministic Python scripts to apply Brand Kits safely and reliably. LLMs are strictly "Thinkers" (analysis, prompts, marketing copy); Python is the "Doer" (rendering, encoding, overlays).
+2.  **Thumbnail Generation (Imagen 4 + Local FLUX.1 Schnell):** Uses Imagen 4 GA models (`imagen-4.0-generate-001`) via Vertex AI for premium thumbnails. Local fallback uses **FP8/INT8 quantised** FLUX.1 Schnell on the RTX 5060 Ti's **16 GB GDDR7 VRAM** — enough for high-quality quantised inference without GGUF hacks.
+3.  **Audio Sync Bounds:** Cross-correlation is bounded to the first 60 seconds at 8 kHz mono downsample to prevent RAM/CPU spikes. Manual offset slider in the UI as fallback.
+4.  **Codec Strategy — HEVC Default, AV1 Experimental:** HEVC (H.265) 10-bit via 9th-gen NVENC is the default for "Ultra" quality. AV1 is retained strictly as an experimental toggle for YouTube long-form film grain synthesis. No other AV1 usage.
+5.  **Claude & MCP Server Roles:**
+    *   The **FFmpeg MCP Server** is strictly a Developer Experience (DX) tool. The production app does *not* depend on it.
+    *   **Claude** is integrated alongside Gemini/Kimi but strictly for *Analysis/Review* (edit plans, marketing copy, thumbnail prompts), not for executing video edits.
+6.  **Practical RIFE Guidance:** RIFE frame interpolation (Phase 8, already built) is only triggered for short-form vertical exports (TikTok/Reels/Shorts) to convert 30 fps → 60 fps. Disabled for long-form exports.
+
+---
+
+## 1. Dynamic Branding Profiles (Brand Kits)
+
+Instead of hardcoded values, the app will support **Branding Profiles**. This allows an operator to switch between "The Corporate Look," "The Viral Reel Look," or "The Podcast Classic" with one click.
+
+### Profile Schema (`BrandingProfile`)
+
+Each profile will be saved in a new `branding/` directory as a JSON/YAML file.
+
+| Field | Type | Description | Example |
+| :--- | :--- | :--- | :--- |
+| `profile_name` | `str` | Unique name for the kit | `"Neon Viral"` |
+| `brand_voice` | `str` | Creative Persona / Style Instructions | `"Bold, provocative, targeting Gen Z entrepreneurs."` |
+| `logo_path` | `Path` | Path to permanent PNG/SVG watermark | `./branding/assets/logo_white.png` |
+| `logo_placement` | `str` | Corner or coordinate | `top_right` or `x=10, y=10` |
+| `logo_opacity` | `float` | Visibility level (0.0–1.0) | `0.8` |
+| `font_path` | `Path` | Path to custom `.ttf` or `.otf` | `./branding/fonts/Montserrat-Bold.ttf` |
+| `caption_style` | `dict` | Text properties mapping | `{color: "#FFFFFF", size: 48, shadow: true}` |
+| `highlight_color` | `str` | Hex color for active word in captions | `#FFFF00` |
+| `bg_padding` | `str` | Vertical offset for mobile-safe zones | `15%` (Avoids TikTok UI) |
+| `thumbnail_border` | `dict` | Hex color and width for frames | `{color: "#00FF00", width: 20}` |
+| `platform_overrides` | `dict` | Per-platform style overrides | `{tiktok: {caption_style: {...}}}` |
+
+**Implementation:** Pydantic `BaseModel` in `src/podcast_pipeline/models/branding.py`, validated at load time. Profiles serialised to `branding/<profile_name>.yaml`.
+
+### 1.1 The "Master Persona" Injection
+
+The `brand_voice` field will be injected as a **System Instruction** during the `Analyze` stage. This requires modifying `BaseProvider._build_prompt()` (in `providers/base.py`) to accept an optional `brand_voice: str` parameter and prepend it to the analysis prompt.
+
+*   **Marketing Copy**: The AI will use your instructions to decide between "Funny/Witty," "Academic/Professional," or "Aggressive/Viral" tones.
+*   **Thumbnail Prompts**: If you specify *"Minimalist, high-key photography,"* it will ensure all Imagen 4 prompts follow that aesthetic.
+*   **Clip Selection**: The AI will prioritise moments matching your persona.
+
+### 1.2 Per-Platform Branding Registry
+
+The `BrandingProfile` can include **Platform Overrides** via the `platform_overrides` dict. When you select export targets (e.g., YouTube + TikTok), the render stage automatically merges platform-specific overrides onto the base profile.
+
+**Automatic Routing**: The render stage reads the active `BrandingProfile`, checks for a key matching the platform name (e.g., `tiktok`), and merges overrides. If none found, falls back to the base profile.
+
+---
+
+## 2. Automated Caption Engine (The "Viral" Look)
+
+This feature leverages the word-level timestamps already generated by the `Transcribe` stage (stored in `transcribe/word_alignment.json`).
+
+### Technical Implementation: ASS (Advanced Substation Alpha)
+
+While `SRT` is simple, we will use **ASS** for rendering because it supports:
+*   **Per-word coloring**: Highlighting the active word as it's spoken (using `\1c` override tags).
+*   **Fixed positioning**: Ensuring text stays inside "social media safe zones" (using `\an` alignment and `\pos` tags).
+*   **Animations**: Adding subtle pop-in or scale effects to words for high engagement (using `\t` transform tags).
+
+### Workflow
+
+1.  **Generate**: A new helper in `src/podcast_pipeline/utils/captions.py` converts the word-alignment JSON into a temporary `.ass` file with per-word timing events.
+2.  **Apply Styles**: The helper injects colors, fonts, and safe-zone positioning from the active **Branding Profile**. One ASS style template per aspect ratio (horizontal 16:9, vertical 9:16, square 1:1).
+3.  **Burn-In**: FFmpeg renders the captions directly onto the video using the `-vf ass=temp.ass` filter. This uses `libass` (not the `subtitles` filter) for full ASS override support.
+
+### Safe Zone Templates
+
+| Aspect Ratio | Alignment | Margin Bottom | Font Scale | Usage |
+| :--- | :--- | :--- | :--- | :--- |
+| 16:9 (YouTube) | Bottom center (`\an2`) | 60 px | 100% | Long-form |
+| 9:16 (TikTok/Reels) | Center (`\an5`), offset up | 15% from bottom | 130% | Short-form vertical |
+| 1:1 (LinkedIn) | Bottom center (`\an2`) | 40 px | 110% | Square |
+
+---
+
+## 3. Multi-Track Sync & Clap Detection
+
+Syncing high-quality external audio with camera video is a major pain point. We will automate this using **Bounded Audio Cross-Correlation**.
+
+### The "Clap Detector" Algorithm
+
+*   **Step A (Downsample & Bound)**: Convert the first 60 seconds of all tracks to 8 kHz mono using `librosa.resample()` (already a project dependency from Phase 8) to prevent RAM/CPU spikes.
+*   **Step B (Peak Alignment)**: Scan for a sudden, sharp volume peak (the "clap") by looking for samples exceeding 3× the RMS of the bounded window. Align the tracks roughly around those peaks.
+*   **Step C (Fine Sync)**: Use `scipy.signal.correlate(mode='full')` on the bounded 60-second chunks to find the exact sample offset. Normalize the correlation before finding `argmax` to handle differing gain levels.
+*   **Step D (Application)**: Apply the calculated offset (in milliseconds) to the high-res original files using FFmpeg's `-itsoffset` flag. Write the offset to the job manifest for reproducibility.
+
+### UI Fallback: The Manual Sync Slider
+
+Because real-world audio is messy (no clap, background noise), automated sync will sometimes fail. The Streamlit UI will include a **Manual Offset Slider** (±5000 milliseconds). If the auto-sync is wrong, the operator simply slides it until it looks right.
+
+**New dependencies:** `scipy` (for `signal.correlate`). `librosa` is already installed via Phase 8 GPU extras.
+
+---
+
+## 4. Integrated Sound Sets (Stingers & Transitions)
+
+The app will include a "Sound Library" folder (`branding/sounds/`). Operators can drop in WAV files used for specific "Production Events."
+
+### Event Triggers (`config.yaml`)
+
+*   **Intro Stinger**: Plays `intro_music.wav` at the very start of the render.
+*   **Transition "Whoosh"**: Automatically plays `whoosh.wav` every time the video cuts between speakers or segments (keyed off `ContentCutRange` boundaries in the edit plan).
+*   **Outro Theme**: Fades in `outro.wav` during the last 5 seconds.
+
+### Automated Ducking
+
+The pipeline will use FFmpeg's `sidechaincompress` filter to automatically duck the spoken podcast audio slightly when a sound effect plays. The attack/release parameters will be hardcoded to standard podcasting values:
+*   Attack: 5 ms
+*   Release: 200 ms
+*   Ratio: 4:1
+*   Threshold: -30 dB
+
+This avoids over-engineering while preventing audio "pumping" between breaths.
+
+---
+
+## 5. AI Thumbnail Studio (Imagen 4 & Local FLUX.1 Schnell)
+
+Seamlessly generate customised thumbnail art without leaving the app.
+
+### Option 1: The Premium API (Imagen 4 — GA)
+
+*   Google's **Imagen 4** via Vertex AI is the default for high-end thumbnails. GA models: `imagen-4.0-generate-001` (standard), `imagen-4.0-fast-generate-001` (faster, lower cost), `imagen-4.0-ultra-generate-001` (highest quality).
+*   It offers native text rendering, meaning you can ask the AI to write the episode title directly into the image.
+*   **Workflow**: Gemini/Claude `Analyze` generates 3 prompts → Imagen 4 API generates 4 images → Images saved to `output/thumbnails/` (cached by prompt hash to avoid re-billing on pipeline reruns).
+*   **Auth**: Requires `GOOGLE_APPLICATION_CREDENTIALS` or Vertex AI service account.
+
+### Option 2: The Fast/Free Local Model (FLUX.1 Schnell — Quantised)
+
+*   For users who want free, local thumbnail generation.
+*   **VRAM Budget**: The RTX 5060 Ti has **16 GB GDDR7** (128-bit, 448 GB/s bandwidth). FLUX.1 Schnell at full BF16 precision requires ~33 GB VRAM — too large. However, **FP8 or INT8 quantisation** (via `torchao` or `optimum-quanto`) brings VRAM usage down to ~16 GB with image quality nearly identical to FP16 (the best quality/VRAM trade-off available). GGUF-Q8 (~6–8 GB) is also an option if headroom is needed for other processes.
+*   **VRAM Strategy**: The app will ensure `faster-whisper` and any other GPU models are unloaded from VRAM *before* the diffusion model is loaded to prevent OOM crashes. Use `torch.cuda.empty_cache()` + explicit model deletion. A VRAM preflight check will verify at least 14 GB is free before loading.
+*   **Workflow**: Gemini/Claude `Analyze` generates 3 prompts → Local quantised model loaded into VRAM → Generates images locally in <10 seconds (4 inference steps for Schnell) → Model unloaded from VRAM.
+*   **Dependency**: `diffusers` + `optimum-quanto` (for FP8/INT8 quantisation). Added as optional `[thumbnails]` extra.
+
+### Auto-Branding
+
+All generated images (API or local) are automatically framed with the `thumbnail_border` and logo from the active `BrandingProfile` using FFmpeg image overlays before final review.
+
+---
+
+## 6. Streamlit UI/UX Integration
+
+To make these "pro" features accessible, the Streamlit interface will be updated.
+
+### 6.1 The "Brand Studio" Tab (Global Settings)
+
+*   **Profile Manager**: A dropdown to create, save, or delete "Look Kits."
+*   **Visual Assets**: Drag-and-drop uploaders for Logos and Fonts.
+*   **Persona Box**: Text area for your **Brand Voice** system prompt.
+
+### 6.2 The "Production" Sidebar (Review Stage)
+
+*   **Caption Stylist**: Toggle "Word-Level Highlighting" and adjust font size.
+*   **Thumbnail Visionary**: Thumb gallery + "Apply Branding" toggle.
+*   **Audio Mixer**: Manual Audio Sync Slider, Music Dropdowns, Auto-Ducking toggle.
+
+---
+
+## 7. High-Fidelity Video Quality (The "Ultra" Export)
+
+To compete with high-end production houses, the pipeline will support professional-grade encoding standards.
+
+### HEVC 10-Bit Default
+
+For podcast video (mostly talking-head, low motion), the codec choice is explicitly **HEVC (H.265) 10-bit** in an **MP4** container.
+*   **Why HEVC?**: The RTX 5060 Ti (16 GB GDDR7, 4608 CUDA cores) has a **9th-generation NVENC** encoder with a 5% quality improvement for HEVC encoding over prior generations. It also adds **4:2:2 chroma** encoding support. At 8–12 Mbps for 1080p, HEVC is visually lossless and halves the file size of H.264.
+*   **Hardware Encoding**: Use `hevc_nvenc` with `-profile:v main10 -pix_fmt p010le` for 10-bit. The RTX 5060 Ti can also encode 8-bit content as 10-bit for an additional ~3% compression efficiency.
+*   **Software Fallback**: `libx265` with `--profile main10` when no GPU is available.
+*   **Compatibility Fallback**: H.264 via `libx264` remains available as a "Legacy/Fast" toggle.
+
+### AV1 (Experimental Toggle)
+
+AV1 is strictly an **experimental toggle** for YouTube long-form exports to test its "film grain synthesis" for a cinematic look.
+*   **Encoder**: Software `libsvtav1` only. AV1 NVENC on Blackwell exists but has known artifact issues with UHQ + high bit-depth modes.
+*   **Usage**: Opt-in via `config.yaml` — `experimental_av1: true`. Not exposed in the default UI.
+*   **HEVC 10-bit remains the uncontested default.**
+
+### Practical RIFE Integration (Phase 8 — Already Built)
+
+*   **Usage**: RIFE (via existing `utils/rife_bridge.py` and `SmoothingConfig.rife_*` settings) is only triggered for short-form vertical exports (TikTok/Reels/Shorts) to boost 30 fps → 60 fps.
+*   **Constraint**: Explicitly skipped for long-form (YouTube/Spotify) exports.
+*   **Integration**: The render stage already conditionally invokes `RifeBridge` for pose-matched transitions. Phase 9 adds a global "force 60fps for short-form" flag to `SmoothingConfig`.
+
+---
+
+## 8. FFmpeg Media Toolkit (Deterministic App Logic)
+
+The app will use a shared **Python media toolkit library** (`src/podcast_pipeline/utils/ffmpeg_toolkit.py`). **Crucially:** LLMs will *not* be given agentic control over these tools in production. The Render pipeline must remain 100% deterministic.
+
+### 8.1 Two Distinct Modes of Operation
+
+**Mode A: Developer Mode (Building the App)**
+*   **Setup:** Boot the `ffmpeg-toolkit` MCP server and open Claude Code in your terminal.
+*   **Workflow:** Ask Claude to run tests via MCP tools. (e.g., *"Claude, use `burn_captions` to test this subtitle file on a test video and check the padding."*)
+*   **Why?** Rapid prototyping of complex FFmpeg commands without typing massive terminal strings.
+
+**Mode B: Production Mode (Running the App)**
+*   **Setup:** Click "Run Full Pipeline" in the Streamlit UI.
+*   **Workflow:** Pipeline Python scripts read the `BrandingProfile` and call toolkit wrappers directly: `from podcast_pipeline.utils.ffmpeg_toolkit import transcode`.
+*   **Why?** 100% deterministic reliability. The AI provides the JSON plan; Python does the rendering.
+
+### 8.2 Architecture: Python First, API Second
+
+```
+                          +-------------------+
+                          |  ffmpeg_toolkit    |  <-- Core Python library
+                          |  (14 tools)        |  <-- Typed functions, validated I/O
+                          +--------+----------+
+                                   |
+              +--------------------+--------------------+
+              |                                         |
+     +--------v-------+                        +--------v--------+
+     | MCP Server     |                        | Direct Python   |
+     | (Claude Code)  |                        | (Pipeline code) |
+     | DEVELOPER USE  |                        | PRODUCTION USE  |
+     +----------------+                        +-----------------+
+```
+
+### 8.3 Tool Inventory (14 Tools, 5 Groups)
+
+Every tool follows the same pattern: typed Python function with Pydantic input/output models, exposed as both an MCP tool and an LLM function schema.
+
+#### Group 1: Probe & Inspect
+
+| Tool | Purpose | Key Parameters | Returns |
+| :--- | :--- | :--- | :--- |
+| `probe_media` | Full metadata extraction | `path` | Codec, resolution, bitrate, duration, color space, HDR info, stream list |
+| `extract_frame` | Screenshot at timestamp | `path`, `timestamp_s`, `output_path` | PNG image path |
+| `detect_hardware_encoders` | List available GPU encoders | *(none)* | Available encoders: NVENC, QuickSync, VideoToolbox, software fallbacks |
+
+**Migration note**: `probe_media` subsumes the existing `utils/ffmpeg.run_ffprobe()` and `get_video_metadata()`. The existing functions remain as thin wrappers calling the toolkit internally.
+
+#### Group 2: Encode & Transcode
+
+| Tool | Purpose | Key Parameters | Returns |
+| :--- | :--- | :--- | :--- |
+| `transcode` | High-fidelity encoding | `input_path`, `output_path`, `codec` (h264/hevc/av1), `quality_preset`, `bit_depth` (8/10), `film_grain` (0–50, AV1 only), `hw_accel` (auto/nvenc/none) | Output path, file size, encode time |
+| `normalize_loudness` | EBU R128 per-platform | `input_path`, `output_path`, `target_lufs`, `true_peak_dbtp` | Output path, measured LUFS before/after |
+
+**Adaptive Hardware Selection**: `hw_accel: auto` calls `detect_hardware_encoders` once (cached) and selects: NVENC for HEVC/H.264 → software `libx265`/`libsvtav1` fallback.
+
+#### Group 3: Filter & Overlay
+
+| Tool | Purpose | Key Parameters | Returns |
+| :--- | :--- | :--- | :--- |
+| `burn_captions` | Render ASS subtitles onto video | `video_path`, `ass_path`, `output_path`, `force_style` (optional) | Output path |
+| `overlay_image` | Logo/watermark compositing | `video_path`, `image_path`, `output_path`, `position`, `opacity`, `fade_in_s`, `fade_out_s`, `scale` | Output path |
+| `apply_filtergraph` | Raw filtergraph execution (advanced) | `input_path`, `output_path`, `filtergraph`, `validate_first` (default true) | Output path, applied filters list |
+| `denoise` | Sensor noise cleanup | `input_path`, `output_path`, `method` (hqdn3d/nlmeans), `strength` (light/medium/heavy) | Output path |
+
+**Filtergraph Validation**: `apply_filtergraph` with `validate_first: true` runs a dry-run parse before execution, catching syntax errors without touching the output file.
+
+#### Group 4: Edit & Assemble
+
+| Tool | Purpose | Key Parameters | Returns |
+| :--- | :--- | :--- | :--- |
+| `trim_segment` | Frame-accurate cut | `input_path`, `output_path`, `start_s`, `end_s`, `copy_codec` (bool) | Output path, actual start/end |
+| `concat_segments` | Join clips with transitions | `segments` (list), `output_path`, `transition` (none/crossfade/dissolve), `transition_duration_s` | Output path, total duration |
+| `mix_audio` | Overlay music/stingers with ducking | `speech_path`, `music_path`, `output_path`, `music_volume_db`, `duck_enabled`, `duck_threshold_db`, `duck_ratio`, `fade_in_s`, `fade_out_s` | Output path |
+| `sync_tracks` | Cross-correlation alignment | `reference_path`, `external_path`, `output_path`, `search_window_s` (default 60) | Output path, detected offset (ms), confidence |
+
+**Sync Algorithm**: `sync_tracks` implements the four-step process from Section 3: downsample → peak detect → `scipy.signal.correlate` → apply offset.
+
+#### Group 5: Package & Deliver
+
+| Tool | Purpose | Key Parameters | Returns |
+| :--- | :--- | :--- | :--- |
+| `package_hls` | VOD HLS with variant ladder | `input_path`, `output_dir`, `segment_duration`, `variants` (list of bitrate/resolution pairs) | Master playlist path, segment count, total size |
+
+### 8.4 Claude & Multi-LLM Roles (Analysis Only)
+
+Claude (via Anthropic SDK), Gemini, and Kimi are strictly responsible for the "Brain" work in the `Analyze` and `Review` stages:
+*   Generating the JSON edit plan (where to cut).
+*   Writing marketing copy.
+*   Prompt generation for Imagen 4 thumbnails.
+
+They hand off the completed JSON plan to the Python rendering engine. The "Thinker" stays separate from the "Doer."
+
+### 8.5 The FFmpeg MCP Server (Developer DX Only)
+
+The `podcast_pipeline.mcp.ffmpeg_server` will be built as a **Developer Experience tool only.** It allows you to use Claude Code or Cursor to rapidly test FFmpeg wrappers during development. *The production Streamlit app and CLI will never call the MCP server.*
+
+#### SDK Choice: FastMCP
+
+Use **FastMCP** (`fastmcp` package), not the low-level `mcp` SDK. Reasons:
+*   **Auto-schema generation**: `@mcp.tool` decorator auto-generates `inputSchema` from Python function signatures and type hints. Since our toolkit functions already use typed parameters, this means zero manual JSON Schema writing.
+*   **Pydantic input support**: Complex inputs like `SearchQuery(BaseModel)` are natively supported — FastMCP generates the MCP schema from the Pydantic model.
+*   **`output_schema` support**: Use `@mcp.tool(output_schema=...)` for tools that return structured data (e.g., `probe_media` returns codec/resolution/bitrate as a validated dict). This lets Claude Code parse results programmatically.
+*   **Lifespan management**: Use FastMCP's `lifespan` context manager to cache the `detect_hardware_encoders` result once at startup, making it available to all tools via `ctx.lifespan_context`.
+*   **Runs via stdio**: Default transport for Claude Code. No HTTP server needed.
+
+#### Server Structure
+
+```python
+# src/podcast_pipeline/mcp/ffmpeg_server.py
+from fastmcp import FastMCP
+from podcast_pipeline.utils import ffmpeg_toolkit as tk
+
+mcp = FastMCP(
+    name="ffmpeg-toolkit",
+    instructions="FFmpeg media toolkit for podcast production. Dev use only.",
+    version="0.1.0",
+)
+
+# All 14 tools exposed — FastMCP auto-generates schemas from signatures
+@mcp.tool
+def probe_media(path: str) -> dict:
+    """Full metadata extraction from a media file."""
+    return tk.probe_media(Path(path)).model_dump()
+
+@mcp.tool
+def transcode(input_path: str, output_path: str, codec: str = "hevc",
+              quality_preset: str = "medium", bit_depth: int = 10,
+              hw_accel: str = "auto") -> dict:
+    """Transcode video with codec/quality/hardware selection."""
+    return tk.transcode(...).model_dump()
+
+# ... remaining 12 tools follow the same thin-wrapper pattern
+```
+
+#### Design Decisions
+
+| Decision | Choice | Rationale |
+| :--- | :--- | :--- |
+| **All 14 tools exposed** | Yes | Even rarely-used tools (`detect_hardware_encoders`, `package_hls`) are useful for debugging and verification from Claude Code. No reason to filter. |
+| **Structured output** | Use `output_schema` on probe/transcode/sync tools | Lets Claude Code parse results as JSON, not just text. Tools like `overlay_image` that just return a file path can use plain text. |
+| **Long-running tools** | Block until complete, no progress streaming | MCP has no built-in progress protocol. `transcode` and `sync_tracks` may run for minutes — acceptable for dev use since the developer is waiting interactively. If needed, FFmpeg's `-progress` pipe can be added later. |
+| **Error handling** | Raise `FFmpegError` — FastMCP surfaces it to Claude Code | No special MCP error mapping needed. FastMCP translates Python exceptions into MCP error responses. |
+| **Shared state** | Hardware encoder cache via lifespan context | `detect_hardware_encoders` runs once at startup, cached in `ctx.lifespan_context["hw_encoders"]` for all tools. |
+
+#### MCP Configuration
+
+```jsonc
+// .mcp.json (project-level)
+{
+  "mcpServers": {
+    "ffmpeg-toolkit": {
+      "command": "uv",
+      "args": ["run", "python", "-m", "podcast_pipeline.mcp.ffmpeg_server"],
+      "cwd": "/home/kngpnn/dev/podcast-pipeline-deepagent"
+    }
+  }
+}
+```
+
+#### All 14 MCP Tools (Quick Reference)
+
+| # | MCP Tool Name | Input Types | Output | Structured? |
+| :--- | :--- | :--- | :--- | :--- |
+| 1 | `probe_media` | `path: str` | Codec, resolution, bitrate, streams | Yes |
+| 2 | `extract_frame` | `path: str, timestamp_s: float, output_path: str` | PNG file path | No (path) |
+| 3 | `detect_hardware_encoders` | *(none)* | Available encoders list | Yes |
+| 4 | `transcode` | `input_path, output_path, codec, quality_preset, bit_depth, hw_accel` | Output path, file size, encode time | Yes |
+| 5 | `normalize_loudness` | `input_path, output_path, target_lufs, true_peak_dbtp` | Output path, LUFS before/after | Yes |
+| 6 | `burn_captions` | `video_path, ass_path, output_path, force_style?` | Output path | No (path) |
+| 7 | `overlay_image` | `video_path, image_path, output_path, position, opacity, fade_in_s, fade_out_s, scale` | Output path | No (path) |
+| 8 | `apply_filtergraph` | `input_path, output_path, filtergraph, validate_first` | Output path, applied filters | Yes |
+| 9 | `denoise` | `input_path, output_path, method, strength` | Output path | No (path) |
+| 10 | `trim_segment` | `input_path, output_path, start_s, end_s, copy_codec` | Output path, actual start/end | Yes |
+| 11 | `concat_segments` | `segments: list[str], output_path, transition, transition_duration_s` | Output path, total duration | Yes |
+| 12 | `mix_audio` | `speech_path, music_path, output_path, music_volume_db, duck_enabled, duck_threshold_db, duck_ratio, fade_in_s, fade_out_s` | Output path | No (path) |
+| 13 | `sync_tracks` | `reference_path, external_path, output_path, search_window_s` | Output path, offset ms, confidence | Yes |
+| 14 | `package_hls` | `input_path, output_dir, segment_duration, variants: list` | Master playlist path, segment count, total size | Yes |
+
+---
+
+## 9. Claude as Analysis Provider
+
+### 9.1 Protocol Conformance
+
+Claude must implement the existing `AnalysisProvider` protocol defined in `src/podcast_pipeline/providers/base.py`:
+
+```python
+# Existing protocol (unchanged)
+class AnalysisProvider(Protocol):
+    name: str
+    model: str
+    supports_video: bool
+
+    def analyze(self, video_path: Path, transcript: dict[str, Any]) -> AnalysisResult: ...
+    def is_available(self) -> bool: ...
+```
+
+The Claude provider will subclass `BaseProvider` (which provides `_build_prompt()` and trend context injection) and implement `analyze()` and `is_available()`.
+
+### 9.2 Implementation
+
+```python
+# src/podcast_pipeline/providers/claude_provider.py
+class ClaudeProvider(BaseProvider):
+    name = "claude"
+    model = "claude-sonnet-4-6"  # Best cost/performance for analysis
+    supports_video = False  # Claude does not accept video uploads directly
+
+    def analyze(self, video_path: Path, transcript: dict[str, Any]) -> AnalysisResult:
+        # Uses anthropic SDK with tool_use for structured JSON output
+        # Falls back to transcript-only analysis (no video frames)
+        ...
+
+    def is_available(self) -> bool:
+        return bool(os.getenv("ANTHROPIC_API_KEY"))
+```
+
+**Key decisions:**
+*   **SDK**: `anthropic>=0.80.0` — the **standard Anthropic Python SDK**, not the Claude Agent SDK. The Agent SDK (`claude-agent-sdk-python`) is designed for building autonomous agents with filesystem access, tool execution loops, session persistence, and subagent orchestration — overkill for our use case. Our provider just needs stateless request → structured JSON response, which is exactly what the standard SDK's `tool_use` / structured output handles. The standard SDK is actively maintained and is not being deprecated in favor of the Agent SDK; they serve different purposes.
+*   **Auth**: `ANTHROPIC_API_KEY` env var. Added to `APIKeysConfig.from_env()`.
+*   **Model**: `claude-sonnet-4-6` (Sonnet 4.6) — best balance of cost, speed, and analysis quality. `claude-haiku-4-5` available as a fast/cheap option for batch operations.
+*   **`supports_video = False`**: Claude API does not accept direct video upload like Gemini. The provider will use transcript-only analysis (same as the existing Kimi degraded mode).
+*   **Registration**: Add `"claude"` to `SUPPORTED_MODEL_PROVIDERS` in `config/settings.py`. Add `SUPPORTED_CLAUDE_MODELS = {"claude-sonnet-4-6", "claude-haiku-4-5", "claude-opus-4-6"}`.
+
+### 9.3 Config Changes
+
+```python
+# In config/settings.py — additions needed:
+SUPPORTED_MODEL_PROVIDERS = {"gemini", "kimi", "claude"}  # Add "claude"
+SUPPORTED_CLAUDE_MODELS = {"claude-sonnet-4-6", "claude-haiku-4-5", "claude-opus-4-6"}
+
+class APIKeysConfig(BaseModel):
+    gemini: str | None = None
+    kimi: str | None = None
+    openai: str | None = None
+    youtube: str | None = None
+    anthropic: str | None = None  # NEW
+```
+
+---
+
+## 10. Integration with Existing Codebase
+
+Phase 9 builds directly on top of existing infrastructure. This section maps every new feature to the files it touches or extends.
+
+### 10.1 FFmpeg Toolkit Migration
+
+| Existing Code | Phase 9 Action | Notes |
+| :--- | :--- | :--- |
+| `utils/ffmpeg.py` → `run_ffmpeg()` | **Keep as-is.** Toolkit tools call `run_ffmpeg()` internally. | No breaking changes to existing callers. |
+| `utils/ffmpeg.py` → `run_ffprobe()` | **Keep as-is.** `probe_media` toolkit tool wraps it. | Thin wrapper adds Pydantic output model. |
+| `utils/ffmpeg.py` → `get_video_metadata()` | **Keep as-is.** `probe_media` delegates to it. | Existing render stage unaffected. |
+| `utils/ffmpeg.py` → `extract_audio()` | **Keep as-is.** `sync_tracks` uses it for downsampling. | |
+| `utils/ffmpeg.py` → `create_proxy()` | **Keep as-is.** Unchanged. | |
+| *(new)* `utils/ffmpeg_toolkit.py` | **New file.** Contains all 14 toolkit functions. | Imports from `utils/ffmpeg.py` — does not replace it. |
+| *(new)* `mcp/ffmpeg_server.py` | **New file.** MCP wrapper around toolkit functions. | Dev-only, not imported by production code. |
+
+### 10.2 Provider & Config Changes
+
+| Existing Code | Phase 9 Action | Notes |
+| :--- | :--- | :--- |
+| `providers/base.py` → `BaseProvider._build_prompt()` | **Extend**: Add optional `brand_voice` kwarg. | Backwards-compatible — default is `None`. |
+| `providers/base.py` → `AnalysisProvider` protocol | **Unchanged.** Claude provider conforms to it. | |
+| `config/settings.py` → `SUPPORTED_MODEL_PROVIDERS` | **Add** `"claude"` to the set. | |
+| `config/settings.py` → `APIKeysConfig` | **Add** `anthropic: str | None = None` field + `from_env()`. | |
+| `config/settings.py` → `PlatformSpec` | **Already supports** H265 codec, `main10` profile, `yuv420p10le`. | Only need new default profiles for "Ultra" HEVC. |
+| `config/settings.py` → `PlatformSpecs` | **Add** HEVC Ultra variants alongside existing H.264 defaults. | Existing H.264 profiles remain as fallbacks. |
+| `config/settings.py` → `SmoothingConfig` | **Add** `force_60fps_shortform: bool = False` flag. | RIFE already wired via `rife_enabled`. |
+| `config/settings.py` → `Config` | **Add** `branding: BrandingConfig` field. | New top-level config section. |
+
+### 10.3 Render Stage Integration
+
+| Feature | Render Stage Touchpoint | Implementation |
+| :--- | :--- | :--- |
+| **Branding overlays** | After cut assembly, before final encode | New `_apply_branding()` method calls `overlay_image` toolkit. |
+| **Caption burn-in** | After branding overlay | New `_burn_captions()` method calls `burn_captions` toolkit. |
+| **HEVC 10-bit encode** | Replace `libx264` in platform spec | New `PlatformSpec` defaults with `hevc_nvenc` / `libx265`. |
+| **Sound stingers** | After cut assembly | New `_mix_stingers()` method calls `mix_audio` toolkit. |
+| **RIFE 60fps (short-form)** | Existing conditional in render | Add global flag check from `SmoothingConfig`. |
+
+### 10.4 New Files
+
+| File | Purpose |
+| :--- | :--- |
+| `src/podcast_pipeline/models/branding.py` | `BrandingProfile` Pydantic model |
+| `src/podcast_pipeline/utils/ffmpeg_toolkit.py` | 14 toolkit functions (Groups 1–5) |
+| `src/podcast_pipeline/utils/captions.py` | ASS caption generator from word alignments |
+| `src/podcast_pipeline/providers/claude_provider.py` | Claude `AnalysisProvider` implementation |
+| `src/podcast_pipeline/mcp/ffmpeg_server.py` | MCP server wrapping toolkit (dev-only) |
+| `src/podcast_pipeline/mcp/__init__.py` | Package init |
+| `src/podcast_pipeline/utils/sync.py` | Cross-correlation audio sync |
+| `src/podcast_pipeline/utils/thumbnails.py` | Imagen 4 API + local FLUX.1 thumbnail generation |
+
+---
+
+## 11. Known Hard Problems
+
+| Area | Why It's Hard | Mitigation |
+| :--- | :--- | :--- |
+| **Audio sync (cross-correlation)** | Real recordings: no clap, late starts, background music, non-linear clock drift, mismatched sample rates. | Start with the happy path (clear clap in first 30s). Bound to 60s at 8 kHz. Add manual offset slider fallback. Log confidence score so operator knows when to override. |
+| **ASS caption rendering per aspect ratio** | Getting word-level highlights to look right across 16:9, 9:16, and 1:1 from one transcript. Font sizes, safe zones, and line-break positions all differ. | Build one ASS template per aspect ratio. Don't try to auto-derive — hand-tune safe zones per platform. Test with long words and fast speech. |
+| **Blackwell NVENC HEVC 10-bit** | RTX 5060 Ti (9th-gen NVENC) has known artifact issues with `UHQ + highbitdepth` mode in HEVC. | Probe hardware at startup via `detect_hardware_encoders`. Default to `p7` preset (not `uhq`) for HEVC 10-bit. Always have `libx265` software fallback. Test early with real podcast footage and log visual diffs. |
+| **AV1 NVENC stability** | AV1 NVENC on Blackwell is still maturing. UHQ mode has reported issues. | Use software `libsvtav1` only. Do not expose AV1 NVENC until SDK 13.x stabilises. Keep AV1 as experimental toggle only. |
+| **FLUX.1 VRAM management** | Full BF16 FLUX.1 Schnell needs ~33 GB — exceeds 16 GB card. FP8/INT8 quantised fits at ~16 GB but leaves zero headroom if other models are loaded. | Use FP8/INT8 quantisation via `torchao` or `optimum-quanto`. Ensure all other VRAM consumers (faster-whisper, cached models) are fully unloaded first. Add a VRAM preflight check (require ≥14 GB free). Fall back to GGUF-Q8 (~6–8 GB) if headroom needed. |
+| **Pipeline state/recovery** | Phase 9 makes the pipeline more DAG-like. When a mid-chain step fails (e.g., caption burn-in after branding), what's the recovery? | Each toolkit tool writes output to a unique path. Re-running a step overwrites only that step's output. Extend the existing `StageResult` to track sub-step completion within render. |
+| **Brand voice prompt injection** | The `brand_voice` field is user-supplied free text injected into LLM prompts. | Sanitise the field (strip control characters, limit to 2000 chars). Place it in a clearly delimited section of the prompt. Don't let it override structural instructions. |
+
+---
+
+## 12. Cost & Technology Reference
+
+| Tech | Category | Cost | Notes |
+| :--- | :--- | :--- | :--- |
+| **FFmpeg drawtext/ass** | Captions | FREE (Open Source) | Professional grade. Requires `libass` for full ASS support. |
+| **Imagen 4 API** (Vertex AI) | AI Art | Pay-per-image (~$0.02–0.04/image) | GA models available. Cache by prompt hash. |
+| **FLUX.1 Schnell** (local) | AI Art | FREE (Apache 2.0) | FP8/INT8 quantised for 16 GB VRAM cards. |
+| **Google Fonts** | Typography | FREE | High quality, many weights. |
+| **SciPy** | Audio Sync | FREE | `scipy.signal.correlate` for cross-correlation. |
+| **librosa** | Audio Processing | FREE | Already installed (Phase 8 GPU extras). |
+| **Anthropic Python SDK** | Claude Provider | API credits ($3/$15 per M tokens Sonnet) | `anthropic>=0.80.0`. Personal use. |
+| **FastMCP** | Dev Tooling | FREE (Open Source) | `fastmcp` — auto-schema generation from typed Python functions. |
+
+---
+
+## 13. Build Strategy & Order of Operations
+
+### Build Order
+
+1.  **Phase 9.1**: Build the **FFmpeg Media Toolkit** core Python library (14 tools in `utils/ffmpeg_toolkit.py`). Migrate existing `utils/ffmpeg.py` callers to use toolkit where appropriate. All 14 tools pass unit tests.
+2.  **Phase 9.2**: Add the **FFmpeg MCP Server** wrapper (`mcp/ffmpeg_server.py`) to speed up development with Claude Code.
+3.  **Phase 9.3**: Add **Claude as an Analysis Provider** (Anthropic SDK). Implement `ClaudeProvider`, register in config, pass existing `AnalysisProvider` test suite.
+4.  **Phase 9.4**: Implement the **High-Fidelity Codec** profiles (HEVC 10-bit NVENC defaults + software fallback + AV1 experimental toggle).
+5.  **Phase 9.5**: Implement the `BrandingProfile` data model + **Brand Voice** injection into `BaseProvider._build_prompt()`.
+6.  **Phase 9.6**: Create the **ASS caption generator** (`utils/captions.py`) with per-aspect-ratio templates and word-level highlighting.
+7.  **Phase 9.7**: Prototype the **Bounded cross-correlation sync** tool (`utils/sync.py`) + UI manual offset slider.
+8.  **Phase 9.8**: Implement **Production Sound Kits** (music, stingers, auto-ducking via `mix_audio` toolkit tool).
+9.  **Phase 9.9**: Build the **AI Thumbnail Studio** (`utils/thumbnails.py` — Imagen 4 API integration + Local FLUX.1 framework).
+10. **Phase 9.10**: Add the **"Brand Studio" tab** and **Production sidebar** to the Streamlit UI.
+
+### Success Criteria Per Sub-Phase
+
+Each phase should be independently demoable before moving to the next:
+
+| Sub-Phase | Success Criterion |
+| :--- | :--- |
+| **9.1** | All 14 toolkit tools pass unit tests. `probe_media` returns correct metadata for a test video. `transcode` produces a valid output file. Existing `utils/ffmpeg.py` functions still work (no regressions). |
+| **9.2** | `python -m podcast_pipeline.mcp.ffmpeg_server` starts. MCP inspector can call each tool. Claude Code can invoke `probe_media` and `extract_frame` interactively. |
+| **9.3** | `ClaudeProvider` passes the existing `AnalysisProvider` test suite. Produces valid `AnalysisResult` from a test transcript. Falls back gracefully when `ANTHROPIC_API_KEY` is unset. |
+| **9.4** | A 1080p test video encodes to HEVC 10-bit via NVENC in under 2× real-time. Software `libx265` fallback works when GPU unavailable. AV1 toggle produces a valid file with `libsvtav1`. Existing H.264 exports are unaffected. |
+| **9.5** | A `BrandingProfile` YAML loads, validates, and is injected into the analysis prompt. Platform overrides merge correctly. |
+| **9.6** | A test transcript + `BrandingProfile` produces a valid `.ass` file. FFmpeg burns it onto a test video without errors. Word highlighting renders correctly for all three aspect ratios (16:9, 9:16, 1:1). |
+| **9.7** | Two test audio tracks with a clap sync to within ±10 ms automatically. Manual slider produces a correctly offset file. Sync fails gracefully with a low-confidence warning when no clap is present. |
+| **9.8** | A rendered video has intro music with auto-ducking that doesn't clip the speech. Transition whoosh plays at cut boundaries. Outro fades in correctly. |
+| **9.9** | Imagen 4 API generates 4 thumbnails from AI-generated prompts (cached on rerun). Local FLUX.1 fallback generates images without OOM on 16 GB card. Auto-branding applies logo and border. |
+| **9.10** | Brand Studio tab creates/saves/loads profiles. Production sidebar adjusts captions and music. Full pipeline demo: raw → synced → cut → branded → captioned → multi-platform export. |
+
+---
+
+## 14. New Dependencies
+
+| Package | Version | Optional Extra | Purpose |
+| :--- | :--- | :--- | :--- |
+| `anthropic` | `>=0.80.0` | — | Claude analysis provider |
+| `scipy` | `>=1.14.0` | — | Cross-correlation for audio sync |
+| `fastmcp` | `>=2.0.0` | `[dev]` | FastMCP server for FFmpeg toolkit (auto-schema, Pydantic support) |
+| `google-cloud-aiplatform` | `>=1.70.0` | `[thumbnails]` | Imagen 4 via Vertex AI |
+| `diffusers` | `>=0.32.0` | `[thumbnails]` | Local FLUX.1 Schnell inference |
+| `optimum-quanto` | `>=0.3.0` | `[thumbnails]` | GGUF/quantised model loading |
+
+**Note:** `librosa` is already installed via Phase 8 `[gpu]` extras. `Pillow` is already a transitive dependency.

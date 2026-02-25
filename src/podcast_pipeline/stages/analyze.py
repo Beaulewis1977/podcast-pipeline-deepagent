@@ -8,14 +8,17 @@ from typing import Any
 
 from podcast_pipeline.config import Config
 from podcast_pipeline.models.analysis import AnalysisResult
+from podcast_pipeline.models.branding import BrandingProfile
 from podcast_pipeline.models.job import Job
 from podcast_pipeline.models.triage import FillerTriageResult
-from podcast_pipeline.providers.base import ProviderError
+from podcast_pipeline.providers.base import AnalysisProvider, ProviderError
+from podcast_pipeline.providers.claude_provider import ClaudeProvider
 from podcast_pipeline.providers.gemini import GeminiProvider
 from podcast_pipeline.providers.kimi import KimiProvider
 from podcast_pipeline.research.viral_detector import ViralClipDetector
 from podcast_pipeline.research.youtube import ResearchResult, YouTubeResearcher
 from podcast_pipeline.stages.base import Stage, StageResult
+from podcast_pipeline.utils.branding import load_active_profile, resolve_profile
 from podcast_pipeline.utils.ffmpeg import FFmpegError, run_ffmpeg
 from podcast_pipeline.utils.logging import get_logger
 
@@ -31,23 +34,79 @@ class AnalyzeStage(Stage):
 
     def __init__(self, config: Config):
         super().__init__(config)
-        self.providers: list[GeminiProvider | KimiProvider] = []
+        self.providers: list[AnalysisProvider] = []
 
-        # Initialize primary provider
-        if config.api_keys.gemini:
+        # Resolve active branding profile at construction time.
+        # None when branding is not configured — all branding-aware paths
+        # check for None and fall back to no-branding behavior gracefully.
+        self._active_branding: BrandingProfile | None = load_active_profile(
+            active_profile_name=config.branding.active_profile,
+            branding_dir=config.branding.branding_dir,
+        )
+
+        # Initialize primary provider based on configured provider name.
+        primary_provider = config.models.provider
+        primary_model = config.models.model
+
+        if primary_provider == "gemini" and config.api_keys.gemini:
             self.providers.append(
                 GeminiProvider(
                     api_key=config.api_keys.gemini,
-                    model=config.models.model,
+                    model=primary_model,
                 )
             )
-
-        # Initialize fallback provider
-        if config.api_keys.kimi:
+        elif primary_provider == "kimi" and config.api_keys.kimi:
             self.providers.append(
                 KimiProvider(
                     api_key=config.api_keys.kimi,
-                    model=config.models.fallback_model or "moonshot-v1-128k",
+                    model=primary_model,
+                )
+            )
+        elif primary_provider == "claude" and config.api_keys.anthropic:
+            self.providers.append(
+                ClaudeProvider(
+                    api_key=config.api_keys.anthropic,
+                    model=primary_model,
+                )
+            )
+        elif primary_provider == "gemini":
+            # Legacy path: Gemini was the only primary before multi-provider support.
+            # If GEMINI_API_KEY is present, it was already handled above.
+            # Fall through to fallback provider selection below.
+            pass
+
+        # Initialize fallback provider (only if different from primary).
+        fallback_provider = config.models.fallback_provider
+        fallback_model = config.models.fallback_model
+
+        if fallback_provider == "kimi" and config.api_keys.kimi:
+            self.providers.append(
+                KimiProvider(
+                    api_key=config.api_keys.kimi,
+                    model=fallback_model or "moonshot-v1-128k",
+                )
+            )
+        elif fallback_provider == "gemini" and config.api_keys.gemini:
+            self.providers.append(
+                GeminiProvider(
+                    api_key=config.api_keys.gemini,
+                    model=fallback_model or "gemini-2.5-flash",
+                )
+            )
+        elif fallback_provider == "claude" and config.api_keys.anthropic:
+            self.providers.append(
+                ClaudeProvider(
+                    api_key=config.api_keys.anthropic,
+                    model=fallback_model or "claude-sonnet-4-6",
+                )
+            )
+        elif fallback_provider is None and primary_provider != "kimi" and config.api_keys.kimi:
+            # Implicit Kimi fallback when no explicit fallback is configured
+            # and primary is not already Kimi — preserves legacy behavior.
+            self.providers.append(
+                KimiProvider(
+                    api_key=config.api_keys.kimi,
+                    model="moonshot-v1-128k",
                 )
             )
 
@@ -101,6 +160,11 @@ class AnalyzeStage(Stage):
                 provider_transcript = dict(transcript_data)
                 if trend_context is not None:
                     provider_transcript["trend_context"] = trend_context
+                # Inject sanitized brand_voice when a branding profile is active.
+                # Providers extract this from the transcript dict in _build_prompt.
+                brand_voice = self._resolve_brand_voice_for_analysis()
+                if brand_voice:
+                    provider_transcript["brand_voice"] = brand_voice
                 result = provider.analyze(proxy_path, provider_transcript)
                 used_provider = provider.name
                 used_model = getattr(provider, "model", "unknown")
@@ -121,6 +185,20 @@ class AnalyzeStage(Stage):
                         "analysis_thumbnail_frames_materialized",
                         generated=len(thumbnail_artifacts),
                     )
+
+                # AI thumbnail generation: optional, controlled by branding config.
+                # Uses visual_description strings from thumbnail_frames as prompts,
+                # then persists generated image paths back into the analysis payload.
+                if self.config.branding.thumbnail_generation.enabled:
+                    ai_thumbnail_artifacts = self._generate_ai_thumbnails(
+                        analysis_payload=analysis_payload,
+                        job_dir=job_dir,
+                    )
+                    if ai_thumbnail_artifacts:
+                        self.logger.info(
+                            "analysis_ai_thumbnails_generated",
+                            generated=len(ai_thumbnail_artifacts),
+                        )
 
                 # Save analysis result
                 analysis_path = job_dir / "analysis" / "analysis.json"
@@ -190,7 +268,10 @@ class AnalyzeStage(Stage):
         if not self.providers:
             return StageResult(
                 success=False,
-                error="No AI providers configured. Set GEMINI_API_KEY or KIMI_API_KEY in .env",
+                error=(
+                    "No AI providers configured. "
+                    "Set GEMINI_API_KEY, KIMI_API_KEY, or ANTHROPIC_API_KEY in .env"
+                ),
             )
 
         return StageResult(
@@ -275,6 +356,94 @@ class AnalyzeStage(Stage):
             generated.append(relative_path)
 
         return generated
+
+    def _generate_ai_thumbnails(
+        self,
+        analysis_payload: dict[str, Any],
+        job_dir: Path,
+    ) -> list[str]:
+        """Generate AI thumbnails from visual_description prompts via ThumbnailService.
+
+        Extracts ``visual_description`` strings from ``thumbnail_frames`` in the
+        analysis payload, calls ``ThumbnailService.generate()`` with those prompts,
+        and persists the relative paths of generated images back into each frame's
+        ``ai_image_path`` field.
+
+        Args:
+            analysis_payload: Mutable analysis dict (thumbnail_frames entries updated in-place).
+            job_dir: Root job directory used to compute relative artifact paths.
+
+        Returns:
+            List of relative paths for successfully generated AI thumbnail images.
+        """
+        from podcast_pipeline.utils.thumbnails import ThumbnailRequest, ThumbnailService
+
+        raw_frames = analysis_payload.get("thumbnail_frames")
+        if not isinstance(raw_frames, list) or not raw_frames:
+            return []
+
+        # Build prompt list from visual_description fields
+        prompts: list[str] = []
+        frame_indices: list[int] = []  # Which frame index each prompt corresponds to
+        for frame_index, frame in enumerate(raw_frames):
+            if not isinstance(frame, dict):
+                continue
+            description = frame.get("visual_description", "")
+            if isinstance(description, str) and description.strip():
+                prompts.append(description.strip())
+                frame_indices.append(frame_index)
+
+        if not prompts:
+            self.logger.info(
+                "ai_thumbnail_skip_no_descriptions",
+                reason="no visual_description fields in thumbnail_frames",
+            )
+            return []
+
+        gen_config = self.config.branding.thumbnail_generation
+        output_dir = job_dir / "intermediate" / "ai_thumbnails"
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        request = ThumbnailRequest(
+            prompts=prompts,
+            output_dir=output_dir,
+            images_per_prompt=gen_config.images_per_prompt,
+            width=gen_config.width,
+            height=gen_config.height,
+            model=gen_config.model,
+            branding_profile=self._active_branding,
+        )
+
+        service = ThumbnailService()
+        result = service.generate(request)
+
+        if result.degraded and result.total_generated == 0 and result.total_cached == 0:
+            self.logger.warning(
+                "ai_thumbnail_degraded",
+                reason=result.degraded_reason,
+            )
+            return []
+
+        # Map generated artifacts back to frame entries using prompt as the key.
+        # Build a lookup from prompt text → first matching artifact relative path.
+        generated_paths: list[str] = []
+        prompt_to_relative: dict[str, str] = {}
+
+        for artifact in result.artifacts:
+            if artifact.status.value in ("generated", "cached") and artifact.path.exists():
+                if artifact.prompt not in prompt_to_relative:
+                    relative = str(artifact.path.relative_to(job_dir))
+                    prompt_to_relative[artifact.prompt] = relative
+
+        # Write ai_image_path back into each matching frame entry
+        for list_index, frame_index in enumerate(frame_indices):
+            prompt = prompts[list_index]
+            ai_path = prompt_to_relative.get(prompt)
+            if ai_path:
+                raw_frames[frame_index]["ai_image_path"] = ai_path
+                generated_paths.append(ai_path)
+
+        return generated_paths
 
     def _parse_thumbnail_timestamp_seconds(
         self,
@@ -495,9 +664,38 @@ class AnalyzeStage(Stage):
             normalized.append(value)
         return normalized
 
+    def _resolve_brand_voice_for_analysis(self) -> str:
+        """Return the sanitized brand_voice string for the active profile, or empty string.
+
+        Uses the base profile's brand_voice (not platform-specific) since the
+        analysis stage operates before export-target selection.  An empty string
+        is returned when no branding profile is configured so downstream
+        callers can treat it as a no-op without branching.
+        """
+        if self._active_branding is None:
+            return ""
+        return self._active_branding.sanitized_brand_voice()
+
+    def resolve_branding_for_platform(self, platform: str) -> BrandingProfile | None:
+        """Return a resolved BrandingProfile for ``platform``, or None when unconfigured.
+
+        Applies platform-specific overrides onto the base active profile when
+        present.  Returns None when no branding profile is configured so that
+        all downstream callers can branch on None without special casing.
+
+        Args:
+            platform: Export platform name (e.g. ``"youtube"``, ``"tiktok"``).
+
+        Returns:
+            Resolved :class:`BrandingProfile` or ``None``.
+        """
+        if self._active_branding is None:
+            return None
+        return resolve_profile(self._active_branding, platform)
+
     def _build_degraded_mode_metadata(
         self,
-        provider: GeminiProvider | KimiProvider,
+        provider: AnalysisProvider,
         provider_index: int,
     ) -> dict[str, Any]:
         """Build degraded-mode metadata for transcript-only provider outputs."""

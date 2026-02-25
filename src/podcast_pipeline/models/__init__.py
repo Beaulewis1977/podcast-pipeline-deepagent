@@ -9,20 +9,30 @@ from podcast_pipeline.models.analysis import (
     ThumbnailCandidate,
     ViralClip,
 )
+from podcast_pipeline.models.branding import (
+    BrandingProfile,
+    CaptionStyle,
+    PlatformBrandingOverride,
+    ThumbnailBorder,
+)
 from podcast_pipeline.models.job import Job, JobStage, StageStatus
 from podcast_pipeline.models.transcript import FillerCut, Segment, TranscriptResult, Word
 
 __all__ = [
     "AnalysisResult",
+    "BrandingProfile",
+    "CaptionStyle",
     "ContentCut",
     "FillerCut",
     "Job",
     "JobStage",
     "MarketingCopy",
     "Metadata",
+    "PlatformBrandingOverride",
     "PlatformMarketing",
     "Segment",
     "StageStatus",
+    "ThumbnailBorder",
     "ThumbnailCandidate",
     "TranscriptResult",
     "ViralClip",

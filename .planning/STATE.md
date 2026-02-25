@@ -1,28 +1,28 @@
 # Project State: Podcast Pipeline
 
-**Last updated:** 2026-02-23
-**Current phase:** Phase 8 re-execution COMPLETE
-**Overall progress:** All 6 Phase 8 plans re-executed with current baselines
+**Last updated:** 2026-02-24
+**Current phase:** Phase 9.12 — Streamlit UI Gap Closure
+**Overall progress:** Phase 9 complete (11/11 plans); 65 plans completed overall; Phase 9.12 complete (3/3 plans)
 
 ## Project Reference
 
 See: `.planning/PROJECT.md`
 
 **Core value:** Turn raw podcast recording into multi-platform content without editing software or manual copywriting.
-**Current focus:** Phase 8 complete — all 6 plans executed; integration tests, GPU smoke test, and operator guide locked.
+**Current focus:** Phase 9.12 complete — all 7 UI gaps closed. Milestone v1.0 complete.
 
 ## Current Position
 
 ```text
-Phase:    8 COMPLETE (re-executed)
-Plan:     6/6 complete in Phase 8; 51 completed overall
-Status:   Phase 8 COMPLETE; all plans 08-01 through 08-06 re-executed with current baselines
-Last activity: 2026-02-23 - Re-executed 08-06-PLAN.md (smoke test torch 2.10.x baseline, operator guide forbidden models, version floors)
+Phase:    9.12 (Streamlit UI Gap Closure)
+Plan:     03/03 complete — 09.12-03 Split sound kit controls + Brand Studio file uploaders
+Status:   Complete — all 3 plans done, all 7 UI gaps closed
+Last activity: 2026-02-24 - Completed 09.12-03-PLAN.md (GAP-5A/GAP-6A UI closures)
 
-Progress: [██████████████████████████████] 51/51 plans complete
+Progress: [██████████████████████████████] 65/65 plans complete
 ```
 
-**Current Phase:** Phase 8 — Intelligent Cut Quality (re-execution: all 6 plans complete)
+**Current Phase:** Phase 9.12 — Streamlit UI Gap Closure (3/3 plans complete)
 
 ## Phase Status
 
@@ -38,15 +38,17 @@ Progress: [███████████████████████
 | 6.1 | Video Marketing Copy Parity + Thumbnail Visual Selection MVP | Complete (verified) | 5/5 | 100% |
 | 7 | Smooth Editing & Filler Word Control | Complete (verified 2026-02-21) | 4/4 | 100% |
 | 8 | Intelligent Cut Quality | Complete (verified 2026-02-21) | 6/6 | 100% |
+| 9 | Automated Branding, Captions, and Multi-Track Sync | Complete (verified 2026-02-24) | 11/11 | 100% |
+| 9.12 | Streamlit UI Gap Closure | Complete (verified 2026-02-24) | 3/3 | 100% |
 
 ## Performance Metrics
 
 | Metric | Value |
 |--------|-------|
-| Plans completed | 51/51 |
+| Plans completed | 65/65 |
 | Requirements done | 35/83 (21 partial) |
-| Phases complete | 8/8 |
-| Estimated completion | In progress |
+| Phases complete | 9/9 |
+| Estimated completion | All phases complete |
 
 ## Accumulated Context
 
@@ -175,6 +177,43 @@ Progress: [███████████████████████
 | torch==2.10.* pinned baseline in smoke test and operator guide (not >=2.7 unpinned) | Reproducible GPU installs; prevents silent torch major-version drift on Blackwell hardware | 2026-02-23 |
 | Operator guide explicitly forbids reasoning/CoT models for LLM triage (o1, gemini-3-pro, etc.) | Per-filler classification needs sub-second batch responses; reasoning models are too slow/expensive | 2026-02-23 |
 | RIFE 4.26 exists (corrected from "does not exist"); 4.25 is recommended default to avoid artifacts | Research-verified: 4.26 released but 4.25 more stable for podcast content type | 2026-02-23 |
+| fastmcp added to [dependency-groups] dev only — not project.optional-dependencies | Enforces production isolation; fastmcp is never required for pipeline stages or providers | 2026-02-24 |
+| Empty __all__ = [] in mcp/__init__.py signals dev-only intent and prevents accidental re-exports | Clean import boundary between production code and dev MCP tooling | 2026-02-24 |
+| MCP tools accept scalar inputs (str/float/bool); Path/Enum construction in wrapper | JSON-wire compatible; prevents Pydantic objects from crossing MCP transport boundary | 2026-02-24 |
+| MCP error handling returns {error, operation} dict instead of raising | Prevents MCP client disconnects on toolkit failures; keeps session alive for retries | 2026-02-24 |
+| ClaudeProvider uses tool_use with forced tool_choice to enforce JSON schema contract — no prose JSON parsing | Schema-constrained output prevents silent parse failures and removes regex/JSON extraction coupling | 2026-02-24 |
+| SUPPORTED_CLAUDE_MODELS = {claude-sonnet-4-6, claude-haiku-4-5, claude-opus-4-6} in settings.py | Explicit model registry enforces valid model selection at config validation time | 2026-02-24 |
+| AnalyzeStage.__init__ dispatches on provider name string (gemini/kimi/claude) for primary + fallback | Provider-dispatch pattern scales to new providers without duplicating initialization logic | 2026-02-24 |
+| Implicit Kimi fallback preserved when fallback_provider=None and primary_provider != 'kimi' and KIMI_API_KEY present | Maintains backward compatibility for existing configs that relied on automatic Kimi fallback | 2026-02-24 |
+| BrandingProfile.resolved_for_platform() returns new instance with empty platform_overrides | Resolved profiles are flat and cannot be re-resolved; signals downstream consumers | 2026-02-24 |
+| brand_voice sanitized twice: at BrandingProfile construction and at prompt boundary in BaseProvider | Defense in depth for user-supplied text injected into LLM prompts | 2026-02-24 |
+| brand_voice injected via transcript["brand_voice"] dict key rather than direct provider method parameter | Keeps provider analyze() signatures unchanged across all provider types | 2026-02-24 |
+| BRAND VOICE block positioned after role statement, before TRANSCRIPT section in provider prompt | Frames copy direction without competing with JSON schema at prompt end | 2026-02-24 |
+| load_active_profile() returns None when profile is unconfigured or file missing | All stages treat None as no-branding gracefully without branching | 2026-02-24 |
+| hevc_nvenc is preferred codec for youtube_ultra; render resolves actual encoder at runtime via _resolve_video_encoder using HardwareEncoderInfo | Separates intent (preferred codec) from capability (available encoder) — predictable cross-machine behavior | 2026-02-24 |
+| p010le (NVENC 10-bit) translates to yuv420p10le on libx265 software fallback | NVENC and x265 use different pixel format naming conventions for 10-bit HEVC | 2026-02-24 |
+| AV1 codec without av1_experimental=True on PlatformSpec raises ValueError at config load | Zero silent AV1 activation — always an explicit operator opt-in | 2026-02-24 |
+| hevc_nvenc + p010le + uhq/hq preset is forbidden (RTX artifact guard) — p7 required for RTX 5060 Ti | Known artifact regression on 9th-gen NVENC; p7 achieves equivalent quality without artifacts | 2026-02-24 |
+| force_60fps_shortform gates on smoothing.force_60fps_shortform AND rife_enabled AND aspect_ratio in SHORT_FORM_ASPECT_RATIOS | Three-condition gate prevents silent uplift; all conditions must be explicitly enabled | 2026-02-24 |
+| RIFE 30->60fps uplift runs before filtergraph construction so interpolated frames are the render base | Ensures any branding/caption burn-in or color filters operate on the 60fps content | 2026-02-24 |
+| RifeBridge.uplift_fps raises NotImplementedError; _apply_shortform_60fps_rife catches and returns None | Whole-video RIFE uplift deferred; render continues gracefully with original input | 2026-02-24 |
+| GPULease uses threading.Semaphore(1) for cross-job GPU serialization | Simple, reliable single-GPU contention guard without external dependencies | 2026-02-24 |
+| Production controls persist in ReviewDecisions rather than separate state file | Keeps review contract as single source of truth for all operator decisions | 2026-02-24 |
+| Brand Studio is a top-level Streamlit navigation page | Matches operator mental model of profile management as separate activity from editing | 2026-02-24 |
+| Phase 9 ReviewDecisions fields default to None/False | Pre-Phase 9 review payloads load without error; backward compatibility preserved | 2026-02-24 |
+| delete_profile() added to branding utility for CRUD completeness | Brand Studio UI requires full create/read/update/delete lifecycle | 2026-02-24 |
+| Single Gemini backend replaces dual Imagen 4 / FLUX.1 Schnell routing | Eliminates Vertex AI auth complexity, VRAM/GPU requirements, and 3 optional dependencies | 2026-02-24 |
+| Image bytes via part.inline_data.data (not part.as_image) | Avoids PIL/Pillow dependency for raw image bytes access | 2026-02-24 |
+| _audit_with_gemini_pro defined but not wired into generation flow | Supports future compositional auditing without scope creep in this plan | 2026-02-24 |
+| decisions.captions_enabled replaces config.branding.captions.enabled as burn-in gate | UI decision takes precedence over config.yaml — prevents Production sidebar from being silently ignored | 2026-02-24 |
+| decisions.sound_kit_enabled gates _mix_stingers unconditionally | Stingers skip when False regardless of configured sound files — consistent UI-as-source-of-truth | 2026-02-24 |
+| effective_profile_name resolved once from decisions.branding_profile_name with config fallback | Single resolution point before both _burn_captions and _mix_stingers — avoids redundant override logic | 2026-02-24 |
+| Provider selectbox mutates config.models.provider in session state only — no config.yaml write | App never writes config files; st.caption explains how to persist permanently via env var or config.yaml | 2026-02-24 |
+| _ASPECT_RATIO_OPTIONS defined at module level (not inside render function) | Avoids Streamlit lambda closure issues on reruns; format_func lambda safely indexes module-level list | 2026-02-24 |
+| Caption aspect ratio cleared to None when captions_enabled is False | Prevents stale override value from silently applying when captions are re-enabled — UI intent is always explicit | 2026-02-24 |
+| Enable Stingers maps to decisions.sound_kit_enabled (existing render-wired field) | Render stage uses sound_kit_enabled to gate _mix_stingers; stingers checkbox directly controls existing render behavior | 2026-02-24 |
+| Enable Auto-Ducking maps to decisions.auto_duck_enabled — UI persistence only | Render-side granular ducking control deferred; current _mix_stingers always applies ducking when stingers present | 2026-02-24 |
+| Brand Studio file uploaders use branding_dir function parameter (not get_config()) | Avoids redundant config load inside Visual Assets expander; branding_dir already passed to _render_brand_studio_editor | 2026-02-24 |
 
 ### Roadmap Evolution
 
@@ -223,6 +262,9 @@ Progress: [███████████████████████
 - Phase 8 execution continued: completed 08-02-PLAN.md (FillerTriageResult model, _triage_fillers batched LLM triage helper, filler_triage.json artifact)
 - Phase 8 execution continued: completed 08-03-PLAN.md (triage-aware editorial_action, _filler_card_data UI helper, Streamlit filler card Phase 8 display)
 - Phase 8 execution continued: completed 08-04-PLAN.md (VAD breath detector, noise-floor matcher, render de-breathing + noise-floor passes, gpu optional deps)
+- Phase 9 added: Automated Branding, Captions, and Multi-Track Sync (10 plans, 5 waves; spec v4 at docs/plans/2026-02-21-branding-automation-and-sync-spec_v4.md)
+- Phase 9 execution started: completed 09-01-PLAN.md (FFmpeg media toolkit — 14 typed operations with Pydantic I/O across 5 groups)
+- Phase 9 execution continued: completed 09-02-PLAN.md (FastMCP dev server: 14 tool wrappers, .mcp.json stdio config, 28 isolation/registration/invocation tests)
 
 ### Technical Notes
 
@@ -307,16 +349,31 @@ Progress: [███████████████████████
 - 2026-02-23: Re-executed 08-04-PLAN.md (GPU extras version floors updated: silero-vad>=6.2,<7; librosa>=0.11,<1; opencv-python-headless>=4.13,<5; torch/torchaudio uv.sources routing verified correct)
 - 2026-02-23: Re-executed 08-05-PLAN.md (RIFE bridge --output bug fix: removed --output flag, added cwd=work_dir + PYTHONPATH injection, changed glob to work_dir/output/img*.png; updated tests to verify upstream contract)
 - 2026-02-23: Re-executed 08-06-PLAN.md (smoke test torch 2.10.x baseline; operator guide gemini-2.5-flash-lite default + forbidden reasoning model list + dep version floors; integration tests verified no-op — all 133 tests pass)
+- 2026-02-24: Completed 09-01-PLAN.md (FFmpeg media toolkit — 14 typed operations, 5 operation groups, structured error model, HLS packaging)
+- 2026-02-24: Completed 09-02-PLAN.md (FastMCP dev server: 14 MCP tools, lifespan hardware-encoder cache, .mcp.json stdio config, 28 tests)
+- 2026-02-24: Completed 09-03-PLAN.md (Claude provider: tool_use schema contract, config wiring, analyze-stage dispatch, 44 regression tests)
+- 2026-02-24: Completed 09-04-PLAN.md (HEVC 10-bit/NVENC youtube_ultra spec, AV1 experimental gating, force_60fps_shortform toggle, runtime encoder fallback chain + RIFE uplift stub in render)
+- 2026-02-24: Completed 09-05-PLAN.md (BrandingProfile typed model, YAML serialization, platform override merge, BrandingConfig wired into Config, brand_voice prompt injection in BaseProvider)
+- 2026-02-24: Re-executed 09-04-PLAN.md (completed Tasks 2+3: runtime encoder fallback chain in render, 24 new regression tests for NVENC detection, x265 fallback, shortform RIFE gating, legacy platform isolation; 152 total render tests)
+- 2026-02-24: Completed 09-05-PLAN.md (BrandingProfile typed model, YAML serialization, platform override merge, BrandingConfig in settings, brand_voice prompt injection with double sanitization, 126 tests)
+- 2026-02-24: Completed 09-10-PLAN.md (Brand Studio Streamlit tab, production sidebar controls, GPULease cross-job GPU serialization, 21 new tests, 260-line operator runbook)
+- 2026-02-24: Phase 9 complete (10/10 plans executed, 1039 total tests passing)
+- 2026-02-24: Completed 09-11-PLAN.md (Gemini Vision model pivot: replaced Imagen 4 / FLUX.1 with exclusive Gemini Vision thumbnail generation via google.genai SDK; 1031 tests passing)
+- 2026-02-24: Post-Phase 9 UI audit completed — 7 gaps identified and documented in 09-UI-GAPS.md (2 missing, 4 partial UI gaps + 1 critical render wiring gap where Production sidebar decisions are saved but never consumed by render.py)
+- 2026-02-24: Phase 9.12 added — Streamlit UI Gap Closure (closes all 7 gaps; awaiting planning)
+- 2026-02-24: Completed 09.12-01-PLAN.md (GAP-7 render wiring: decisions.captions_enabled/sound_kit_enabled/branding_profile_name now gate render passes; youtube_ultra registered; caption_aspect_ratio and auto_duck_enabled fields added; 6 regression tests)
+- 2026-02-24: Completed 09.12-02-PLAN.md (GAP-1/3A/3B/4: Settings provider selectbox for Claude/Gemini/Kimi; Anthropic API key status in Settings; caption aspect ratio selectbox in Production sidebar; sync artifact offset+confidence metrics display; slider range +/-5000ms; 1034 tests passing)
+- 2026-02-24: Completed 09.12-03-PLAN.md (GAP-5A/6A: Split sound kit into Enable Stingers + Enable Auto-Ducking checkboxes; logo/font file uploaders in Brand Studio Visual Assets; 1041 tests passing; Phase 9.12 complete)
 
 ## Session Continuity
 
 ### Last session
 
-2026-02-23 23:40 UTC — Re-executed `08-06-PLAN.md` (smoke test torch 2.10.* baseline, opencv>=4.13, pinned install hint; operator guide: gemini-2.5-flash-lite default, forbidden o1/gemini-pro reasoning models, silero-vad>=6.2,<7, librosa>=0.11,<1, opencv>=4.13,<5, RIFE 4.26 note corrected; Task 2 no-op — all 133 tests pass).
+2026-02-24 — Phase 9.12 execution completed. Completed 09.12-03 (GAP-5A/6A: split sound kit controls + Brand Studio file uploaders). All 7 UI gaps are now closed. Phase 9.12 is complete (3/3 plans done).
 
 ### Stopped at
 
-Completed 08-06-PLAN.md re-execution — Phase 8 fully locked with current baselines across all 6 plans.
+Completed 09.12-03-PLAN.md — Phase 9.12 is fully complete. All UI gaps (GAP-1 through GAP-7) are closed.
 
 ### Resume file
 
@@ -324,4 +381,4 @@ None
 
 ---
 
-*State updated: 2026-02-23 (08-05 re-executed — RIFE bridge --output bug fixed; upstream-compatible CLI contract; all rife_bridge tests pass)*
+*State updated: 2026-02-24 (09.12-01 executed -- GAP-7 render wiring fix; Phase 9.12 1/3 plans; 63/65 overall)*

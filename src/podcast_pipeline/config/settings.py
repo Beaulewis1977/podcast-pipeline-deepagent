@@ -10,7 +10,7 @@ import yaml
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-SUPPORTED_MODEL_PROVIDERS = {"gemini", "kimi"}
+SUPPORTED_MODEL_PROVIDERS = {"gemini", "kimi", "claude"}
 SUPPORTED_GEMINI_MODELS = {
     "gemini-2.5-flash",
     "gemini-2.5-flash-latest",
@@ -22,25 +22,39 @@ SUPPORTED_KIMI_MODELS = {
     "kimi-k2.5",
     "moonshot-v1-128k",
 }
+SUPPORTED_CLAUDE_MODELS = {
+    "claude-sonnet-4-6",  # Best cost/performance (RECOMMENDED)
+    "claude-haiku-4-5",  # Fast, cheaper
+    "claude-opus-4-6",  # Most intelligent, highest cost
+}
 SUPPORTED_MODELS_BY_PROVIDER = {
     "gemini": SUPPORTED_GEMINI_MODELS,
     "kimi": SUPPORTED_KIMI_MODELS,
+    "claude": SUPPORTED_CLAUDE_MODELS,
 }
 
 SERVICE_HOST_PATTERN = re.compile(r"^[A-Za-z0-9.-]+$")
 VIDEO_LEVEL_PATTERN = re.compile(r"^(?:[1-6](?:\.[0-2])?|1\.3)$")
-H264_CODECS = {"h264", "libx264"}
-H265_CODECS = {"h265", "hevc", "libx265"}
+H264_CODECS = {"h264", "libx264", "h264_nvenc"}
+H265_CODECS = {"h265", "hevc", "libx265", "hevc_nvenc"}
+AV1_CODECS = {"av1", "libsvtav1"}
 CODECS_WITH_PROFILE_LEVEL = H264_CODECS | H265_CODECS
 H264_PROFILES = {"baseline", "main", "high", "high10", "high422", "high444"}
 H265_PROFILES = {"main", "main10", "mainstillpicture"}
+# NVENC uses p010le for 10-bit HEVC; libx265 uses yuv420p10le
 PIX_FMT_BY_CODEC = {
     "h264": {"yuv420p", "yuv422p", "yuv444p"},
     "libx264": {"yuv420p", "yuv422p", "yuv444p"},
+    "h264_nvenc": {"yuv420p", "yuv422p", "yuv444p"},
     "h265": {"yuv420p", "yuv420p10le", "yuv422p10le", "yuv444p10le"},
     "hevc": {"yuv420p", "yuv420p10le", "yuv422p10le", "yuv444p10le"},
     "libx265": {"yuv420p", "yuv420p10le", "yuv422p10le", "yuv444p10le"},
+    "hevc_nvenc": {"yuv420p", "p010le"},
+    "av1": {"yuv420p", "yuv420p10le"},
+    "libsvtav1": {"yuv420p", "yuv420p10le"},
 }
+# Short-form vertical aspect ratios eligible for RIFE 60fps uplift
+SHORT_FORM_ASPECT_RATIOS = {"9:16"}
 THUMBNAIL_FORMATS = {"jpg", "jpeg", "png", "webp"}
 
 
@@ -297,6 +311,12 @@ class SmoothingConfig(BaseModel):
     rife_script_path: str = ""
     rife_fallback_to_xfade: bool = True
 
+    # Phase 9: Explicit 30→60fps RIFE uplift for short-form vertical exports.
+    # When True, applies RIFE 60fps interpolation ONLY to TikTok/Reels/Shorts targets
+    # (aspect_ratio="9:16").  Long-form exports are never affected regardless of this flag.
+    # Requires rife_enabled=True and a valid rife_script_path to have any effect.
+    force_60fps_shortform: bool = False
+
 
 class HLSConfig(BaseModel):
     """Typed HLS muxer configuration for provider hand-off artifacts."""
@@ -496,6 +516,8 @@ class PlatformSpec(BaseModel):
     hls: HLSConfig | None = None
     crop_mode: str = "center"  # center, top, bottom, smart
     audio_only: bool = False  # True for audio-only platforms
+    # Phase 9: AV1 is explicitly experimental and opt-in; never auto-activated
+    av1_experimental: bool = False
 
     @model_validator(mode="after")
     def validate_compliance_fields(self) -> Self:
@@ -544,6 +566,21 @@ class PlatformSpec(BaseModel):
             raise ValueError(
                 f"Invalid pix_fmt '{self.pix_fmt}' for codec '{self.video_codec}'. "
                 f"Expected one of: {allowed}"
+            )
+
+        # Reject hevc_nvenc + uhq + highbitdepth combination (known RTX artifacts).
+        # p7 preset must be used for 10-bit NVENC instead.
+        if codec == "hevc_nvenc" and pix_fmt == "p010le" and self.preset in {"uhq", "hq"}:
+            raise ValueError(
+                "hevc_nvenc with p010le (10-bit) should not use 'uhq' or 'hq' preset "
+                "due to known RTX artifacts. Use 'p7' or 'slow' instead."
+            )
+
+        # AV1 opt-in gate: av1_experimental must be True when using an AV1 codec.
+        if codec in AV1_CODECS and not self.av1_experimental:
+            raise ValueError(
+                f"AV1 codec '{self.video_codec}' requires av1_experimental=true. "
+                "AV1 output is experimental and must be explicitly enabled."
             )
 
         if self.keyint_min is not None and self.gop is None:
@@ -742,6 +779,28 @@ class PlatformSpecs(BaseModel):
             preset="medium",
         )
     )
+    # Phase 9: HEVC 10-bit "Ultra" quality profile — NEW DEFAULT for highest quality exports.
+    # Runtime encoder selection: hevc_nvenc (NVENC GPU) -> libx265 (CPU software fallback).
+    # The video_codec field here is the *preferred* codec; render stage resolves the actual
+    # encoder at runtime using detect_hardware_encoders().  Use preset "p7" (not "uhq") for
+    # RTX-5060-Ti compatibility (avoids uhq + highbitdepth artifact regression).
+    youtube_ultra: PlatformSpec = Field(
+        default_factory=lambda: PlatformSpec(
+            container="mp4",
+            video_codec="hevc_nvenc",
+            video_profile="main10",
+            video_bitrate="12M",
+            audio_codec="aac",
+            audio_bitrate="320k",
+            loudness_lufs=-14.0,
+            preset="p7",
+            width=3840,
+            height=2160,
+            aspect_ratio="16:9",
+            fps=30,
+            pix_fmt="p010le",
+        )
+    )
 
     @model_validator(mode="after")
     def validate_video_target_requirements(self) -> Self:
@@ -765,6 +824,21 @@ class PlatformSpecs(BaseModel):
                     f"{platform_name}: codec '{spec.video_codec}' does not support profile/level controls"
                 )
 
+        return self
+
+    @model_validator(mode="after")
+    def validate_hevc10_ultra_profiles(self) -> Self:
+        """Validate HEVC 10-bit Ultra profiles that are present on the spec object."""
+        ultra_spec = getattr(self, "youtube_ultra", None)
+        if ultra_spec is None:
+            return self
+        codec = (ultra_spec.video_codec or "").strip().lower()
+        if codec in H265_CODECS and ultra_spec.video_profile not in H265_PROFILES:
+            allowed = ", ".join(sorted(H265_PROFILES))
+            raise ValueError(
+                f"youtube_ultra: invalid video_profile '{ultra_spec.video_profile}' "
+                f"for HEVC codec. Expected one of: {allowed}"
+            )
         return self
 
 
@@ -822,6 +896,7 @@ class APIKeysConfig(BaseModel):
     kimi: str | None = None
     openai: str | None = None
     youtube: str | None = None
+    anthropic: str | None = None
 
     @classmethod
     def from_env(cls) -> "APIKeysConfig":
@@ -831,7 +906,182 @@ class APIKeysConfig(BaseModel):
             kimi=os.getenv("KIMI_API_KEY"),
             openai=os.getenv("OPENAI_API_KEY"),
             youtube=os.getenv("YOUTUBE_API_KEY"),
+            anthropic=os.getenv("ANTHROPIC_API_KEY"),
         )
+
+
+class DuckingConfig(BaseModel):
+    """Phase 9 sidechain auto-ducking parameters for sound stingers.
+
+    Controls how speech tracks duck music/stingers via FFmpeg sidechaincompress.
+    Defaults are tuned to standard podcasting values — conservatively
+    transparent: speech remains intelligible at all trigger points.
+    """
+
+    enabled: bool = True
+    # Sidechain compression parameters (all with podcasting-safe defaults)
+    attack_ms: float = Field(default=5.0, ge=0.1, le=500.0)
+    release_ms: float = Field(default=200.0, ge=10.0, le=5000.0)
+    ratio: float = Field(default=4.0, ge=1.0, le=20.0)
+    threshold_db: float = Field(default=-30.0, le=0.0)
+    # Stinger volume relative to voice track before ducking is applied
+    stinger_volume_db: float = Field(default=-12.0, le=0.0)
+
+
+class SoundKitConfig(BaseModel):
+    """Phase 9 production sound-kit configuration.
+
+    Defines per-brand audio assets (intro stinger, transition whoosh, outro)
+    and the canonical audio normalization policy applied to stingers before
+    they enter the ducking filtergraph.
+
+    All asset paths are optional.  When a path is absent or the file does not
+    exist the pipeline logs a warning and skips that stinger — base exports
+    are never blocked by missing optional sound assets.
+    """
+
+    # ── Sound asset paths (relative to branding_dir or absolute) ────────────
+    intro_path: Path | None = Field(
+        default=None,
+        description="Intro stinger WAV played at the very start of the render.",
+    )
+    transition_path: Path | None = Field(
+        default=None,
+        description="Transition whoosh WAV played at content-cut boundaries.",
+    )
+    outro_path: Path | None = Field(
+        default=None,
+        description="Outro theme WAV faded in during the last 5 seconds.",
+    )
+
+    # ── Canonical stinger normalization policy ───────────────────────────────
+    # Stingers are probed and re-encoded to this canonical working format
+    # (via ffprobe + aresample/aformat) before entering the ducking chain.
+    # This prevents VBR/container timing quirks from destabilising the
+    # sidechaincompress filtergraph.
+    canonical_sample_rate: int = Field(default=48000, ge=8000, le=192000)
+    canonical_channels: int = Field(default=2, ge=1, le=8)
+    canonical_sample_fmt: str = Field(default="fltp")
+
+    # ── Ducking policy ──────────────────────────────────────────────────────
+    ducking: DuckingConfig = Field(default_factory=DuckingConfig)
+
+    # ── Outro fade-in window ─────────────────────────────────────────────────
+    outro_trigger_s: float = Field(
+        default=5.0,
+        ge=0.5,
+        le=60.0,
+        description="Seconds from end of video at which the outro stinger begins.",
+    )
+
+    @field_validator("canonical_sample_fmt")
+    @classmethod
+    def validate_sample_fmt(cls, value: str) -> str:
+        """Restrict sample format to common FFmpeg planar/packed PCM values."""
+        allowed = {"u8", "s16", "s32", "flt", "dbl", "u8p", "s16p", "s32p", "fltp", "dblp"}
+        normalized = value.strip().lower()
+        if normalized not in allowed:
+            allowed_str = ", ".join(sorted(allowed))
+            raise ValueError(
+                f"canonical_sample_fmt '{value}' is not a recognised FFmpeg sample format. "
+                f"Expected one of: {allowed_str}"
+            )
+        return normalized
+
+
+class CaptionConfig(BaseModel):
+    """Phase 9 caption burn-in settings.
+
+    Controls whether ASS captions are generated and burned into exported video.
+    Requires a ``word_alignment.json`` artifact from the transcription stage.
+    """
+
+    enabled: bool = Field(
+        default=False,
+        description="When True, caption burn-in is attempted for each export.",
+    )
+    alignment_filename: str = Field(
+        default="word_alignment.json",
+        description="Filename (relative to job artifacts dir) for word-level alignment data.",
+    )
+    max_words_per_line: int = Field(
+        default=7,
+        ge=1,
+        le=20,
+        description="Maximum words grouped into a single dialogue event.",
+    )
+    gap_threshold_s: float = Field(
+        default=1.5,
+        ge=0.1,
+        le=10.0,
+        description="Silence gap (seconds) that forces a new dialogue event.",
+    )
+
+
+class ThumbnailGenerationConfig(BaseModel):
+    """Phase 9 AI thumbnail generation configuration.
+
+    Controls whether the ThumbnailService is invoked during the analyze stage
+    to generate AI thumbnails from visual_description prompts extracted from
+    the analysis payload.  Generation is opt-in and skipped gracefully when
+    the Gemini Vision backend is unavailable.
+    """
+
+    enabled: bool = Field(
+        default=False,
+        description=(
+            "When True, the analyze stage will attempt AI thumbnail generation "
+            "via Gemini Vision for each thumbnail frame candidate."
+        ),
+    )
+    model: str = Field(
+        default="gemini-2.5-flash-image",
+        description=(
+            "Gemini Vision model ID for image generation. "
+            "Uses the google.genai SDK with GEMINI_API_KEY."
+        ),
+    )
+    images_per_prompt: int = Field(
+        default=1,
+        ge=1,
+        le=4,
+        description="Number of images to generate per thumbnail prompt (1-4).",
+    )
+    width: int = Field(default=1280, ge=64, description="Generated thumbnail width in pixels.")
+    height: int = Field(default=720, ge=64, description="Generated thumbnail height in pixels.")
+
+
+class BrandingConfig(BaseModel):
+    """Phase 9 branding profile configuration.
+
+    Controls which BrandingProfile is active for a job and where profile YAML
+    files are stored.  Both fields are optional so existing configs that do
+    not mention ``branding:`` continue to work without changes.
+    """
+
+    active_profile: str | None = Field(
+        default=None,
+        description=(
+            "Name of the active BrandingProfile (without .yaml extension). "
+            "Set to null / omit to run without branding."
+        ),
+    )
+    branding_dir: Path = Field(
+        default=Path("branding"),
+        description="Directory that holds branding/<name>.yaml profile files.",
+    )
+    sound_kit: SoundKitConfig = Field(
+        default_factory=SoundKitConfig,
+        description="Production sound-kit (stingers and ducking config) for this job.",
+    )
+    captions: CaptionConfig = Field(
+        default_factory=CaptionConfig,
+        description="Caption burn-in settings (word-level ASS subtitle generation).",
+    )
+    thumbnail_generation: ThumbnailGenerationConfig = Field(
+        default_factory=ThumbnailGenerationConfig,
+        description="AI thumbnail generation settings for the analyze stage.",
+    )
 
 
 class Config(BaseModel):
@@ -848,6 +1098,7 @@ class Config(BaseModel):
     platforms: PlatformSpecs = Field(default_factory=PlatformSpecs)
     api_keys: APIKeysConfig = Field(default_factory=APIKeysConfig)
     service: ServiceConfig = Field(default_factory=ServiceConfig)
+    branding: BrandingConfig = Field(default_factory=BrandingConfig)
 
 
 def load_config(config_path: Path | None = None) -> Config:

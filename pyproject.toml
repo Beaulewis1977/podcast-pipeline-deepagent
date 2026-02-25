@@ -23,10 +23,12 @@ dependencies = [
     "pyloudnorm>=0.1.1",
     "pydub>=0.25.1",
     "soundfile>=0.12.1",
+    "scipy>=1.14.0",
     # AI Providers
     "google-genai>=1.0.0",
     "openai>=1.60.0",
     "httpx>=0.28.0",
+    "anthropic>=0.80.0",
     # CLI & Config
     "typer>=0.15.0",
     "pydantic>=2.10.0",
@@ -62,6 +64,10 @@ gpu = [
     "librosa>=0.11,<1",
     "opencv-python-headless>=4.13,<5",
     "torchcodec>=0.10,<1",
+]
+thumbnails = [
+    # Gemini Vision backend uses google-genai which is already in core deps.
+    # No additional packages needed.
 ]
 
 [project.scripts]
@@ -126,6 +132,7 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = [
     "S101",    # assert allowed in tests
+    "S108",    # /tmp paths in tests are safe mock fixtures
     "ARG",     # unused arguments in fixtures
     "PLR2004", # magic values in tests
     "PLC0415", # imports inside tests for isolation
@@ -179,7 +186,12 @@ ignore = [
 ]
 "src/podcast_pipeline/utils/*.py" = [
     "PLC0415", # lazy imports
+    "PLR0913", # many args in utility functions is acceptable
     "S603",    # subprocess calls are trusted internal utilities
+]
+"src/podcast_pipeline/mcp/*.py" = [
+    "PLC0415", # lazy imports for dev-only fastmcp
+    "PLR0913", # many tool args is expected pattern for MCP tools
 ]
 
 [tool.ruff.lint.isort]
@@ -215,8 +227,15 @@ module = [
     "pydub.*",
     "pyloudnorm.*",
     "soundfile.*",
+    "scipy.*",
     "streamlit.*",
     "uvicorn.*",
+    # Optional/conditional imports
+    "anthropic",
+    "anthropic.*",
+    # Dev-only MCP tooling — not installed in production env
+    "fastmcp",
+    "fastmcp.*",
     # Optional GPU/audio extras — not installed in base env
     "silero_vad",
     "silero_vad.*",
@@ -224,8 +243,26 @@ module = [
     "librosa.*",
     "cv2",
     "cv2.*",
+    # Google namespace packages: google and google.cloud are always present
+    # as namespace packages; genai stubs may be incomplete
+    "google",
+    "google.cloud",
+    "google.protobuf",
+    "google.protobuf.*",
+    "torch",
+    "torch.*",
+    "torchaudio",
+    "torchaudio.*",
 ]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# thumbnails.py uses lazy imports of google.genai inside functions.
+# google-genai is a core dep (always installed), but mypy strictness
+# varies by environment.  Keep relaxed checking for this file.
+module = "podcast_pipeline.utils.thumbnails"
+ignore_missing_imports = true
+warn_unused_ignores = false
 
 # ============================================================================
 # Pytest - Testing
@@ -291,6 +328,7 @@ directory = "htmlcov"
 
 [dependency-groups]
 dev = [
+    "fastmcp>=2.0.0",
     "mypy>=1.19.1",
     "pip-audit>=2.10.0",
     "pre-commit>=4.5.1",

@@ -2514,3 +2514,1261 @@ class TestPhase8PassesDisabledRegression:
         assert result is not None
         assert result.startswith("volume=")
         assert "eval=frame" in result
+
+
+# ---------------------------------------------------------------------------
+# Phase 9 — HEVC 10-bit, AV1 experimental, NVENC fallback, force_60fps_shortform
+# ---------------------------------------------------------------------------
+
+
+class TestPlatformSpecHevc10bit:
+    """Tests for HEVC 10-bit platform profile validation (Phase 9)."""
+
+    def test_platform_spec_hevc_nvenc_main10_p010le_is_valid(self) -> None:
+        """hevc_nvenc + main10 + p010le is the canonical NVENC 10-bit HEVC combination."""
+        spec = PlatformSpec(
+            video_codec="hevc_nvenc",
+            video_profile="main10",
+            pix_fmt="p010le",
+            preset="p7",
+        )
+        assert spec.video_codec == "hevc_nvenc"
+        assert spec.video_profile == "main10"
+        assert spec.pix_fmt == "p010le"
+
+    def test_platform_spec_libx265_main10_yuv420p10le_is_valid(self) -> None:
+        """libx265 with main10 profile and yuv420p10le pix_fmt is valid for software fallback."""
+        spec = PlatformSpec(
+            video_codec="libx265",
+            video_profile="main10",
+            pix_fmt="yuv420p10le",
+            preset="slow",
+        )
+        assert spec.video_codec == "libx265"
+        assert spec.video_profile == "main10"
+        assert spec.pix_fmt == "yuv420p10le"
+
+    def test_platform_spec_hevc_nvenc_rejects_invalid_pix_fmt(self, tmp_path: Path) -> None:
+        """hevc_nvenc does not accept yuv420p10le — only yuv420p or p010le."""
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "\n".join(
+                [
+                    "platforms:",
+                    "  youtube_ultra:",
+                    "    video_codec: hevc_nvenc",
+                    "    video_profile: main10",
+                    "    pix_fmt: yuv420p10le",
+                    "    preset: p7",
+                ]
+            )
+        )
+
+        with pytest.raises(ValueError, match=r"pix_fmt|hevc_nvenc|youtube_ultra"):
+            load_config(config_path)
+
+    def test_platform_spec_hevc_nvenc_rejects_uhq_preset_with_p010le(self) -> None:
+        """hevc_nvenc + p010le + uhq preset is forbidden (known RTX artifact regression)."""
+        with pytest.raises(ValueError, match=r"uhq|p010le|hevc_nvenc"):
+            PlatformSpec(
+                video_codec="hevc_nvenc",
+                video_profile="main10",
+                pix_fmt="p010le",
+                preset="uhq",
+            )
+
+    def test_platform_spec_hevc_nvenc_rejects_hq_preset_with_p010le(self) -> None:
+        """hevc_nvenc + p010le + hq preset is also forbidden for RTX safety."""
+        with pytest.raises(ValueError, match=r"hq|p010le|hevc_nvenc"):
+            PlatformSpec(
+                video_codec="hevc_nvenc",
+                video_profile="main10",
+                pix_fmt="p010le",
+                preset="hq",
+            )
+
+    def test_platform_spec_hevc_nvenc_allows_p7_preset(self) -> None:
+        """p7 is the recommended RTX preset for 10-bit HEVC and must be accepted."""
+        spec = PlatformSpec(
+            video_codec="hevc_nvenc",
+            video_profile="main10",
+            pix_fmt="p010le",
+            preset="p7",
+        )
+        assert spec.preset == "p7"
+
+    def test_platform_spec_libx265_invalid_profile_rejected(self, tmp_path: Path) -> None:
+        """libx265 with an invalid HEVC profile must fail fast."""
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "\n".join(
+                [
+                    "platforms:",
+                    "  youtube_ultra:",
+                    "    video_codec: libx265",
+                    "    video_profile: high",
+                    "    pix_fmt: yuv420p10le",
+                    "    preset: slow",
+                ]
+            )
+        )
+
+        with pytest.raises(ValueError, match=r"video_profile|libx265|youtube_ultra"):
+            load_config(config_path)
+
+    def test_youtube_ultra_platform_spec_defaults_hevc10_nvenc(self) -> None:
+        """youtube_ultra default should express NVENC HEVC 10-bit intent."""
+        config = load_config()
+        spec = config.platforms.youtube_ultra
+
+        assert spec.video_codec == "hevc_nvenc"
+        assert spec.video_profile == "main10"
+        assert spec.pix_fmt == "p010le"
+        assert spec.preset == "p7"
+        assert spec.width == 3840
+        assert spec.height == 2160
+        assert spec.aspect_ratio == "16:9"
+
+    def test_youtube_ultra_yaml_override_to_software_x265(self, tmp_path: Path) -> None:
+        """Operators can override youtube_ultra to use libx265 software fallback explicitly."""
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "\n".join(
+                [
+                    "platforms:",
+                    "  youtube_ultra:",
+                    "    video_codec: libx265",
+                    "    video_profile: main10",
+                    "    pix_fmt: yuv420p10le",
+                    "    preset: slow",
+                ]
+            )
+        )
+
+        config = load_config(config_path)
+        spec = config.platforms.youtube_ultra
+
+        assert spec.video_codec == "libx265"
+        assert spec.video_profile == "main10"
+        assert spec.pix_fmt == "yuv420p10le"
+
+
+class TestPlatformSpecAv1Experimental:
+    """Tests for AV1 experimental opt-in gate (Phase 9)."""
+
+    def test_platform_spec_av1_requires_experimental_flag(self) -> None:
+        """AV1 codec without av1_experimental=True must be rejected at config validation."""
+        with pytest.raises(ValueError, match=r"av1_experimental|libsvtav1|AV1"):
+            PlatformSpec(
+                video_codec="libsvtav1",
+                pix_fmt="yuv420p",
+                preset="medium",
+            )
+
+    def test_platform_spec_av1_accepted_with_experimental_flag(self) -> None:
+        """AV1 with av1_experimental=True must be accepted — explicit operator opt-in."""
+        spec = PlatformSpec(
+            video_codec="libsvtav1",
+            pix_fmt="yuv420p",
+            preset="medium",
+            av1_experimental=True,
+        )
+        assert spec.video_codec == "libsvtav1"
+        assert spec.av1_experimental is True
+
+    def test_platform_spec_av1_yaml_without_flag_rejected(self, tmp_path: Path) -> None:
+        """AV1 codec in YAML without av1_experimental fails at config load."""
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "\n".join(
+                [
+                    "platforms:",
+                    "  youtube_ultra:",
+                    "    video_codec: libsvtav1",
+                    "    pix_fmt: yuv420p",
+                    "    preset: medium",
+                ]
+            )
+        )
+
+        with pytest.raises(ValueError, match=r"av1_experimental|libsvtav1|AV1"):
+            load_config(config_path)
+
+    def test_platform_spec_av1_yaml_with_flag_accepted(self, tmp_path: Path) -> None:
+        """AV1 codec in YAML with av1_experimental: true loads cleanly."""
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "\n".join(
+                [
+                    "platforms:",
+                    "  youtube_ultra:",
+                    "    video_codec: libsvtav1",
+                    "    pix_fmt: yuv420p",
+                    "    preset: medium",
+                    "    av1_experimental: true",
+                ]
+            )
+        )
+
+        config = load_config(config_path)
+        assert config.platforms.youtube_ultra.video_codec == "libsvtav1"
+        assert config.platforms.youtube_ultra.av1_experimental is True
+
+    def test_platform_spec_av1_experimental_defaults_false_for_non_av1(self) -> None:
+        """Non-AV1 codecs should default av1_experimental=False with no error."""
+        spec = PlatformSpec(video_codec="libx264")
+        assert spec.av1_experimental is False
+
+        spec2 = PlatformSpec(
+            video_codec="hevc_nvenc", video_profile="main10", pix_fmt="p010le", preset="p7"
+        )
+        assert spec2.av1_experimental is False
+
+    def test_platform_spec_av1_not_default_activated_in_standard_profiles(self) -> None:
+        """Standard platform profiles must not silently enable AV1."""
+        config = load_config()
+
+        for platform_name in (
+            "youtube",
+            "tiktok",
+            "instagram",
+            "linkedin",
+            "twitter",
+            "facebook",
+            "spotify_video",
+            "apple_video",
+        ):
+            spec = getattr(config.platforms, platform_name)
+            if not spec.audio_only:
+                assert spec.av1_experimental is False, (
+                    f"{platform_name} should not have av1_experimental=True"
+                )
+
+
+class TestSmoothingConfigForce60fps:
+    """Tests for SmoothingConfig.force_60fps_shortform (Phase 9)."""
+
+    def test_force_60fps_shortform_defaults_false(self) -> None:
+        """force_60fps_shortform must default to False — no silent 60fps uplift."""
+        from podcast_pipeline.config.settings import SmoothingConfig
+
+        config = SmoothingConfig()
+        assert config.force_60fps_shortform is False
+
+    def test_force_60fps_shortform_loaded_from_yaml(self, tmp_path: Path) -> None:
+        """force_60fps_shortform should load from YAML when explicitly set."""
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "\n".join(
+                [
+                    "smoothing:",
+                    "  force_60fps_shortform: true",
+                ]
+            )
+        )
+
+        config = load_config(config_path)
+        assert config.smoothing.force_60fps_shortform is True
+
+    def test_force_60fps_shortform_default_config_yaml_is_false(self) -> None:
+        """Default config.yaml must keep force_60fps_shortform=false."""
+        config = load_config()
+        assert config.smoothing.force_60fps_shortform is False
+
+    def test_force_60fps_shortform_coexists_with_phase8_rife_fields(self) -> None:
+        """force_60fps_shortform must coexist with existing Phase 8 RIFE fields."""
+        from podcast_pipeline.config.settings import SmoothingConfig
+
+        cfg = SmoothingConfig(
+            rife_enabled=True,
+            rife_script_path="/path/to/rife.py",
+            rife_fallback_to_xfade=True,
+            force_60fps_shortform=True,
+        )
+        assert cfg.rife_enabled is True
+        assert cfg.force_60fps_shortform is True
+
+    def test_force_60fps_shortform_disabled_when_all_phase8_disabled(self) -> None:
+        """Disabling all Phase 8/9 features must include force_60fps_shortform=False."""
+        from podcast_pipeline.config.settings import SmoothingConfig
+
+        cfg = SmoothingConfig(
+            rife_enabled=False,
+            force_60fps_shortform=False,
+        )
+        assert cfg.force_60fps_shortform is False
+
+
+# ---------------------------------------------------------------------------
+# Phase 9 — Runtime encoder capability and fallback regression tests
+# ---------------------------------------------------------------------------
+
+
+class TestEncoderCapabilityDetection:
+    """Regression tests for _resolve_video_encoder NVENC detection branches and fallback."""
+
+    def _make_stage_with_hw(self, **hw_flags: bool) -> RenderStage:
+        """Create a RenderStage with injected HardwareEncoderInfo capability flags."""
+        from podcast_pipeline.utils.ffmpeg_toolkit import HardwareEncoderInfo
+
+        config = load_config()
+        stage = RenderStage(config)
+        stage._hw_encoders = HardwareEncoderInfo(**hw_flags)
+        return stage
+
+    # --- hevc_nvenc -> libx265 fallback chain ---
+
+    def test_encoder_capability_hevc_nvenc_selects_nvenc_when_gpu_present(self) -> None:
+        """When nvenc_hevc=True, _resolve_video_encoder must select hevc_nvenc directly."""
+        stage = self._make_stage_with_hw(nvenc_hevc=True)
+        spec = PlatformSpec(
+            video_codec="hevc_nvenc",
+            video_profile="main10",
+            pix_fmt="p010le",
+            preset="p7",
+        )
+        encoder, extra_args = stage._resolve_video_encoder(spec, "youtube_ultra")
+
+        assert encoder == "hevc_nvenc"
+        assert extra_args == []
+
+    def test_encoder_capability_hevc_nvenc_fallback_to_libx265_when_no_gpu(self) -> None:
+        """When nvenc_hevc=False, hevc_nvenc request must fall back to libx265."""
+        stage = self._make_stage_with_hw(nvenc_hevc=False)
+        spec = PlatformSpec(
+            video_codec="hevc_nvenc",
+            video_profile="main10",
+            pix_fmt="p010le",
+            preset="p7",
+        )
+        encoder, extra_args = stage._resolve_video_encoder(spec, "youtube_ultra")
+
+        assert encoder == "libx265"
+        # Extra args must override pix_fmt from p010le to yuv420p10le for software x265
+        assert "-pix_fmt" in extra_args
+        pf_idx = extra_args.index("-pix_fmt")
+        assert extra_args[pf_idx + 1] == "yuv420p10le"
+        # Profile should be passed as x265-params
+        assert any("profile=" in arg for arg in extra_args)
+
+    def test_encoder_fallback_x265_uses_yuv420p_when_pix_fmt_is_yuv420p(self) -> None:
+        """hevc_nvenc fallback with yuv420p source must keep yuv420p (not upgrade to 10-bit)."""
+        stage = self._make_stage_with_hw(nvenc_hevc=False)
+        spec = PlatformSpec(
+            video_codec="hevc_nvenc",
+            video_profile="main",
+            pix_fmt="yuv420p",
+            preset="medium",
+        )
+        encoder, extra_args = stage._resolve_video_encoder(spec, "youtube_ultra")
+
+        assert encoder == "libx265"
+        pf_idx = extra_args.index("-pix_fmt")
+        assert extra_args[pf_idx + 1] == "yuv420p"  # NOT 10-bit
+
+    # --- h264_nvenc -> libx264 fallback chain ---
+
+    def test_encoder_capability_h264_nvenc_selects_nvenc_when_gpu_present(self) -> None:
+        """When nvenc_h264=True, h264_nvenc spec must select hardware encoder."""
+        stage = self._make_stage_with_hw(nvenc_h264=True)
+        spec = PlatformSpec(video_codec="h264_nvenc")
+        encoder, extra_args = stage._resolve_video_encoder(spec, "youtube")
+
+        assert encoder == "h264_nvenc"
+        assert extra_args == []
+
+    def test_encoder_capability_h264_nvenc_fallback_to_libx264_when_no_gpu(self) -> None:
+        """When nvenc_h264=False, h264_nvenc request must fall back to libx264."""
+        stage = self._make_stage_with_hw(nvenc_h264=False)
+        spec = PlatformSpec(video_codec="h264_nvenc")
+        encoder, extra_args = stage._resolve_video_encoder(spec, "youtube")
+
+        assert encoder == "libx264"
+        assert extra_args == []
+
+    # --- AV1 experimental path ---
+
+    def test_encoder_capability_av1_with_software_support_logs_and_proceeds(self) -> None:
+        """AV1 codec with software_av1=True must be returned verbatim (no fallback)."""
+        stage = self._make_stage_with_hw(software_av1=True)
+        spec = PlatformSpec(
+            video_codec="libsvtav1",
+            pix_fmt="yuv420p",
+            preset="medium",
+            av1_experimental=True,
+        )
+        encoder, extra_args = stage._resolve_video_encoder(spec, "youtube_ultra")
+
+        assert encoder == "libsvtav1"
+        assert extra_args == []
+
+    def test_encoder_capability_av1_without_software_support_falls_back_to_libx265(
+        self,
+    ) -> None:
+        """AV1 codec with software_av1=False falls back to libx265."""
+        stage = self._make_stage_with_hw(software_av1=False)
+        spec = PlatformSpec(
+            video_codec="libsvtav1",
+            pix_fmt="yuv420p",
+            preset="medium",
+            av1_experimental=True,
+        )
+        encoder, extra_args = stage._resolve_video_encoder(spec, "youtube_ultra")
+
+        # When AV1 is unavailable, fall back to libx265 to avoid FFmpeg failure
+        assert encoder == "libx265"
+        assert extra_args == []
+
+    # --- Standard codecs: verbatim pass-through ---
+
+    def test_encoder_capability_libx264_passes_through_unchanged(self) -> None:
+        """libx264 must always pass through without hardware lookup."""
+        stage = self._make_stage_with_hw()
+        spec = PlatformSpec(video_codec="libx264")
+        encoder, extra_args = stage._resolve_video_encoder(spec, "youtube")
+
+        assert encoder == "libx264"
+        assert extra_args == []
+
+    def test_encoder_capability_libx265_passes_through_unchanged_even_with_gpu(self) -> None:
+        """Explicit libx265 must bypass the NVENC fallback chain entirely."""
+        stage = self._make_stage_with_hw(nvenc_hevc=True)  # GPU available but spec says software
+        spec = PlatformSpec(
+            video_codec="libx265",
+            video_profile="main10",
+            pix_fmt="yuv420p10le",
+            preset="slow",
+        )
+        encoder, extra_args = stage._resolve_video_encoder(spec, "youtube_ultra")
+
+        # Explicitly configured libx265 must NOT be upgraded to hevc_nvenc
+        assert encoder == "libx265"
+        assert extra_args == []
+
+
+class TestShortformVerticalDetection:
+    """Regression tests for _is_shortform_vertical platform spec detection."""
+
+    def test_shortform_vertical_detects_tiktok_9_16_aspect(self) -> None:
+        """TikTok (9:16) must be identified as short-form vertical."""
+        config = load_config()
+        stage = RenderStage(config)
+
+        tiktok_spec = PlatformSpec(width=1080, height=1920, aspect_ratio="9:16", max_duration=60)
+        assert stage._is_shortform_vertical(tiktok_spec) is True
+
+    def test_shortform_vertical_detects_instagram_9_16_aspect(self) -> None:
+        """Instagram Reels (9:16) must also be identified as short-form vertical."""
+        config = load_config()
+        stage = RenderStage(config)
+
+        instagram_spec = PlatformSpec(width=1080, height=1920, aspect_ratio="9:16", max_duration=90)
+        assert stage._is_shortform_vertical(instagram_spec) is True
+
+    def test_shortform_vertical_rejects_youtube_16_9(self) -> None:
+        """YouTube (16:9) must NOT be treated as short-form vertical."""
+        config = load_config()
+        stage = RenderStage(config)
+
+        youtube_spec = PlatformSpec(width=1920, height=1080, aspect_ratio="16:9")
+        assert stage._is_shortform_vertical(youtube_spec) is False
+
+    def test_shortform_vertical_rejects_linkedin_square(self) -> None:
+        """LinkedIn square (1:1) must NOT trigger short-form uplift."""
+        config = load_config()
+        stage = RenderStage(config)
+
+        linkedin_spec = PlatformSpec(width=1080, height=1080, aspect_ratio="1:1")
+        assert stage._is_shortform_vertical(linkedin_spec) is False
+
+    def test_shortform_vertical_rejects_youtube_ultra_16_9(self) -> None:
+        """youtube_ultra (16:9 4K) must NOT be treated as short-form vertical."""
+        config = load_config()
+        stage = RenderStage(config)
+
+        ultra_spec = PlatformSpec(
+            video_codec="hevc_nvenc",
+            video_profile="main10",
+            pix_fmt="p010le",
+            preset="p7",
+            width=3840,
+            height=2160,
+            aspect_ratio="16:9",
+        )
+        assert stage._is_shortform_vertical(ultra_spec) is False
+
+    def test_shortform_vertical_handles_missing_aspect_ratio(self) -> None:
+        """A spec with no aspect_ratio must not be treated as short-form vertical."""
+        config = load_config()
+        stage = RenderStage(config)
+
+        spec = PlatformSpec(width=1920, height=1080)  # aspect_ratio=None
+        assert stage._is_shortform_vertical(spec) is False
+
+
+class TestForce60fpsShortformGating:
+    """Regression tests: force_60fps_shortform only affects 9:16 targets, never long-form."""
+
+    def test_force_60fps_tiktok_and_instagram_are_shortform_targets(self) -> None:
+        """TikTok and Instagram spec aspect ratios confirm they are short-form vertical targets."""
+        config = load_config()
+        stage = RenderStage(config)
+
+        assert stage._is_shortform_vertical(config.platforms.tiktok) is True
+        assert stage._is_shortform_vertical(config.platforms.instagram) is True
+
+    def test_force_60fps_longform_exports_always_skipped(self) -> None:
+        """_is_shortform_vertical returns False for all non-9:16 platform specs."""
+        config = load_config()
+        stage = RenderStage(config)
+
+        longform_platforms = ["youtube", "facebook", "twitter", "linkedin", "youtube_ultra"]
+        for platform_name in longform_platforms:
+            spec = getattr(config.platforms, platform_name, None)
+            if spec is None or spec.audio_only:
+                continue
+            assert stage._is_shortform_vertical(spec) is False, (
+                f"{platform_name} should not be treated as short-form vertical"
+            )
+
+    def test_force_60fps_rife_unavailable_returns_none(self, tmp_path: Path) -> None:
+        """When RIFE script path is empty, _apply_shortform_60fps_rife returns None."""
+        config = load_config()
+        config.smoothing.rife_script_path = ""  # No RIFE configured
+        stage = RenderStage(config)
+
+        input_video = tmp_path / "input.mp4"
+        input_video.write_bytes(b"fake")
+        output_dir = tmp_path / "out"
+        output_dir.mkdir()
+
+        result = stage._apply_shortform_60fps_rife(input_video, output_dir, "tiktok")
+        assert result is None  # Graceful fallback when RIFE unavailable
+
+    def test_force_60fps_default_config_does_not_affect_any_platform(self) -> None:
+        """With force_60fps_shortform=False (default), no platform is marked for RIFE uplift."""
+        config = load_config()
+        assert config.smoothing.force_60fps_shortform is False
+
+        stage = RenderStage(config)
+        # Gate condition: smoothing.force_60fps_shortform AND rife_enabled AND is_shortform_vertical
+        # First check in gate fails immediately — no platforms are processed
+        # Confirm: even shortform platforms won't receive uplift
+        tiktok_spec = config.platforms.tiktok
+        # Gate = False (force_60fps_shortform off) -> no uplift regardless
+        gate_passes = (
+            config.smoothing.force_60fps_shortform
+            and config.smoothing.rife_enabled
+            and stage._is_shortform_vertical(tiktok_spec)
+        )
+        assert gate_passes is False
+
+
+class TestLegacyPlatformUnaffectedByPhase9Options:
+    """Regression suite: enabling Phase 9 options must not affect legacy platform exports."""
+
+    def test_youtube_spec_unchanged_when_phase9_hevc_configured(self) -> None:
+        """YouTube spec must remain H.264 even when youtube_ultra HEVC is configured."""
+        config = load_config()
+        youtube = config.platforms.youtube
+
+        assert youtube.video_codec == "libx264"
+        assert youtube.pix_fmt == "yuv420p"
+        assert youtube.av1_experimental is False
+
+    def test_tiktok_spec_fps_unchanged_when_force_60fps_disabled(self) -> None:
+        """TikTok spec must remain at 30fps when force_60fps_shortform=False."""
+        config = load_config()
+        assert config.smoothing.force_60fps_shortform is False
+
+        tiktok = config.platforms.tiktok
+        assert tiktok.video_codec == "libx264"
+        assert tiktok.fps == 30  # Stays at 30fps - no silent uplift
+
+    def test_spotify_video_and_apple_video_unchanged_by_hevc_addition(self) -> None:
+        """Compliance video platforms (spotify_video, apple_video) must remain H.264."""
+        config = load_config()
+
+        for platform_name in ("spotify_video", "apple_video"):
+            spec = getattr(config.platforms, platform_name)
+            assert spec.video_codec == "libx264", f"{platform_name} codec changed unexpectedly"
+            assert spec.av1_experimental is False
+            assert spec.pix_fmt == "yuv420p"
+
+    def test_audio_only_platforms_completely_unaffected_by_phase9(self) -> None:
+        """Audio-only platforms (spotify, apple) must be completely unaffected."""
+        config = load_config()
+
+        spotify = config.platforms.spotify
+        apple = config.platforms.apple
+
+        assert spotify.audio_only is True
+        assert apple.audio_only is True
+        assert spotify.av1_experimental is False
+        assert apple.av1_experimental is False
+
+    def test_resolve_encoder_with_default_libx264_unaffected_by_hevc_capability(self) -> None:
+        """libx264 encoder must be selected unchanged regardless of GPU HEVC capability."""
+        from podcast_pipeline.utils.ffmpeg_toolkit import HardwareEncoderInfo
+
+        config = load_config()
+        stage = RenderStage(config)
+        # Even with full NVENC capability, libx264 spec stays as-is
+        stage._hw_encoders = HardwareEncoderInfo(nvenc_h264=True, nvenc_hevc=True)
+
+        spec = config.platforms.youtube  # libx264 spec
+        encoder, extra_args = stage._resolve_video_encoder(spec, "youtube")
+
+        assert encoder == "libx264"
+        assert extra_args == []
+
+
+class TestCaptionBurnIn:
+    """Tests for _burn_captions integration — Task 2 (09-06) and Task 3 regression coverage."""
+
+    def _make_stage_with_captions(self, enabled: bool = True) -> RenderStage:
+        """Return a RenderStage with caption burn-in enabled/disabled."""
+        config = load_config()
+        config.branding.captions.enabled = enabled
+        return RenderStage(config)
+
+    def test_caption_burn_missing_alignment_raises_runtime_error(self, tmp_path: Path) -> None:
+        """_burn_captions must raise RuntimeError when word_alignment.json is absent."""
+        stage = self._make_stage_with_captions(enabled=True)
+        spec = load_config().platforms.youtube
+
+        video_path = tmp_path / "output" / "youtube" / "final.mp4"
+        video_path.parent.mkdir(parents=True, exist_ok=True)
+        video_path.write_bytes(b"video")
+        output_dir = video_path.parent
+        # No transcribe/ directory — alignment artifact is absent.
+
+        with pytest.raises(RuntimeError, match=r"word_alignment\.json"):
+            stage._burn_captions(
+                video_path=video_path,
+                output_dir=output_dir,
+                job_dir=tmp_path,
+                platform="youtube",
+                spec=spec,
+            )
+
+    def test_caption_burn_produces_captioned_output_file(self, tmp_path: Path, monkeypatch) -> None:
+        """_burn_captions must return a captioned video path when alignment exists."""
+        import json as _json
+
+        stage = self._make_stage_with_captions(enabled=True)
+        spec = load_config().platforms.youtube
+
+        # Create word_alignment.json artifact.
+        transcribe_dir = tmp_path / "transcribe"
+        transcribe_dir.mkdir(parents=True)
+        word_data = {
+            "words": [
+                {"word": "hello", "start": 0.0, "end": 0.5},
+                {"word": "world", "start": 0.6, "end": 1.1},
+            ]
+        }
+        (transcribe_dir / "word_alignment.json").write_text(_json.dumps(word_data))
+
+        video_path = tmp_path / "output" / "youtube" / "final.mp4"
+        video_path.parent.mkdir(parents=True, exist_ok=True)
+        video_path.write_bytes(b"video")
+        output_dir = video_path.parent
+
+        def _fake_ffmpeg(args: list[str]) -> None:
+            """Simulate FFmpeg by writing the output file."""
+            out = Path(args[-1])
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_bytes(b"captioned-video")
+
+        monkeypatch.setattr("podcast_pipeline.stages.render.run_ffmpeg", _fake_ffmpeg)
+
+        result = stage._burn_captions(
+            video_path=video_path,
+            output_dir=output_dir,
+            job_dir=tmp_path,
+            platform="youtube",
+            spec=spec,
+        )
+
+        assert result is not None
+        assert result.exists()
+        assert result.name.startswith("captioned")
+
+    def test_caption_burn_ffmpeg_uses_ass_filter(self, tmp_path: Path, monkeypatch) -> None:
+        """_burn_captions must pass the ass= filter to FFmpeg for libass rendering."""
+        import json as _json
+
+        stage = self._make_stage_with_captions(enabled=True)
+        spec = load_config().platforms.youtube
+
+        transcribe_dir = tmp_path / "transcribe"
+        transcribe_dir.mkdir(parents=True)
+        (transcribe_dir / "word_alignment.json").write_text(
+            _json.dumps({"words": [{"word": "test", "start": 0.0, "end": 0.5}]})
+        )
+
+        video_path = tmp_path / "output" / "youtube" / "final.mp4"
+        video_path.parent.mkdir(parents=True, exist_ok=True)
+        video_path.write_bytes(b"video")
+        output_dir = video_path.parent
+
+        captured_args: list[list[str]] = []
+
+        def _capture_ffmpeg(args: list[str]) -> None:
+            captured_args.append(list(args))
+            out = Path(args[-1])
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_bytes(b"captioned")
+
+        monkeypatch.setattr("podcast_pipeline.stages.render.run_ffmpeg", _capture_ffmpeg)
+
+        stage._burn_captions(
+            video_path=video_path,
+            output_dir=output_dir,
+            job_dir=tmp_path,
+            platform="youtube",
+            spec=spec,
+        )
+
+        assert captured_args, "run_ffmpeg should have been called"
+        args = captured_args[0]
+        assert "-vf" in args
+        vf_idx = args.index("-vf")
+        assert "ass=" in args[vf_idx + 1]
+
+    def test_caption_burn_unsupported_aspect_ratio_returns_none(self, tmp_path: Path) -> None:
+        """_burn_captions must return None and log warning for unsupported ratios."""
+        import json as _json
+
+        stage = self._make_stage_with_captions(enabled=True)
+        spec = PlatformSpec(
+            container="mp4",
+            video_codec="libx264",
+            video_bitrate="4M",
+            audio_codec="aac",
+            audio_bitrate="128k",
+            pix_fmt="yuv420p",
+            aspect_ratio="4:3",  # not in SUPPORTED_ASPECT_RATIOS
+        )
+
+        transcribe_dir = tmp_path / "transcribe"
+        transcribe_dir.mkdir(parents=True)
+        (transcribe_dir / "word_alignment.json").write_text(
+            _json.dumps({"words": [{"word": "hi", "start": 0.0, "end": 0.3}]})
+        )
+
+        video_path = tmp_path / "output" / "custom" / "final.mp4"
+        video_path.parent.mkdir(parents=True, exist_ok=True)
+        video_path.write_bytes(b"video")
+        output_dir = video_path.parent
+
+        result = stage._burn_captions(
+            video_path=video_path,
+            output_dir=output_dir,
+            job_dir=tmp_path,
+            platform="custom",
+            spec=spec,
+        )
+
+        # Unsupported ratio should produce None, not an exception.
+        assert result is None
+
+    def test_caption_burn_ffmpeg_failure_raises_runtime_error(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """FFmpeg libass failure must surface as RuntimeError with actionable message."""
+        import json as _json
+
+        stage = self._make_stage_with_captions(enabled=True)
+        spec = load_config().platforms.youtube
+
+        transcribe_dir = tmp_path / "transcribe"
+        transcribe_dir.mkdir(parents=True)
+        (transcribe_dir / "word_alignment.json").write_text(
+            _json.dumps({"words": [{"word": "hi", "start": 0.0, "end": 0.3}]})
+        )
+
+        video_path = tmp_path / "output" / "youtube" / "final.mp4"
+        video_path.parent.mkdir(parents=True, exist_ok=True)
+        video_path.write_bytes(b"video")
+        output_dir = video_path.parent
+
+        def _fail_ffmpeg(_args: list[str]) -> None:
+            raise FFmpegError("libass not found")
+
+        monkeypatch.setattr("podcast_pipeline.stages.render.run_ffmpeg", _fail_ffmpeg)
+
+        with pytest.raises(RuntimeError, match="Caption burn-in failed"):
+            stage._burn_captions(
+                video_path=video_path,
+                output_dir=output_dir,
+                job_dir=tmp_path,
+                platform="youtube",
+                spec=spec,
+            )
+
+    def test_caption_burn_disabled_skips_burn_in_render_video(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """_render_video must skip caption burn when decisions.captions_enabled is False."""
+        config = load_config()
+        stage = RenderStage(config)
+        spec = config.platforms.youtube
+
+        output_dir = tmp_path / "output" / "youtube"
+        input_video = tmp_path / "input" / "raw.mp4"
+        input_video.parent.mkdir(parents=True, exist_ok=True)
+        input_video.write_bytes(b"video")
+
+        burn_calls: list[str] = []
+
+        def _record_burn(*_args: Any, **_kwargs: Any) -> Path | None:
+            burn_calls.append("called")
+            return None
+
+        monkeypatch.setattr(
+            "podcast_pipeline.stages.render.run_ffmpeg",
+            lambda args: (
+                Path(args[-1]).parent.mkdir(parents=True, exist_ok=True)
+                or Path(args[-1]).write_bytes(b"rendered")
+                or None
+            ),
+        )
+        monkeypatch.setattr(stage, "_burn_captions", _record_burn)
+        monkeypatch.setattr(stage, "_normalize_loudness", lambda *_a, **_k: None)
+        monkeypatch.setattr(stage, "_validate_video_platform_compliance", lambda *_a, **_k: None)
+
+        stage._render_video(
+            output_dir=output_dir,
+            input_video=input_video,
+            platform="youtube",
+            spec=spec,
+            decisions=ReviewDecisions(review_complete=True, captions_enabled=False),
+            video_info={"width": 1920, "height": 1080, "duration": 30.0},
+            edit_plan=None,
+            normalize_audio=False,
+        )
+
+        assert burn_calls == [], "_burn_captions must not be called when captions_enabled=False"
+
+    def test_caption_burn_enabled_calls_burn_in_render_video(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """_render_video must invoke _burn_captions when decisions.captions_enabled is True."""
+        config = load_config()
+        stage = RenderStage(config)
+        spec = config.platforms.youtube
+
+        output_dir = tmp_path / "output" / "youtube"
+        input_video = tmp_path / "input" / "raw.mp4"
+        input_video.parent.mkdir(parents=True, exist_ok=True)
+        input_video.write_bytes(b"video")
+
+        captioned_video = tmp_path / "output" / "youtube" / "captioned.mp4"
+        burn_calls: list[str] = []
+
+        def _fake_burn(*_args: Any, **_kwargs: Any) -> Path | None:
+            burn_calls.append("called")
+            captioned_video.parent.mkdir(parents=True, exist_ok=True)
+            captioned_video.write_bytes(b"captioned")
+            return captioned_video
+
+        monkeypatch.setattr(
+            "podcast_pipeline.stages.render.run_ffmpeg",
+            lambda args: (
+                Path(args[-1]).parent.mkdir(parents=True, exist_ok=True)
+                or Path(args[-1]).write_bytes(b"rendered")
+                or None
+            ),
+        )
+        monkeypatch.setattr(stage, "_burn_captions", _fake_burn)
+        monkeypatch.setattr(stage, "_normalize_loudness", lambda *_a, **_k: None)
+        monkeypatch.setattr(stage, "_validate_video_platform_compliance", lambda *_a, **_k: None)
+
+        stage._render_video(
+            output_dir=output_dir,
+            input_video=input_video,
+            platform="youtube",
+            spec=spec,
+            decisions=ReviewDecisions(review_complete=True, captions_enabled=True),
+            video_info={"width": 1920, "height": 1080, "duration": 30.0},
+            edit_plan=None,
+            normalize_audio=False,
+        )
+
+        assert len(burn_calls) == 1, (
+            "_burn_captions should be called exactly once when captions_enabled=True"
+        )
+
+    def test_caption_burn_legacy_alignment_location_discovered(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """_burn_captions should find word_alignment.json in analysis/ if transcribe/ is absent."""
+        import json as _json
+
+        stage = self._make_stage_with_captions(enabled=True)
+        spec = load_config().platforms.youtube
+
+        # Place alignment only in legacy analysis/ location.
+        analysis_dir = tmp_path / "analysis"
+        analysis_dir.mkdir(parents=True)
+        (analysis_dir / "word_alignment.json").write_text(
+            _json.dumps({"words": [{"word": "legacy", "start": 0.0, "end": 0.4}]})
+        )
+
+        video_path = tmp_path / "output" / "youtube" / "final.mp4"
+        video_path.parent.mkdir(parents=True, exist_ok=True)
+        video_path.write_bytes(b"video")
+        output_dir = video_path.parent
+
+        def _fake_ffmpeg(args: list[str]) -> None:
+            out = Path(args[-1])
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_bytes(b"captioned")
+
+        monkeypatch.setattr("podcast_pipeline.stages.render.run_ffmpeg", _fake_ffmpeg)
+
+        # Should succeed using legacy path — no RuntimeError raised.
+        result = stage._burn_captions(
+            video_path=video_path,
+            output_dir=output_dir,
+            job_dir=tmp_path,
+            platform="youtube",
+            spec=spec,
+        )
+        assert result is not None
+
+    def test_caption_burn_ass_file_generated_per_aspect_ratio(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """_burn_captions must generate a per-ratio .ass file in the output directory."""
+        import json as _json
+
+        stage = self._make_stage_with_captions(enabled=True)
+        spec = load_config().platforms.tiktok  # 9:16
+
+        transcribe_dir = tmp_path / "transcribe"
+        transcribe_dir.mkdir(parents=True)
+        (transcribe_dir / "word_alignment.json").write_text(
+            _json.dumps({"words": [{"word": "tiktok", "start": 0.0, "end": 0.5}]})
+        )
+
+        video_path = tmp_path / "output" / "tiktok" / "final.mp4"
+        video_path.parent.mkdir(parents=True, exist_ok=True)
+        video_path.write_bytes(b"video")
+        output_dir = video_path.parent
+
+        def _fake_ffmpeg(args: list[str]) -> None:
+            out = Path(args[-1])
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_bytes(b"captioned")
+
+        monkeypatch.setattr("podcast_pipeline.stages.render.run_ffmpeg", _fake_ffmpeg)
+
+        stage._burn_captions(
+            video_path=video_path,
+            output_dir=output_dir,
+            job_dir=tmp_path,
+            platform="tiktok",
+            spec=spec,
+        )
+
+        # ASS file should exist and reflect 9:16 ratio naming.
+        ass_files = list(output_dir.glob("*.ass"))
+        assert ass_files, "ASS file must be written to output_dir"
+        assert any("9_16" in f.name for f in ass_files), "ASS filename should include aspect ratio"
+
+
+class TestGAP7RenderWiring:
+    """GAP-7 regression tests: ReviewDecisions fields must actually affect render output.
+
+    Prior to Phase 09-12, captions_enabled/sound_kit_enabled/branding_profile_name were
+    persisted by the UI but silently ignored by render.py.  These tests lock the new
+    gating behaviour so it cannot regress.
+    """
+
+    # ── Helpers ────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _make_stage() -> RenderStage:
+        """Return a RenderStage with default config."""
+        return RenderStage(load_config())
+
+    @staticmethod
+    def _fake_ffmpeg_writer(args: list[str]) -> None:
+        """Simulate FFmpeg by writing empty bytes to the last argument path."""
+        out = Path(args[-1])
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(b"rendered")
+
+    def _call_render_video(  # noqa: PLR0913
+        self,
+        stage: RenderStage,
+        monkeypatch: Any,
+        tmp_path: Path,
+        *,
+        decisions: ReviewDecisions,
+        mock_mix_stingers: bool = True,
+        mock_burn_captions: bool = True,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """Call _render_video with mocks; return (stinger_calls, burn_calls)."""
+        config = load_config()
+        spec = config.platforms.youtube
+
+        input_video = tmp_path / "input" / "raw.mp4"
+        input_video.parent.mkdir(parents=True, exist_ok=True)
+        input_video.write_bytes(b"video")
+        output_dir = tmp_path / "output" / "youtube"
+
+        stinger_calls: list[dict[str, Any]] = []
+        burn_calls: list[dict[str, Any]] = []
+
+        monkeypatch.setattr(
+            "podcast_pipeline.stages.render.run_ffmpeg",
+            self._fake_ffmpeg_writer,
+        )
+        monkeypatch.setattr(stage, "_normalize_loudness", lambda *_a, **_k: None)
+        monkeypatch.setattr(stage, "_validate_video_platform_compliance", lambda *_a, **_k: None)
+
+        if mock_mix_stingers:
+
+            def _fake_mix(*_args: Any, **kwargs: Any) -> Path:
+                stinger_calls.append(dict(kwargs))
+                video = output_dir / "stingered.mp4"
+                video.parent.mkdir(parents=True, exist_ok=True)
+                video.write_bytes(b"stingered")
+                return video
+
+            monkeypatch.setattr(stage, "_mix_stingers", _fake_mix)
+
+        if mock_burn_captions:
+
+            def _fake_burn(*_args: Any, **kwargs: Any) -> Path | None:
+                burn_calls.append(dict(kwargs))
+                return None
+
+            monkeypatch.setattr(stage, "_burn_captions", _fake_burn)
+
+        stage._render_video(
+            output_dir=output_dir,
+            input_video=input_video,
+            platform="youtube",
+            spec=spec,
+            decisions=decisions,
+            video_info={"width": 1920, "height": 1080, "duration": 30.0},
+            edit_plan=None,
+            normalize_audio=False,
+        )
+
+        return stinger_calls, burn_calls
+
+    # ── Tests ──────────────────────────────────────────────────────────────────
+
+    def test_render_video_captions_gate_respects_decisions(
+        self, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        """_burn_captions called when captions_enabled=True; skipped when False."""
+        stage = self._make_stage()
+
+        # captions_enabled=True → _burn_captions MUST be called.
+        _, burn_calls_on = self._call_render_video(
+            stage,
+            monkeypatch,
+            tmp_path / "on",
+            decisions=ReviewDecisions(review_complete=True, captions_enabled=True),
+        )
+        assert len(burn_calls_on) == 1, "_burn_captions must be called when captions_enabled=True"
+
+        # captions_enabled=False → _burn_captions MUST NOT be called.
+        _, burn_calls_off = self._call_render_video(
+            stage,
+            monkeypatch,
+            tmp_path / "off",
+            decisions=ReviewDecisions(review_complete=True, captions_enabled=False),
+        )
+        assert burn_calls_off == [], "_burn_captions must be skipped when captions_enabled=False"
+
+    def test_render_video_sound_kit_gate_respects_decisions(
+        self, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        """_mix_stingers called when sound_kit_enabled=True; skipped when False."""
+        stage = self._make_stage()
+
+        # sound_kit_enabled=True → _mix_stingers MUST be called.
+        stinger_calls_on, _ = self._call_render_video(
+            stage,
+            monkeypatch,
+            tmp_path / "on",
+            decisions=ReviewDecisions(review_complete=True, sound_kit_enabled=True),
+        )
+        assert len(stinger_calls_on) == 1, (
+            "_mix_stingers must be called when sound_kit_enabled=True"
+        )
+
+        # sound_kit_enabled=False → _mix_stingers MUST NOT be called.
+        stinger_calls_off, _ = self._call_render_video(
+            stage,
+            monkeypatch,
+            tmp_path / "off",
+            decisions=ReviewDecisions(review_complete=True, sound_kit_enabled=False),
+        )
+        assert stinger_calls_off == [], "_mix_stingers must be skipped when sound_kit_enabled=False"
+
+    def test_render_video_branding_profile_override(self, tmp_path: Path, monkeypatch: Any) -> None:
+        """decisions.branding_profile_name flows into _burn_captions and _mix_stingers."""
+        stage = self._make_stage()
+
+        stinger_calls, burn_calls = self._call_render_video(
+            stage,
+            monkeypatch,
+            tmp_path,
+            decisions=ReviewDecisions(
+                review_complete=True,
+                captions_enabled=True,
+                sound_kit_enabled=True,
+                branding_profile_name="custom",
+            ),
+        )
+
+        assert len(stinger_calls) == 1, "_mix_stingers must be called with profile override"
+        assert stinger_calls[0].get("profile_name_override") == "custom", (
+            "_mix_stingers must receive profile_name_override='custom'"
+        )
+
+        assert len(burn_calls) == 1, "_burn_captions must be called with profile override"
+        assert burn_calls[0].get("profile_name_override") == "custom", (
+            "_burn_captions must receive profile_name_override='custom'"
+        )
+
+    def test_burn_captions_aspect_ratio_override(self, tmp_path: Path, monkeypatch: Any) -> None:
+        """_burn_captions uses aspect_ratio_override when provided, ignoring spec.aspect_ratio."""
+        import json as _json
+
+        stage = self._make_stage()
+        config = load_config()
+        spec = config.platforms.youtube  # spec has 16:9
+
+        # Provide alignment artifact so the caption path can proceed.
+        transcribe_dir = tmp_path / "transcribe"
+        transcribe_dir.mkdir(parents=True)
+        (transcribe_dir / "word_alignment.json").write_text(
+            _json.dumps({"words": [{"word": "test", "start": 0.0, "end": 0.5}]})
+        )
+
+        video_path = tmp_path / "output" / "youtube" / "final.mp4"
+        video_path.parent.mkdir(parents=True, exist_ok=True)
+        video_path.write_bytes(b"video")
+        output_dir = video_path.parent
+
+        generated_ass_paths: list[str] = []
+
+        def _capture_ffmpeg(args: list[str]) -> None:
+            """Record the ass= filter path; write output."""
+            for arg in args:
+                if arg.startswith("ass="):
+                    generated_ass_paths.append(arg[4:])
+            out = Path(args[-1])
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_bytes(b"captioned")
+
+        monkeypatch.setattr("podcast_pipeline.stages.render.run_ffmpeg", _capture_ffmpeg)
+
+        result = stage._burn_captions(
+            video_path=video_path,
+            output_dir=output_dir,
+            job_dir=tmp_path,
+            platform="youtube",
+            spec=spec,
+            aspect_ratio_override="9:16",  # override spec's 16:9
+        )
+
+        assert result is not None
+        # The ASS file written to output_dir must reflect "9:16" not "16:9".
+        ass_files = list(output_dir.glob("*.ass"))
+        assert any("9_16" in f.name for f in ass_files), (
+            "ASS filename must reflect the overridden aspect ratio 9:16, not spec's 16:9"
+        )
+
+    def test_mix_stingers_profile_name_override(self, tmp_path: Path, monkeypatch: Any) -> None:
+        """_mix_stingers uses profile_name_override instead of config.branding.active_profile."""
+        stage = self._make_stage()
+
+        loaded_profiles: list[str] = []
+
+        def _fake_load_profile(name: str, branding_dir: Any) -> None:
+            loaded_profiles.append(name)
+
+        monkeypatch.setattr(
+            "podcast_pipeline.utils.branding.load_profile",
+            _fake_load_profile,
+        )
+
+        video_path = tmp_path / "video.mp4"
+        video_path.write_bytes(b"video")
+        output_dir = tmp_path / "output"
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Call with profile_name_override — the override profile name must be used.
+        stage._mix_stingers(
+            video_path=video_path,
+            output_dir=output_dir,
+            platform="youtube",
+            edit_plan=None,
+            src_duration=60.0,
+            profile_name_override="my_custom_profile",
+        )
+
+        assert "my_custom_profile" in loaded_profiles, (
+            "_mix_stingers must use profile_name_override when provided"
+        )
+
+    def test_render_video_captions_disabled_ignores_config(
+        self, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        """decisions.captions_enabled=False skips captions even when config.branding.captions.enabled=True.
+
+        This is the key regression: the UI decision must take precedence over config.yaml.
+        """
+        config = load_config()
+        config.branding.captions.enabled = True  # config says enabled...
+        stage = RenderStage(config)
+
+        burn_calls: list[str] = []
+
+        def _record_burn(*_args: Any, **_kwargs: Any) -> Path | None:
+            burn_calls.append("called")
+            return None
+
+        monkeypatch.setattr(
+            "podcast_pipeline.stages.render.run_ffmpeg",
+            self._fake_ffmpeg_writer,
+        )
+        monkeypatch.setattr(stage, "_burn_captions", _record_burn)
+        monkeypatch.setattr(stage, "_normalize_loudness", lambda *_a, **_k: None)
+        monkeypatch.setattr(stage, "_validate_video_platform_compliance", lambda *_a, **_k: None)
+
+        input_video = tmp_path / "input" / "raw.mp4"
+        input_video.parent.mkdir(parents=True, exist_ok=True)
+        input_video.write_bytes(b"video")
+        output_dir = tmp_path / "output" / "youtube"
+        spec = config.platforms.youtube
+
+        stage._render_video(
+            output_dir=output_dir,
+            input_video=input_video,
+            platform="youtube",
+            spec=spec,
+            decisions=ReviewDecisions(
+                review_complete=True,
+                captions_enabled=False,  # ...but UI says disabled
+            ),
+            video_info={"width": 1920, "height": 1080, "duration": 30.0},
+            edit_plan=None,
+            normalize_audio=False,
+        )
+
+        assert burn_calls == [], (
+            "_burn_captions must NOT be called when decisions.captions_enabled=False, "
+            "even when config.branding.captions.enabled=True"
+        )

@@ -6,8 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from podcast_pipeline.config import Config
+from podcast_pipeline.config import BrandingConfig, Config
 from podcast_pipeline.models.analysis import AnalysisResult
+from podcast_pipeline.models.branding import BrandingProfile, PlatformBrandingOverride
 from podcast_pipeline.models.job import Job, StageStatus
 from podcast_pipeline.models.transcript import Segment, Word
 from podcast_pipeline.pipeline import Pipeline
@@ -205,7 +206,7 @@ class TestStageValidation:
     def test_invalid_stage_rejected_with_validation_error(self, config: Config) -> None:
         """Invalid explicit stage names should fail fast."""
         pipeline = Pipeline(config)
-        job = Job(job_id="invalid-stage-job", input_file="/tmp/test.mp4")  # noqa: S108
+        job = Job(job_id="invalid-stage-job", input_file="/tmp/test.mp4")
 
         with pytest.raises(ValueError, match="Unknown stage: invalid-stage"):
             pipeline.run(job, stage="invalid-stage")
@@ -216,7 +217,7 @@ class TestStageValidation:
     def test_invalid_stage_validation_for_until_stage(self, config: Config) -> None:
         """Invalid until_stage values should fail fast."""
         pipeline = Pipeline(config)
-        job = Job(job_id="invalid-until-job", input_file="/tmp/test.mp4")  # noqa: S108
+        job = Job(job_id="invalid-until-job", input_file="/tmp/test.mp4")
 
         with pytest.raises(ValueError, match="Unknown stage: not-a-stage"):
             pipeline.run(job, until_stage="not-a-stage")
@@ -230,7 +231,7 @@ class TestPipelineLocking:
     def test_state_reload_uses_latest_job_state(self, config: Config) -> None:
         """state_reload should skip stages already complete on disk."""
         pipeline = Pipeline(config)
-        job = Job(job_id="state-reload-job", input_file="/tmp/test.mp4")  # noqa: S108
+        job = Job(job_id="state-reload-job", input_file="/tmp/test.mp4")
         job.save(config.paths.jobs_dir)
 
         stale_job = pipeline.load_job(job.job_id)
@@ -255,7 +256,7 @@ class TestPipelineLocking:
         """lock contention should reject a concurrent run for the same job."""
         pipeline_one = Pipeline(config)
         pipeline_two = Pipeline(config)
-        job = Job(job_id="lock-contention-job", input_file="/tmp/test.mp4")  # noqa: S108
+        job = Job(job_id="lock-contention-job", input_file="/tmp/test.mp4")
         job.save(config.paths.jobs_dir)
 
         stage_started = threading.Event()
@@ -355,7 +356,9 @@ class TestAnalyzeStageThumbnailMaterialization:
             output_path.parent.mkdir(parents=True, exist_ok=True)
             output_path.write_bytes(b"thumbnail")
 
-        monkeypatch.setattr("podcast_pipeline.stages.analyze.run_ffmpeg", _fake_ffmpeg)
+        import podcast_pipeline.stages.analyze as _analyze_mod
+
+        monkeypatch.setattr(_analyze_mod, "run_ffmpeg", _fake_ffmpeg)
 
         job_dir = temp_dir / "jobs" / "thumbnail-job"
         (job_dir / "analysis").mkdir(parents=True, exist_ok=True)
@@ -380,6 +383,220 @@ class TestAnalyzeStageThumbnailMaterialization:
         assert first_image_path != second_image_path
         assert (job_dir / first_image_path).exists()
         assert (job_dir / second_image_path).exists()
+
+
+class TestAnalyzeStageAIThumbnailGeneration:
+    """Tests for AI thumbnail generation wiring in the analyze stage."""
+
+    def test_ai_thumbnail_generation_skipped_when_disabled(
+        self,
+        config: Config,
+        temp_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """_generate_ai_thumbnails must not be called when thumbnail_generation.enabled=False."""
+
+        # Config has thumbnail_generation.enabled=False by default
+        assert config.branding.thumbnail_generation.enabled is False
+
+        class _Provider:
+            name = "stub"
+            model = "stub-model"
+            supports_video = True
+
+            def is_available(self) -> bool:
+                return True
+
+            def analyze(self, video_path: Path, transcript: dict) -> AnalysisResult:  # type: ignore[type-arg]
+                del video_path, transcript
+                return AnalysisResult.model_validate(
+                    {
+                        "content_cuts": [],
+                        "viral_clips": [],
+                        "thumbnail_frames": [
+                            {
+                                "timestamp": "00:05",
+                                "timestamp_seconds": 5.0,
+                                "visual_description": "Host on stage",
+                            }
+                        ],
+                        "marketing": {},
+                        "metadata": {"summary": "", "topics": [], "mood": ""},
+                    }
+                )
+
+        stage = AnalyzeStage(config)
+        stage.providers = [_Provider()]  # type: ignore[assignment]
+        monkeypatch.setattr(stage, "_run_research", lambda *args, **kwargs: None)
+        monkeypatch.setattr(stage, "_run_viral_signals", lambda *args, **kwargs: None)
+        import podcast_pipeline.stages.analyze as _analyze_mod
+
+        monkeypatch.setattr(_analyze_mod, "run_ffmpeg", lambda *a, **k: None)
+
+        ai_gen_calls: list[object] = []
+
+        def _spy_ai_gen(*args: object, **kwargs: object) -> list[str]:
+            ai_gen_calls.append((args, kwargs))
+            return []
+
+        monkeypatch.setattr(stage, "_generate_ai_thumbnails", _spy_ai_gen)
+
+        job_dir = temp_dir / "jobs" / "ai-thumbnail-disabled-job"
+        (job_dir / "analysis").mkdir(parents=True, exist_ok=True)
+        (job_dir / "analysis" / "transcript.json").write_text(json.dumps({"text": "test"}))
+        (job_dir / "intermediate").mkdir(parents=True, exist_ok=True)
+        (job_dir / "intermediate" / "proxy.mp4").write_bytes(b"proxy")
+
+        job = Job(job_id="ai-thumbnail-disabled-job", input_file=str(job_dir / "input.mp4"))
+        result = stage.run(job, job_dir)
+
+        assert result.success is True
+        # _generate_ai_thumbnails must not have been called
+        assert ai_gen_calls == []
+
+    def test_ai_thumbnail_generation_invoked_when_enabled(
+        self,
+        temp_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """_generate_ai_thumbnails should be called when thumbnail_generation.enabled=True."""
+        from podcast_pipeline.config.settings import BrandingConfig, ThumbnailGenerationConfig
+
+        cfg = Config()
+        cfg.branding = BrandingConfig(thumbnail_generation=ThumbnailGenerationConfig(enabled=True))
+
+        class _Provider:
+            name = "stub"
+            model = "stub-model"
+            supports_video = True
+
+            def is_available(self) -> bool:
+                return True
+
+            def analyze(self, video_path: Path, transcript: dict) -> AnalysisResult:  # type: ignore[type-arg]
+                del video_path, transcript
+                return AnalysisResult.model_validate(
+                    {
+                        "content_cuts": [],
+                        "viral_clips": [],
+                        "thumbnail_frames": [
+                            {
+                                "timestamp": "00:03",
+                                "timestamp_seconds": 3.0,
+                                "visual_description": "Energetic host moment",
+                            }
+                        ],
+                        "marketing": {},
+                        "metadata": {"summary": "", "topics": [], "mood": ""},
+                    }
+                )
+
+        stage = AnalyzeStage(cfg)
+        stage.providers = [_Provider()]  # type: ignore[assignment]
+        monkeypatch.setattr(stage, "_run_research", lambda *args, **kwargs: None)
+        monkeypatch.setattr(stage, "_run_viral_signals", lambda *args, **kwargs: None)
+        import podcast_pipeline.stages.analyze as _analyze_mod
+
+        monkeypatch.setattr(_analyze_mod, "run_ffmpeg", lambda *a, **k: None)
+
+        ai_gen_calls: list[tuple[object, object]] = []
+
+        def _spy_ai_gen(*args: object, **kwargs: object) -> list[str]:
+            ai_gen_calls.append((args, kwargs))
+            return []
+
+        monkeypatch.setattr(stage, "_generate_ai_thumbnails", _spy_ai_gen)
+
+        job_dir = temp_dir / "jobs" / "ai-thumbnail-enabled-job"
+        (job_dir / "analysis").mkdir(parents=True, exist_ok=True)
+        (job_dir / "analysis" / "transcript.json").write_text(json.dumps({"text": "test"}))
+        (job_dir / "intermediate").mkdir(parents=True, exist_ok=True)
+        (job_dir / "intermediate" / "proxy.mp4").write_bytes(b"proxy")
+
+        job = Job(job_id="ai-thumbnail-enabled-job", input_file=str(job_dir / "input.mp4"))
+        result = stage.run(job, job_dir)
+
+        assert result.success is True
+        # _generate_ai_thumbnails must have been called exactly once
+        assert len(ai_gen_calls) == 1
+
+    def test_generate_ai_thumbnails_skips_frames_without_visual_description(
+        self,
+        config: Config,
+        temp_dir: Path,
+    ) -> None:
+        """Frames with empty or missing visual_description should be silently skipped."""
+        from unittest.mock import patch
+
+        stage = AnalyzeStage(config)
+
+        analysis_payload: dict = {  # type: ignore[type-arg]
+            "thumbnail_frames": [
+                {"timestamp_seconds": 1.0, "visual_description": ""},
+                {"timestamp_seconds": 2.0},  # missing key entirely
+                {"timestamp_seconds": 3.0, "visual_description": "   "},  # only whitespace
+            ]
+        }
+
+        with patch("podcast_pipeline.utils.thumbnails.ThumbnailService") as mock_svc_cls:
+            stage._generate_ai_thumbnails(  # type: ignore[attr-defined]
+                analysis_payload=analysis_payload,
+                job_dir=temp_dir,
+            )
+        # ThumbnailService.generate must not have been called for empty descriptions
+        mock_svc_cls.return_value.generate.assert_not_called()
+
+    def test_generate_ai_thumbnails_writes_ai_image_path_to_frames(
+        self,
+        config: Config,
+        temp_dir: Path,
+    ) -> None:
+        """Successful AI generation should write ai_image_path into each matched frame."""
+        from unittest.mock import patch
+
+        from podcast_pipeline.utils.thumbnails import (
+            ThumbnailArtifact,
+            ThumbnailBackend,
+            ThumbnailResult,
+            ThumbnailStatus,
+        )
+
+        stage = AnalyzeStage(config)
+        output_dir = temp_dir / "intermediate" / "ai_thumbnails"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        ai_img = output_dir / "aabb1122.jpg"
+        ai_img.write_bytes(b"AI_IMAGE")
+
+        description = "Engaging podcast thumbnail"
+        analysis_payload: dict = {  # type: ignore[type-arg]
+            "thumbnail_frames": [{"timestamp_seconds": 5.0, "visual_description": description}]
+        }
+
+        mock_result = ThumbnailResult(
+            artifacts=[
+                ThumbnailArtifact(
+                    path=ai_img,
+                    prompt=description,
+                    backend=ThumbnailBackend.GEMINI,
+                    status=ThumbnailStatus.GENERATED,
+                )
+            ],
+            backend_used=ThumbnailBackend.GEMINI,
+            total_generated=1,
+        )
+
+        with patch("podcast_pipeline.utils.thumbnails.ThumbnailService") as mock_svc_cls:
+            mock_svc_cls.return_value.generate.return_value = mock_result
+            paths = stage._generate_ai_thumbnails(  # type: ignore[attr-defined]
+                analysis_payload=analysis_payload,
+                job_dir=temp_dir,
+            )
+
+        assert len(paths) == 1
+        # ai_image_path must be written back into the frame entry
+        frame = analysis_payload["thumbnail_frames"][0]
+        assert "ai_image_path" in frame
+        assert frame["ai_image_path"].endswith(".jpg")
 
 
 class TestTranscribeFillerDetection:
@@ -832,3 +1049,654 @@ class TestPhase8RenderDisabledBaseline:
 
         dist = pose_distance(dummy_frame, dummy_frame)
         assert dist == float("inf")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Phase 9 — Branding profile resolution tests
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+class TestBrandingAndResolve:
+    """Tests for branding profile resolution in the runtime configuration flow."""
+
+    def test_branding_not_configured_returns_none_from_analyze_stage(self, config: Config) -> None:
+        """AnalyzeStage.resolve_branding_for_platform returns None when no profile configured."""
+        assert config.branding.active_profile is None
+        stage = AnalyzeStage(config)
+        assert stage.resolve_branding_for_platform("youtube") is None
+        assert stage.resolve_branding_for_platform("tiktok") is None
+
+    def test_branding_config_default_values(self, config: Config) -> None:
+        """BrandingConfig defaults should be backward-compatible (no active profile)."""
+        assert config.branding.active_profile is None
+        assert config.branding.branding_dir == Path("branding")
+
+    def test_branding_config_accepts_profile_name(self) -> None:
+        """BrandingConfig can be constructed with an active_profile name."""
+        bc = BrandingConfig(active_profile="neon_viral", branding_dir=Path("/tmp/branding"))
+        assert bc.active_profile == "neon_viral"
+        assert bc.branding_dir == Path("/tmp/branding")
+
+    def test_branding_resolve_with_active_profile_applies_overrides(
+        self, config: Config, tmp_path: Path
+    ) -> None:
+        """resolve_branding_for_platform with a loaded profile applies platform overrides."""
+        from podcast_pipeline.utils.branding import save_profile
+
+        # Create a branding profile with a tiktok override.
+        profile = BrandingProfile(
+            profile_name="test_kit",
+            brand_voice="Energetic Gen Z tone.",
+            logo_placement="top_right",
+            highlight_color="#FFFF00",
+            platform_overrides={
+                "tiktok": PlatformBrandingOverride(
+                    logo_placement="bottom_left",
+                    highlight_color="#FF0000",
+                )
+            },
+        )
+        branding_dir = tmp_path / "branding"
+        save_profile(profile, branding_dir=branding_dir)
+
+        # Wire config to use the saved profile.
+        config_with_branding = Config.model_validate(
+            config.model_dump()
+            | {"branding": {"active_profile": "test_kit", "branding_dir": str(branding_dir)}}
+        )
+        stage = AnalyzeStage(config_with_branding)
+
+        # youtube: no override → base profile values
+        yt = stage.resolve_branding_for_platform("youtube")
+        assert yt is not None
+        assert yt.logo_placement == "top_right"
+        assert yt.highlight_color == "#FFFF00"
+        assert yt.platform_overrides == {}
+
+        # tiktok: override applied
+        tk = stage.resolve_branding_for_platform("tiktok")
+        assert tk is not None
+        assert tk.logo_placement == "bottom_left"
+        assert tk.highlight_color == "#FF0000"
+        assert tk.platform_overrides == {}
+
+    def test_branding_resolve_missing_profile_file_returns_none(
+        self, config: Config, tmp_path: Path
+    ) -> None:
+        """When active_profile points to a non-existent YAML, AnalyzeStage logs and returns None."""
+        config_with_missing = Config.model_validate(
+            config.model_dump()
+            | {
+                "branding": {
+                    "active_profile": "does_not_exist",
+                    "branding_dir": str(tmp_path / "branding"),
+                }
+            }
+        )
+        # AnalyzeStage construction must not raise; missing profile logs a warning.
+        stage = AnalyzeStage(config_with_missing)
+        assert stage._active_branding is None
+        assert stage.resolve_branding_for_platform("youtube") is None
+
+    def test_pipeline_runs_without_branding_configured(
+        self, config: Config, temp_dir: Path
+    ) -> None:
+        """Pipeline runs without error when branding section is absent (default config)."""
+        pipeline = Pipeline(config)
+        # Default Config() has no active branding — stage construction must succeed.
+        analyze_stage = pipeline.stages.get("analyze")
+        assert analyze_stage is not None
+
+
+# =============================================================================
+# Phase 9.7 — Sync artifact wiring tests
+# =============================================================================
+
+
+class TestIngestSyncArtifact:
+    """Tests for sync artifact generation in IngestStage._run_sync_estimation."""
+
+    def test_sync_skipped_for_single_audio_track(self, config: Config, temp_dir: Path) -> None:
+        """_run_sync_estimation should return None when audio_track_count < 2."""
+        from podcast_pipeline.stages.ingest import IngestStage
+
+        stage = IngestStage(config)
+        metadata = {"audio_track_count": 1}
+        artifact_path = temp_dir / "sync_artifact.json"
+
+        result = stage._run_sync_estimation(
+            input_path=temp_dir / "input.mp4",
+            metadata=metadata,
+            intermediate_dir=temp_dir,
+            artifact_path=artifact_path,
+        )
+
+        assert result is None
+        assert not artifact_path.exists()
+
+    def test_sync_skipped_when_audio_track_count_missing(
+        self, config: Config, temp_dir: Path
+    ) -> None:
+        """_run_sync_estimation should skip when audio_track_count key is absent."""
+        from podcast_pipeline.stages.ingest import IngestStage
+
+        stage = IngestStage(config)
+        metadata: dict[str, object] = {}  # no audio_track_count
+        artifact_path = temp_dir / "sync_artifact.json"
+
+        result = stage._run_sync_estimation(
+            input_path=temp_dir / "input.mp4",
+            metadata=metadata,
+            intermediate_dir=temp_dir,
+            artifact_path=artifact_path,
+        )
+
+        assert result is None
+
+    def test_sync_estimation_writes_artifact_on_success(
+        self, config: Config, temp_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When SyncEstimator succeeds on a multi-track file, artifact is persisted to disk."""
+        from podcast_pipeline.stages.ingest import IngestStage
+        from podcast_pipeline.utils.sync import SyncResult
+
+        stage = IngestStage(config)
+        metadata = {"audio_track_count": 2}
+        artifact_path = temp_dir / "sync_artifact.json"
+        input_path = temp_dir / "input.mp4"
+        input_path.write_bytes(b"fake_video")
+
+        # Stub out stream extraction and SyncEstimator
+        fake_result = SyncResult(
+            offset_ms=125.0,
+            confidence=0.72,
+            source="correlation",
+            no_clap=False,
+            low_confidence=False,
+            warnings=[],
+        )
+
+        def _noop_extract(src: object, dst: Path, stream_index: int) -> None:  # type: ignore[name-defined]
+            dst.write_bytes(b"")
+
+        monkeypatch.setattr(
+            "podcast_pipeline.stages.ingest.IngestStage._extract_stream_wav",
+            staticmethod(_noop_extract),
+        )
+
+        class _FakeEstimator:
+            def __init__(self, search_window_s: float = 60.0) -> None:
+                pass
+
+            def _estimate_from_wavs(self, _ref: object, _ext: object) -> SyncResult:
+                return fake_result
+
+        monkeypatch.setattr(
+            "podcast_pipeline.utils.sync.SyncEstimator",
+            _FakeEstimator,
+        )
+
+        result = stage._run_sync_estimation(
+            input_path=input_path,
+            metadata=metadata,
+            intermediate_dir=temp_dir,
+            artifact_path=artifact_path,
+        )
+
+        assert result is not None
+        assert result["offset_ms"] == 125.0
+        assert result["confidence"] == 0.72
+        assert result["low_confidence"] is False
+        assert artifact_path.exists()
+        loaded = json.loads(artifact_path.read_text())
+        assert loaded["offset_ms"] == 125.0
+
+    def test_sync_estimation_returns_none_on_ffmpeg_failure(
+        self, config: Config, temp_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Stream extraction FFmpegError should be handled gracefully (returns None)."""
+        from podcast_pipeline.stages.ingest import IngestStage
+        from podcast_pipeline.utils.ffmpeg import FFmpegError
+
+        stage = IngestStage(config)
+        metadata = {"audio_track_count": 2}
+        artifact_path = temp_dir / "sync_artifact.json"
+
+        def _raise_ffmpeg(src: object, dst: object, stream_index: int) -> None:
+            raise FFmpegError("stream extraction failed")
+
+        monkeypatch.setattr(
+            "podcast_pipeline.stages.ingest.IngestStage._extract_stream_wav",
+            staticmethod(_raise_ffmpeg),
+        )
+
+        result = stage._run_sync_estimation(
+            input_path=temp_dir / "input.mp4",
+            metadata=metadata,
+            intermediate_dir=temp_dir,
+            artifact_path=artifact_path,
+        )
+
+        assert result is None
+        assert not artifact_path.exists()
+
+    def test_extract_stream_wav_builds_correct_ffmpeg_args(
+        self, config: Config, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """_extract_stream_wav should request -map 0:a:<N> -ac 1 -ar 8000 -t 60 via run_ffmpeg."""
+        from podcast_pipeline.stages.ingest import IngestStage
+
+        stage = IngestStage(config)
+        captured_args: list[list[str]] = []
+
+        def _capture(args: list[str], **_kwargs: object) -> None:
+            captured_args.append(args)
+
+        monkeypatch.setattr("podcast_pipeline.stages.ingest.run_ffmpeg", _capture)
+
+        from pathlib import Path
+
+        stage._extract_stream_wav(
+            src=Path("/tmp/input.mp4"),
+            dst=Path("/tmp/out.wav"),
+            stream_index=1,
+        )
+
+        assert len(captured_args) == 1
+        args = captured_args[0]
+        assert "-map" in args
+        assert "0:a:1" in args
+        assert "-ac" in args
+        assert "1" in args
+        assert "-ar" in args
+        assert "8000" in args
+        assert "-t" in args
+        assert "60" in args
+
+
+class TestRenderSyncOffset:
+    """Tests for sync offset resolution and application in RenderStage."""
+
+    def test_resolve_sync_offset_prefers_manual_over_auto(
+        self, config: Config, temp_dir: Path
+    ) -> None:
+        """Manual sync override in decisions takes priority over auto artifact."""
+        from podcast_pipeline.stages.render import RenderStage
+        from podcast_pipeline.stages.review import ReviewDecisions
+
+        # Write an auto sync artifact that would produce a different offset
+        artifact_path = temp_dir / "intermediate" / "sync_artifact.json"
+        artifact_path.parent.mkdir(parents=True, exist_ok=True)
+        artifact_path.write_text(
+            json.dumps(
+                {
+                    "offset_ms": 300.0,
+                    "confidence": 0.9,
+                    "low_confidence": False,
+                    "no_clap": False,
+                }
+            )
+        )
+
+        decisions = ReviewDecisions(manual_sync_offset_ms=750.0)
+        stage = RenderStage(config)
+
+        offset_ms, meta = stage._resolve_sync_offset(temp_dir, decisions)
+
+        assert offset_ms == 750.0
+        assert meta["source"] == "manual"
+
+    def test_resolve_sync_offset_loads_auto_artifact_when_no_manual_override(
+        self, config: Config, temp_dir: Path
+    ) -> None:
+        """Auto sync artifact should be loaded when manual_sync_offset_ms is None."""
+        from podcast_pipeline.stages.render import RenderStage
+        from podcast_pipeline.stages.review import ReviewDecisions
+
+        artifact_path = temp_dir / "intermediate" / "sync_artifact.json"
+        artifact_path.parent.mkdir(parents=True, exist_ok=True)
+        artifact_path.write_text(
+            json.dumps(
+                {
+                    "offset_ms": 200.0,
+                    "confidence": 0.65,
+                    "low_confidence": False,
+                    "no_clap": True,
+                }
+            )
+        )
+
+        decisions = ReviewDecisions(manual_sync_offset_ms=None)
+        stage = RenderStage(config)
+
+        offset_ms, meta = stage._resolve_sync_offset(temp_dir, decisions)
+
+        assert offset_ms == 200.0
+        assert meta["source"] == "auto"
+        assert meta["confidence"] == 0.65
+
+    def test_resolve_sync_offset_returns_none_when_no_artifact(
+        self, config: Config, temp_dir: Path
+    ) -> None:
+        """Returns (None, source=None) when no sync artifact and no manual override."""
+        from podcast_pipeline.stages.render import RenderStage
+        from podcast_pipeline.stages.review import ReviewDecisions
+
+        stage = RenderStage(config)
+        decisions = ReviewDecisions(manual_sync_offset_ms=None)
+
+        offset_ms, meta = stage._resolve_sync_offset(temp_dir, decisions)
+
+        assert offset_ms is None
+        assert meta["source"] is None
+
+    def test_apply_sync_offset_positive_delays_external_track(
+        self, config: Config, temp_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Positive offset should produce -itsoffset on the second -i (external track lags)."""
+        from podcast_pipeline.stages.render import RenderStage
+
+        stage = RenderStage(config)
+        captured: list[list[str]] = []
+
+        def _fake_run_ffmpeg(args: list[str], **_kwargs: object) -> None:
+            captured.append(args)
+            # Create the expected output file so the check passes
+            synced_path = temp_dir / "intermediate" / "synced_input.mp4"
+            synced_path.parent.mkdir(parents=True, exist_ok=True)
+            synced_path.write_bytes(b"synced_fake_video")
+
+        monkeypatch.setattr("podcast_pipeline.stages.render.run_ffmpeg", _fake_run_ffmpeg)
+        monkeypatch.setattr(
+            "podcast_pipeline.stages.render.run_ffprobe",
+            lambda *_a, **_kw: {
+                "streams": [
+                    {"codec_type": "audio"},
+                    {"codec_type": "audio"},
+                ]
+            },
+        )
+
+        input_video = temp_dir / "input" / "raw.mp4"
+        input_video.parent.mkdir(parents=True, exist_ok=True)
+        input_video.write_bytes(b"fake_video")
+
+        result = stage._apply_sync_offset(input_video, temp_dir, offset_ms=500.0)
+
+        assert result is not None
+        assert result.name == "synced_input.mp4"
+        args = captured[0]
+        # Positive offset: first -i has no -itsoffset, second -i has -itsoffset
+        assert args[0] == "-i"  # first input has no itsoffset prefix
+        assert "-itsoffset" in args
+
+    def test_apply_sync_offset_negative_delays_reference_track(
+        self, config: Config, temp_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Negative offset should use -itsoffset before the first -i (reference lags)."""
+        from podcast_pipeline.stages.render import RenderStage
+
+        stage = RenderStage(config)
+        captured: list[list[str]] = []
+
+        def _fake_run_ffmpeg(args: list[str], **_kwargs: object) -> None:
+            captured.append(args)
+            synced_path = temp_dir / "intermediate" / "synced_input.mp4"
+            synced_path.parent.mkdir(parents=True, exist_ok=True)
+            synced_path.write_bytes(b"synced_fake_video")
+
+        monkeypatch.setattr("podcast_pipeline.stages.render.run_ffmpeg", _fake_run_ffmpeg)
+        monkeypatch.setattr(
+            "podcast_pipeline.stages.render.run_ffprobe",
+            lambda *_a, **_kw: {
+                "streams": [
+                    {"codec_type": "audio"},
+                    {"codec_type": "audio"},
+                ]
+            },
+        )
+
+        input_video = temp_dir / "input" / "raw.mp4"
+        input_video.parent.mkdir(parents=True, exist_ok=True)
+        input_video.write_bytes(b"fake_video")
+
+        result = stage._apply_sync_offset(input_video, temp_dir, offset_ms=-300.0)
+
+        assert result is not None
+        args = captured[0]
+        # Negative offset: -itsoffset before first -i
+        assert args[0] == "-itsoffset"
+
+    def test_apply_sync_offset_returns_none_on_ffmpeg_failure(
+        self, config: Config, temp_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """FFmpegError in _apply_sync_offset should log and return None gracefully."""
+        from podcast_pipeline.stages.render import RenderStage
+        from podcast_pipeline.utils.ffmpeg import FFmpegError
+
+        stage = RenderStage(config)
+
+        def _raise(*_args: object, **_kwargs: object) -> None:
+            raise FFmpegError("mux failed")
+
+        monkeypatch.setattr("podcast_pipeline.stages.render.run_ffmpeg", _raise)
+        monkeypatch.setattr(
+            "podcast_pipeline.stages.render.run_ffprobe",
+            lambda *_a, **_kw: {
+                "streams": [
+                    {"codec_type": "audio"},
+                    {"codec_type": "audio"},
+                ]
+            },
+        )
+
+        input_video = temp_dir / "input" / "raw.mp4"
+        input_video.parent.mkdir(parents=True, exist_ok=True)
+        input_video.write_bytes(b"fake_video")
+
+        result = stage._apply_sync_offset(input_video, temp_dir, offset_ms=100.0)
+        assert result is None
+
+
+# ============================================================================
+# Phase 9: E2E Integration Tests
+# ============================================================================
+
+
+class TestPhase9BrandingWorkflow:
+    """Integration tests for Phase 9 branding + captions + sync + thumbnail workflow."""
+
+    def test_phase9_profile_selection_persists_through_review_state(
+        self, config: Config, temp_dir: Path
+    ) -> None:
+        """Profile selection flows from UI through review decisions to render."""
+        from podcast_pipeline.stages.review import ReviewDecisions
+
+        # Simulate profile selection into review decisions
+        decisions = ReviewDecisions(
+            branding_profile_name="test-brand",
+            captions_enabled=True,
+            sound_kit_enabled=True,
+            ai_thumbnails_enabled=False,
+            manual_sync_offset_ms=250.0,
+        )
+
+        # Persist and reload
+        review_dir = temp_dir / "test-job" / "review"
+        review_dir.mkdir(parents=True)
+        review_path = review_dir / "review_state.json"
+        review_path.write_text(decisions.model_dump_json(indent=2))
+
+        loaded = ReviewDecisions.model_validate_json(review_path.read_text())
+        assert loaded.branding_profile_name == "test-brand"
+        assert loaded.captions_enabled is True
+        assert loaded.sound_kit_enabled is True
+        assert loaded.ai_thumbnails_enabled is False
+        assert loaded.manual_sync_offset_ms == 250.0
+
+    def test_phase9_branding_profile_crud_lifecycle(self, temp_dir: Path) -> None:
+        """Full branding profile lifecycle: create, list, load, update, delete."""
+        from podcast_pipeline.models.branding import BrandingProfile, CaptionStyle
+        from podcast_pipeline.utils.branding import (
+            delete_profile,
+            list_profiles,
+            load_profile,
+            save_profile,
+        )
+
+        branding_dir = temp_dir / "branding"
+        branding_dir.mkdir()
+
+        # Create
+        profile = BrandingProfile(
+            profile_name="integration-test",
+            brand_voice="Bold and energetic for tech podcasts",
+            caption_style=CaptionStyle(color="#00FF00", size=72, bold=True),
+            intro_sound=Path("assets/intro.wav"),
+        )
+        save_profile(profile, branding_dir)
+
+        # List
+        names = list_profiles(branding_dir)
+        assert "integration-test" in names
+
+        # Load
+        loaded = load_profile("integration-test", branding_dir)
+        assert loaded.brand_voice == "Bold and energetic for tech podcasts"
+        assert loaded.caption_style.color == "#00FF00"
+        assert loaded.caption_style.size == 72
+        assert loaded.intro_sound == Path("assets/intro.wav")
+
+        # Update
+        loaded_updated = loaded.model_copy(
+            update={"brand_voice": "Updated voice for gaming content"}
+        )
+        save_profile(loaded_updated, branding_dir)
+        reloaded = load_profile("integration-test", branding_dir)
+        assert reloaded.brand_voice == "Updated voice for gaming content"
+
+        # Delete
+        assert delete_profile("integration-test", branding_dir) is True
+        assert "integration-test" not in list_profiles(branding_dir)
+
+    def test_phase9_review_decisions_backward_compatible(self) -> None:
+        """Phase 9 fields on ReviewDecisions must be optional with defaults."""
+        from podcast_pipeline.stages.review import ReviewDecisions
+
+        # Simulate loading a pre-Phase 9 review state (no branding fields)
+        pre_phase9_payload = {
+            "approved_filler_cuts": [0, 1],
+            "review_complete": True,
+            "export_platforms": ["youtube"],
+        }
+        decisions = ReviewDecisions.model_validate(pre_phase9_payload)
+
+        assert decisions.branding_profile_name is None
+        assert decisions.captions_enabled is False
+        assert decisions.sound_kit_enabled is False
+        assert decisions.ai_thumbnails_enabled is False
+        assert decisions.manual_sync_offset_ms is None
+        assert decisions.review_complete is True
+
+    def test_phase9_caption_style_from_profile_flows_to_review(self, temp_dir: Path) -> None:
+        """Caption style from BrandingProfile should be usable in review decisions."""
+        from podcast_pipeline.models.branding import BrandingProfile, CaptionStyle
+        from podcast_pipeline.stages.review import ReviewDecisions
+        from podcast_pipeline.utils.branding import load_profile, save_profile
+
+        branding_dir = temp_dir / "branding"
+        branding_dir.mkdir()
+
+        profile = BrandingProfile(
+            profile_name="caption-test",
+            caption_style=CaptionStyle(
+                color="#FF5500", size=56, shadow=True, bold=False, italic=True, font="Roboto"
+            ),
+        )
+        save_profile(profile, branding_dir)
+
+        # Load and confirm caption style
+        loaded = load_profile("caption-test", branding_dir)
+        assert loaded.caption_style.color == "#FF5500"
+        assert loaded.caption_style.font == "Roboto"
+
+        # Review state references this profile
+        decisions = ReviewDecisions(
+            branding_profile_name="caption-test",
+            captions_enabled=True,
+        )
+        assert decisions.branding_profile_name == "caption-test"
+        assert decisions.captions_enabled is True
+
+    def test_phase9_sound_kit_profile_fields_persist(self, temp_dir: Path) -> None:
+        """Sound kit paths from a BrandingProfile persist through YAML round-trip."""
+        from podcast_pipeline.models.branding import BrandingProfile
+        from podcast_pipeline.utils.branding import load_profile, save_profile
+
+        branding_dir = temp_dir / "branding"
+        branding_dir.mkdir()
+
+        profile = BrandingProfile(
+            profile_name="sound-test",
+            intro_sound=Path("sounds/intro.wav"),
+            transition_sound=Path("sounds/whoosh.wav"),
+            outro_sound=Path("sounds/outro.mp3"),
+        )
+        assert profile.has_sound_kit is True
+
+        save_profile(profile, branding_dir)
+        loaded = load_profile("sound-test", branding_dir)
+        assert loaded.has_sound_kit is True
+        assert loaded.intro_sound == Path("sounds/intro.wav")
+        assert loaded.transition_sound == Path("sounds/whoosh.wav")
+        assert loaded.outro_sound == Path("sounds/outro.mp3")
+
+    def test_phase9_platform_override_resolution_preserves_caption_style(
+        self, temp_dir: Path
+    ) -> None:
+        """Platform override merge should correctly apply caption style overrides."""
+        from podcast_pipeline.models.branding import (
+            BrandingProfile,
+            CaptionStyle,
+            PlatformBrandingOverride,
+        )
+
+        profile = BrandingProfile(
+            profile_name="override-test",
+            caption_style=CaptionStyle(color="#FFFFFF", size=48),
+            platform_overrides={
+                "tiktok": PlatformBrandingOverride(
+                    caption_style=CaptionStyle(color="#FF0000", size=72, bold=True),
+                ),
+            },
+        )
+
+        resolved = profile.resolved_for_platform("tiktok")
+        assert resolved.caption_style.color == "#FF0000"
+        assert resolved.caption_style.size == 72
+        assert resolved.caption_style.bold is True
+        assert resolved.platform_overrides == {}
+
+        # Non-overridden platform keeps base
+        youtube_resolved = profile.resolved_for_platform("youtube")
+        assert youtube_resolved.caption_style.color == "#FFFFFF"
+        assert youtube_resolved.caption_style.size == 48
+
+    def test_phase9_gpu_lease_supervisor_cross_job_serialization(self, temp_dir: Path) -> None:
+        """GPU lease from supervisor should serialize cross-job access."""
+        from podcast_pipeline.service.supervisor import Supervisor
+
+        pipeline_stub = type(
+            "PipelineStub",
+            (),
+            {"config": type("C", (), {"paths": type("P", (), {"jobs_dir": temp_dir})()})()},
+        )()
+        supervisor = Supervisor(pipeline_stub)  # type: ignore[arg-type]
+
+        assert not supervisor.gpu_lease.is_held()
+
+        with supervisor.gpu_lease.acquire(job_id="job-e2e", operation="thumbnail_gen"):
+            assert supervisor.gpu_lease.is_held()
+            assert supervisor.gpu_lease.holder_job_id == "job-e2e"
+
+        assert not supervisor.gpu_lease.is_held()

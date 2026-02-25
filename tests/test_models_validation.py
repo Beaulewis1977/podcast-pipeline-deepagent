@@ -14,19 +14,19 @@ class TestJobModelValidation:
     def test_job_rejects_path_traversal_job_id(self):
         """Job IDs cannot include path traversal tokens."""
         with pytest.raises(ValidationError):
-            Job(job_id="../escape", input_file="/tmp/video.mp4")  # noqa: S108
+            Job(job_id="../escape", input_file="/tmp/video.mp4")
 
     def test_job_rejects_path_separator_job_id(self):
         """Job IDs cannot include separators that escape jobs_dir."""
         with pytest.raises(ValidationError):
-            Job(job_id="foo/bar", input_file="/tmp/video.mp4")  # noqa: S108
+            Job(job_id="foo/bar", input_file="/tmp/video.mp4")
 
     def test_job_rejects_complete_status_with_error(self):
         """Top-level COMPLETE + error is contradictory."""
         with pytest.raises(ValidationError):
             Job(
                 job_id="job-complete-with-error",
-                input_file="/tmp/video.mp4",  # noqa: S108
+                input_file="/tmp/video.mp4",
                 status=StageStatus.COMPLETE,
                 error="unexpected failure",
             )
@@ -36,7 +36,7 @@ class TestJobModelValidation:
         with pytest.raises(ValidationError):
             Job(
                 job_id="job-pending-with-progress",
-                input_file="/tmp/video.mp4",  # noqa: S108
+                input_file="/tmp/video.mp4",
                 status=StageStatus.PENDING,
                 stages={
                     "ingest": JobStage(status=StageStatus.PENDING, progress_percent=10),
@@ -48,7 +48,7 @@ class TestJobModelValidation:
         with pytest.raises(ValidationError):
             Job(
                 job_id="job-pending-with-running-stage",
-                input_file="/tmp/video.mp4",  # noqa: S108
+                input_file="/tmp/video.mp4",
                 status=StageStatus.PENDING,
                 stages={
                     "ingest": JobStage(status=StageStatus.RUNNING),
@@ -67,7 +67,7 @@ class TestJobModelValidation:
 
     def test_job_update_stage_progress_rejects_out_of_bounds(self):
         """Runtime progress updates enforce 0-100 range."""
-        job = Job(job_id="job-progress-range", input_file="/tmp/video.mp4")  # noqa: S108
+        job = Job(job_id="job-progress-range", input_file="/tmp/video.mp4")
         job.update_stage("ingest", StageStatus.RUNNING)
 
         with pytest.raises(ValueError, match="between 0 and 100"):
@@ -78,7 +78,7 @@ class TestJobModelValidation:
 
     def test_job_update_stage_progress_rejects_pending_stage(self):
         """Pending stages cannot receive runtime progress updates."""
-        job = Job(job_id="job-pending-progress", input_file="/tmp/video.mp4")  # noqa: S108
+        job = Job(job_id="job-pending-progress", input_file="/tmp/video.mp4")
 
         with pytest.raises(ValueError, match="Cannot set progress_percent"):
             job.update_stage_progress("ingest", progress_percent=10)

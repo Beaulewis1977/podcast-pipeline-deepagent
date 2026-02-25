@@ -64,6 +64,37 @@ class ReviewDecisions(BaseModel):
     review_complete: bool = False
     review_notes: str = ""
 
+    # Manual sync offset override — operator sets this when auto-sync confidence is low.
+    # None means "use auto-detected offset from intermediate/sync_artifact.json".
+    # Set to 0.0 to explicitly disable the sync offset (useful when auto-sync is wrong).
+    manual_sync_offset_ms: float | None = None
+
+    # Phase 9: Branding profile name selected in Brand Studio.
+    # None means "no branding profile" — run without brand assets.
+    branding_profile_name: str | None = None
+
+    # Phase 9: Caption style override from production controls.
+    # When True, captions are burned into exports using the active caption style.
+    captions_enabled: bool = False
+
+    # Phase 9: Sound kit (auto-ducking) toggle from production controls.
+    # When True, sound kit stingers are mixed into exports.
+    sound_kit_enabled: bool = False
+
+    # Phase 9: AI thumbnail generation toggle from production controls.
+    # When True, the analyze stage will attempt AI thumbnail generation.
+    ai_thumbnails_enabled: bool = False
+
+    # Phase 09-12: Caption aspect ratio for ASS burn-in safe-zone selection.
+    # None means "infer from platform spec aspect_ratio at render time".
+    # Set to "16:9", "9:16", or "1:1" for explicit override.
+    caption_aspect_ratio: str | None = None
+
+    # Phase 09-12: Independent auto-ducking toggle.
+    # When True, sidechaincompress ducking runs even if stingers are disabled.
+    # When False (default), ducking only runs as part of stinger mixing.
+    auto_duck_enabled: bool = False
+
     @field_validator("export_platforms", mode="before")
     @classmethod
     def validate_export_platforms(cls, value: Any) -> list[str]:

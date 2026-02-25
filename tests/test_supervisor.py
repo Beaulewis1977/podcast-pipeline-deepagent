@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -49,7 +50,7 @@ class _StubPipeline:
 
 def _create_job(jobs_dir: Path, job_id: str = "job-001") -> Job:
     """Create and persist a basic test job."""
-    job = Job(job_id=job_id, input_file="/tmp/video.mp4")  # noqa: S108
+    job = Job(job_id=job_id, input_file="/tmp/video.mp4")
     job.save(jobs_dir)
     return job
 
@@ -280,3 +281,126 @@ def test_runtime_diagnostics_reports_orphaned_jobs_reconcile(
     assert payload["active_jobs"] == []
     assert "job-orphan" in payload["stale_jobs"]
     assert "job-orphan" in payload["orphaned_jobs"]
+
+
+# ============================================================================
+# Phase 9: GPU Lease Tests
+# ============================================================================
+
+
+class TestGPULease:
+    """Tests for GPU lease cross-job serialization."""
+
+    def test_gpu_lease_acquire_and_release(self) -> None:
+        """GPU lease should be acquirable and releasable."""
+        from podcast_pipeline.service.supervisor import GPULease
+
+        lease = GPULease()
+        assert not lease.is_held()
+
+        with lease.acquire(job_id="job-1", operation="thumbnail_gen"):
+            assert lease.is_held()
+            assert lease.holder_job_id == "job-1"
+            assert lease.holder_operation == "thumbnail_gen"
+
+        assert not lease.is_held()
+        assert lease.holder_job_id is None
+
+    def test_gpu_lease_blocks_concurrent_jobs(self) -> None:
+        """Second job should block until first releases the lease."""
+        from podcast_pipeline.service.supervisor import GPULease
+
+        lease = GPULease()
+        results: list[str] = []
+        barrier = threading.Event()
+        second_started = threading.Event()
+
+        def _first_job() -> None:
+            with lease.acquire(job_id="job-1", operation="nvenc_encode"):
+                barrier.wait(timeout=5)
+                results.append("first_done")
+
+        def _second_job() -> None:
+            second_started.set()
+            with lease.acquire(job_id="job-2", operation="thumbnail_gen"):
+                results.append("second_done")
+
+        t1 = threading.Thread(target=_first_job)
+        t2 = threading.Thread(target=_second_job)
+
+        t1.start()
+        time.sleep(0.05)  # let first job acquire
+
+        t2.start()
+        time.sleep(0.05)  # second job should be blocked
+
+        assert lease.holder_job_id == "job-1"
+        assert second_started.is_set()
+
+        barrier.set()  # release first job
+        t1.join(timeout=5)
+        t2.join(timeout=5)
+
+        assert results == ["first_done", "second_done"]
+        assert not lease.is_held()
+
+    def test_gpu_lease_timeout_raises(self) -> None:
+        """GPU lease should raise TimeoutError when timeout expires."""
+        from podcast_pipeline.service.supervisor import GPULease
+
+        lease = GPULease()
+        release = threading.Event()
+
+        def _hold_lease() -> None:
+            with lease.acquire(job_id="holder", operation="hold"):
+                release.wait(timeout=5)
+
+        t = threading.Thread(target=_hold_lease)
+        t.start()
+        time.sleep(0.05)
+
+        with (
+            pytest.raises(TimeoutError, match="GPU lease not acquired"),
+            lease.acquire(job_id="waiter", operation="wait", timeout=0.1),
+        ):
+            pass  # should not reach here
+
+        release.set()
+        t.join(timeout=5)
+
+    def test_gpu_lease_on_supervisor_instance(self, tmp_path: Path) -> None:
+        """Supervisor should expose a gpu_lease attribute."""
+        pipeline = _StubPipeline(tmp_path, lambda *a, **k: None)
+        supervisor = Supervisor(pipeline)
+
+        assert hasattr(supervisor, "gpu_lease")
+        assert not supervisor.gpu_lease.is_held()
+
+        with supervisor.gpu_lease.acquire(job_id="test", operation="test_op"):
+            assert supervisor.gpu_lease.is_held()
+
+    def test_gpu_lease_concurrent_serialization_order(self) -> None:
+        """Multiple concurrent jobs should be serialized deterministically."""
+        from podcast_pipeline.service.supervisor import GPULease
+
+        lease = GPULease()
+        execution_order: list[str] = []
+        start_gate = threading.Event()
+
+        def _worker(job_id: str) -> None:
+            start_gate.wait(timeout=5)
+            with lease.acquire(job_id=job_id, operation="render"):
+                execution_order.append(job_id)
+                time.sleep(0.02)
+
+        threads = [threading.Thread(target=_worker, args=(f"job-{i}",)) for i in range(3)]
+        for t in threads:
+            t.start()
+
+        start_gate.set()
+
+        for t in threads:
+            t.join(timeout=10)
+
+        assert len(execution_order) == 3
+        assert set(execution_order) == {"job-0", "job-1", "job-2"}

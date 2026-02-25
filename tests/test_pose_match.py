@@ -165,27 +165,38 @@ class TestScanBestFramePair:
     def test_scan_best_frame_pair_finds_minimum(self, tmp_path: Path) -> None:
         """Returns the pair with the lowest pose distance."""
         try:
-            import cv2  # noqa: F401
+            import cv2
+            import numpy as np
         except ImportError:
-            pytest.skip("cv2 not installed")
+            pytest.skip("cv2/numpy not installed")
 
         from podcast_pipeline.utils.pose_match import scan_best_frame_pair
 
-        # Create 4 left frames and 4 right frames.
-        # Frame l2 and r1 are identical (distance ~0), all others differ.
-        left_frames = []
-        right_frames = []
-        values_left = [10, 50, 120, 200]
-        values_right = [30, 120, 70, 170]  # r1 matches l2 (both 120)
+        # Create gradient images with horizontal shifts.  Optical flow can
+        # distinguish spatial patterns (unlike uniform solid-color images).
+        # The "matching" pair shares the exact same pattern → flow ≈ 0.
+        size = 64
 
-        for i, v in enumerate(values_left):
+        def _write_gradient(path: Path, shift: int) -> None:
+            """Write a gradient image shifted horizontally by `shift` pixels."""
+            row = np.arange(size, dtype=np.uint8)
+            row = np.roll(row, shift)
+            img = np.tile(row, (size, 1))
+            img = np.stack([img, img, img], axis=-1)
+            cv2.imwrite(str(path), img)
+
+        # 4 left frames with different shifts; l2 has shift=20
+        left_frames = []
+        for i, shift in enumerate([0, 10, 20, 40]):
             p = tmp_path / f"l{i}.png"
-            _write_png(p, width=8, height=8, value=v)
+            _write_gradient(p, shift)
             left_frames.append(p)
 
-        for i, v in enumerate(values_right):
+        # 4 right frames; r1 has shift=20 (identical to l2)
+        right_frames = []
+        for i, shift in enumerate([5, 20, 35, 50]):
             p = tmp_path / f"r{i}.png"
-            _write_png(p, width=8, height=8, value=v)
+            _write_gradient(p, shift)
             right_frames.append(p)
 
         best_l, best_r, best_dist = scan_best_frame_pair(left_frames, right_frames, search_window=4)

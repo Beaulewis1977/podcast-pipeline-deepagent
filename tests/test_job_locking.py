@@ -30,7 +30,7 @@ class SleepStage:
 
 
 def _seed_job(config: Config, job_id: str) -> Job:
-    job = Job(job_id=job_id, input_file="/tmp/test.mp4")  # noqa: S108
+    job = Job(job_id=job_id, input_file="/tmp/test.mp4")
     job.save(config.paths.jobs_dir)
     return job
 
