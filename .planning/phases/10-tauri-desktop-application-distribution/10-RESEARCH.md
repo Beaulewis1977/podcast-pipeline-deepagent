@@ -28,9 +28,9 @@ Phase 10 wraps the existing FastAPI service (`src/podcast_pipeline/service/`) in
 
 **The sidecar lifecycle infrastructure is already complete.** The `desktop/` directory contains a fully working Tauri shell: Rust sidecar lifecycle commands (start/stop/status/PID tracking with cross-platform liveness checks), crash recovery (reconcile + resume via backend HTTP), a fully typed TypeScript API client (`backend.ts`), and dual-path recovery (`recovery.ts` — Tauri invoke with direct HTTP fallback). The CI/CD pipeline (`desktop-release.yml`) is fully written and handles PyInstaller per platform, Tauri builds, and smoke tests across 4 targets. What remains is the UI layer — the current `App.tsx` is a minimal "control panel" shell that must be replaced with the full NLE (Non-Linear Editor) UI per the spec.
 
-The biggest technical risk is PyInstaller bundling of the ML dependency chain (faster-whisper + ctranslate2 + torch + CUDA). The existing CI uses `--onefile` mode, which contradicts the research recommendation of `--onedir`. This gap must be resolved during the PyInstaller subtask. A second gap: `service/cli.py` does not exist yet but the CI references it as the PyInstaller entry point — this file must be created.
+The biggest technical risk is PyInstaller bundling of the ML dependency chain (faster-whisper + ctranslate2 + torch + CUDA). **Decision: use `--onedir` mode** (not `--onefile`). The CI must be migrated. A second gap: `service/cli.py` does not exist yet but the CI references it as the PyInstaller entry point — this file must be created. **Decision: polling-first** via TanStack Query for job progress — no WebSocket in initial scope.
 
-**Primary recommendation:** Build the UI layer on top of the existing infrastructure. Don't rebuild what already works. The critical path is: (1) create `service/cli.py` PyInstaller entry point, (2) decide `--onefile` vs `--onedir` for the sidecar, (3) add TailwindCSS v4 + shadcn/ui to replace the existing plain CSS, (4) implement the 4 spec views as new components on top of `backend.ts` and `recovery.ts`.
+**Primary recommendation:** Build the UI layer on top of the existing infrastructure. Don't rebuild what already works. The critical path is: (1) create `service/cli.py` PyInstaller entry point, (2) migrate CI from `--onefile` to `--onedir`, (3) add CORS middleware to `app.py`, (4) add pre-spawn health check to `lib.rs` for coexistence, (5) add TailwindCSS v4 + shadcn/ui to replace the existing plain CSS, (6) implement the 4 spec views as new components on top of `backend.ts` and `recovery.ts`.
 
 ---
 
@@ -43,9 +43,9 @@ The biggest technical risk is PyInstaller bundling of the ML dependency chain (f
 | `desktop/src-tauri/src/main.rs` | Entry point, calls `lib.run()` | Complete | None |
 | `desktop/src-tauri/src/lib.rs` | Three Tauri commands: `start_sidecar`, `stop_sidecar`, `sidecar_status`. Uses `SidecarState` (PID tracking with cross-platform liveness checks using libc/tasklist). Registers recovery commands. | Complete | Consider adding attach-or-connect logic for coexistence with CLI-started service (current code always tries to spawn) |
 | `desktop/src-tauri/src/recovery.rs` | `check_recovery` (reconcile + list resumable), `trigger_resume`. Makes HTTP calls to backend using `reqwest`. | Complete | None |
-| `desktop/src-tauri/Cargo.toml` | tauri 2.x, tauri-plugin-shell 2.x, serde, serde_json, reqwest 0.12 (json feature), libc (unix-only) | Complete | Add `tauri-plugin-websocket` when WebSocket progress feed is implemented |
-| `desktop/src-tauri/tauri.conf.json` | Product name "Podcast Pipeline", devUrl localhost:1420, externalBin: `["binaries/podcast-backend", "binaries/ffmpeg", "binaries/ffprobe"]`, CSP allows connect-src to 127.0.0.1:8787 | Complete | Update CSP when adding WebSocket: add `ws://127.0.0.1:8787` to connect-src |
-| `desktop/src-tauri/capabilities/default.json` | `core:default`, `shell:allow-spawn`, `shell:allow-execute`, `shell:allow-kill`, `shell:allow-stdin-write`, `shell:allow-open` (https://**) | Complete | Add `websocket:default` when WebSocket plugin is added; add drag-drop permissions |
+| `desktop/src-tauri/Cargo.toml` | tauri 2.x, tauri-plugin-shell 2.x, serde, serde_json, reqwest 0.12 (json feature), libc (unix-only) | Complete | No changes needed for Phase 10 initial scope (WS plugin deferred) |
+| `desktop/src-tauri/tauri.conf.json` | Product name "Podcast Pipeline", devUrl localhost:1420, externalBin: `["binaries/podcast-backend", "binaries/ffmpeg", "binaries/ffprobe"]`, CSP allows connect-src to 127.0.0.1:8787 | Complete | Update externalBin path for `--onedir`; CSP is fine for polling-first (WS deferred) |
+| `desktop/src-tauri/capabilities/default.json` | `core:default`, `shell:allow-spawn`, `shell:allow-execute`, `shell:allow-kill`, `shell:allow-stdin-write`, `shell:allow-open` (https://**) | Complete | Add drag-drop permissions (WS plugin deferred post-MVP) |
 | `desktop/src-tauri/build.rs` | Validates required sidecar binaries (podcast-backend required, ffmpeg required, ffprobe optional) at build time. Panics with actionable error if missing. Respects `SKIP_SIDECAR_CHECK` env var. | Complete | None |
 
 **Key observation about lib.rs:** The current `start_sidecar` always attempts to spawn the sidecar and only returns early if a tracked PID is still alive. It does NOT implement the attach-or-connect pattern (check if port 8787 is reachable before spawning). If Streamlit already started the service, `start_sidecar` will attempt to spawn a second instance. The coexistence requirement requires adding a pre-spawn health check.
@@ -101,7 +101,7 @@ The biggest technical risk is PyInstaller bundling of the ML dependency chain (f
 | @tauri-apps/api | ^2.10.1 | JavaScript API for Tauri features | INSTALLED (package.json) |
 | @tauri-apps/cli | ^2.10.0 | Build/dev toolchain | INSTALLED (package.json devDep) |
 | tauri-plugin-shell | 2.x (Rust) / ^2.3.5 (JS) | Spawn/manage sidecar subprocess | INSTALLED (both) |
-| tauri-plugin-websocket | 2.x | Native WebSocket client | NOT INSTALLED — needed for job progress feed |
+| tauri-plugin-websocket | 2.x | Native WebSocket client | NOT INSTALLED — DEFERRED post-MVP; polling-first via TanStack Query |
 | React | ^19.0.0 | UI framework | INSTALLED |
 | TypeScript | ~5.7.0 | Type safety | INSTALLED |
 | Vite | ^6.0.0 | Frontend bundler | INSTALLED |
@@ -457,7 +457,7 @@ coll = COLLECT(exe, a.binaries, a.datas, name='podcast-backend')
 | Cross-platform sidecar binary preparation | Custom shell scripts | Existing `prepare-sidecars.mjs` | ALREADY DONE |
 | Cross-platform CI build + codesigning | Custom Actions matrix | Existing `desktop-release.yml` | ALREADY DONE |
 | Waveform visualization | Custom SVG/Canvas renderer | wavesurfer.js v7 + @wavesurfer/react | NOT DONE — add |
-| WebSocket client in Tauri | Raw WebSocket | @tauri-apps/plugin-websocket | NOT DONE — add |
+| WebSocket client in Tauri | Raw WebSocket | @tauri-apps/plugin-websocket | DEFERRED — post-MVP; polling-first decided |
 | File drag-drop with OS paths | Browser drag-drop API | `getCurrentWebview().onDragDropEvent()` | NOT DONE — add |
 | Progress/job polling | Manual setInterval fetch | TanStack Query `refetchInterval` | NOT DONE — add |
 | Component system for glassmorphism | Custom CSS components | shadcn/ui + Tailwind v4 | NOT DONE — add |
@@ -472,12 +472,12 @@ coll = COLLECT(exe, a.binaries, a.datas, name='podcast-backend')
 | Feature | Spec Requirement | Current State | Gap | Effort |
 |---------|-----------------|---------------|-----|--------|
 | Sidecar lifecycle | Start/stop/status + PID tracking | `lib.rs` + `backend.ts` — complete | NONE | 0 |
-| Coexistence with Streamlit | Attach to existing service if running | `start_sidecar` always spawns; `App.tsx` has fallback checkHealth on error | Partial — needs pre-spawn health check in `lib.rs` | S |
+| Coexistence with Streamlit | Attach to existing service if running | `start_sidecar` always spawns; `App.tsx` has fallback | Add pre-spawn health check in `lib.rs` (decided) | S |
 | Crash recovery | Reconcile + resume after crash | `recovery.rs` + `recovery.ts` — complete | NONE | 0 |
 | PyInstaller entry point | `service/cli.py` to build sidecar | `service/cli.py` does NOT exist | Critical blocker for CI | S |
-| `--onefile` vs `--onedir` | Research: `--onedir` preferred | CI uses `--onefile` | Must decide and update CI | S |
+| `--onefile` → `--onedir` migration | `--onedir` (decided) | CI uses `--onefile` | Migrate CI + update externalBin path | S |
 | CORS middleware | FastAPI allows Tauri dev + prod origins | No CORS in `app.py` | Blocks `tauri dev` (CORS errors) | S |
-| WebSocket job progress | FastAPI WS endpoint + Tauri WS plugin | No WS in FastAPI; no plugin installed | Missing both backend and frontend | M |
+| Job progress feed | Polling via TanStack Query (decided) | Raw useEffect polling in App.tsx | Replace with TanStack Query refetchInterval; WS deferred post-MVP | S |
 | TailwindCSS v4 | Dark glassmorphism spec UI | Plain CSS in `styles.css` | Config + class migration | S |
 | shadcn/ui components | Design-first component library | None installed | Setup + add to UI | M |
 | Zustand stores | Client UI state management | Raw useState in App.tsx | Add stores, migrate state | M |
@@ -734,7 +734,7 @@ if __name__ == "__main__":
   run: |
     uv run pyinstaller \
       --name podcast-backend \
-      --onefile \          # ← evaluate: change to --onedir for large bundles
+      --onefile \          # ← CHANGE TO --onedir (decided)
       --console \
       --hidden-import podcast_pipeline \
       --hidden-import uvicorn \
@@ -762,32 +762,22 @@ if __name__ == "__main__":
 
 ---
 
-## Open Questions
+## Resolved Decisions
 
-1. **PyInstaller --onefile vs --onedir Decision**
-   - What we know: CI uses `--onefile`. Research recommends `--onedir`. The decision depends on bundle size.
-   - What's unclear: Whether this project will include CUDA torch in the sidecar at all. The `--onedir` + Tauri exact configuration (how to point externalBin at executable inside a directory) needs empirical testing.
-   - Recommendation: During subtask 10-02, test both. If bundle without torch is <200 MB, `--onefile` is acceptable. If torch must be included, switch to `--onedir`.
+1. **PyInstaller: Use `--onedir` mode. Migrate CI from `--onefile`.**
+   - `--onedir` avoids the 8-15s extraction delay, the bootloader PID mismatch (Pitfall 5/6), and the `%TEMP%` accumulation problem. Set `externalBin` to `"binaries/podcast-backend/podcast-backend"`, copy entire PyInstaller dist directory to `src-tauri/binaries/podcast-backend/`. Update `prepare-sidecars.mjs` to handle the directory case. Existing `stop_sidecar` SIGTERM logic works correctly with `--onedir` — no stdin shutdown handler needed.
 
-2. **torch/CUDA Bundle Size**
-   - What we know: CUDA torch bundles are 2-4 GB. Project uses torch for RIFE GPU (Phase 8). The `service/cli.py` will import the full pipeline.
-   - What's unclear: Whether torch can be made optional (lazy import) so base bundle is 100-300 MB.
-   - Recommendation: Design `service/cli.py` so torch is NOT imported at module level. Let pipeline stages import it on demand. Offer `build:sidecar-cpu` vs `build:sidecar-gpu` CI variants.
+2. **torch/CUDA: Lazy import only. Ship CPU-only base bundle, GPU as opt-in CI variant.**
+   - Design `service/cli.py` so torch is NOT imported at module level. Pipeline stages import it on demand. CI offers `build:sidecar-cpu` (default, ~100-300 MB) and `build:sidecar-gpu` (includes CUDA torch, ~2-4 GB) variants. This keeps the base bundle small enough for fast startup.
 
-3. **WebSocket Endpoint Design**
-   - What we know: FastAPI service has no WebSocket endpoints. The frontend has `backend.ts` ready to call them. Tauri v2 needs `@tauri-apps/plugin-websocket`.
-   - What's unclear: Whether WebSocket progress is essential for Phase 10 or can be added later (polling via TanStack Query may suffice for MVP).
-   - Recommendation: Implement polling-first (TanStack Query refetchInterval), add WebSocket as enhancement once core views work.
+3. **WebSocket: Polling-first via TanStack Query. WebSocket is a post-MVP enhancement.**
+   - Use TanStack Query `refetchInterval` for job progress polling. Do NOT install `@tauri-apps/plugin-websocket` or build FastAPI WS endpoints in Phase 10 initial scope. This removes a dependency, simplifies the permission model, and avoids Pitfall 9 entirely. Add WebSocket as a future enhancement once the 4 core views are stable.
 
-4. **Coexistence Pre-Spawn Health Check Scope**
-   - What we know: `App.tsx` boot sequence catches the spawn error and falls back to `checkHealth()` — this partially implements coexistence. The `lib.rs` `start_sidecar` command does not do a pre-spawn check.
-   - What's unclear: Whether the current error-fallback approach is sufficient or whether a clean pre-spawn check is needed.
-   - Recommendation: Add explicit pre-spawn HTTP health check in `start_sidecar` Rust command. Return a flag indicating whether sidecar was spawned or attached. Use this flag to gate shutdown behavior.
+4. **Coexistence: Add explicit pre-spawn health check in `lib.rs`.**
+   - Add HTTP health check to port 8787 BEFORE attempting to spawn the sidecar in `start_sidecar`. If health check succeeds, return `{ spawned: false, attached: true }` and skip spawn. Use this flag to gate shutdown behavior — don't kill a service the desktop app didn't spawn. The current error-fallback in `App.tsx` is a safety net, not the primary mechanism.
 
-5. **Transcript/Filler Toggle API**
-   - What we know: The spec requires a View 3 transcript timeline where operators can toggle filler words. The existing `service/routes/jobs.py` has no transcript-editing endpoints.
-   - What's unclear: Whether the transcript data (filler words, timestamps) needs a new REST endpoint or can be derived from existing job stage outputs.
-   - Recommendation: Map this gap during subtask 10-06. The analyze stage likely produces transcript JSON; the frontend may be able to read it from job outputs without a new API endpoint.
+5. **Transcript/Filler Toggle: Read from job stage outputs, no new API endpoint needed.**
+   - The analyze stage produces transcript JSON with filler word timestamps as part of job outputs. The frontend reads this from the existing `GET /jobs/{id}` response (which includes stage outputs). The Transcript Timeline view renders and toggles filler words client-side. No new REST endpoint required unless editing/saving filler decisions back — defer that to a future phase.
 
 ---
 
@@ -822,7 +812,7 @@ if __name__ == "__main__":
 **Confidence breakdown:**
 - Standard stack: HIGH — Tauri v2 APIs verified against official docs; existing package.json confirms all installed versions
 - Architecture (sidecar spawn/shutdown): HIGH — verified against existing working code; patterns documented from actual source files
-- PyInstaller ML bundling: MEDIUM — general pattern verified; `--onefile` vs `--onedir` gap and faster-whisper/ctranslate2 specific DLL collection needs empirical validation
+- PyInstaller ML bundling: MEDIUM — `--onedir` decided; general pattern verified but faster-whisper/ctranslate2 specific DLL collection needs empirical validation during implementation
 - Distribution CI/CD: HIGH — existing `desktop-release.yml` is complete and working
 - Gap analysis: HIGH — based on direct codebase inspection of all source files
 
