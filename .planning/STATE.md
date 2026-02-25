@@ -1,28 +1,28 @@
 # Project State: Podcast Pipeline
 
-**Last updated:** 2026-02-24
-**Current phase:** Phase 9.12 — Streamlit UI Gap Closure
-**Overall progress:** Phase 9 complete (11/11 plans); 65 plans completed overall; Phase 9.12 complete (3/3 plans)
+**Last updated:** 2026-02-25
+**Current phase:** Phase 10 — Tauri Desktop Application Distribution
+**Overall progress:** Phase 9 complete (11/11 plans); 66 plans completed overall; Phase 10 in progress (1/6 plans)
 
 ## Project Reference
 
 See: `.planning/PROJECT.md`
 
 **Core value:** Turn raw podcast recording into multi-platform content without editing software or manual copywriting.
-**Current focus:** Phase 9.12 complete — all 7 UI gaps closed. Milestone v1.0 complete.
+**Current focus:** Phase 10 — Tauri desktop app distribution. Plan 02 complete (frontend toolchain + CI --onedir migration).
 
 ## Current Position
 
 ```text
-Phase:    9.12 (Streamlit UI Gap Closure)
-Plan:     03/03 complete — 09.12-03 Split sound kit controls + Brand Studio file uploaders
-Status:   Complete — all 3 plans done, all 7 UI gaps closed
-Last activity: 2026-02-24 - Completed 09.12-03-PLAN.md (GAP-5A/GAP-6A UI closures)
+Phase:    10 (Tauri Desktop Application Distribution)
+Plan:     02/06 complete — 10-02 Frontend toolchain setup (CI --onedir + TailwindCSS v4 + TanStack Query + shadcn/ui)
+Status:   In progress — Plan 01 pending, Plan 02 complete; Plans 03-06 pending
+Last activity: 2026-02-25 - Completed 10-02-PLAN.md (CI migration + frontend deps + Tauri window config)
 
-Progress: [██████████████████████████████] 65/65 plans complete
+Progress: [██████████████████████████████] 66/66 plans complete (Phase 9 closed; Phase 10 ongoing)
 ```
 
-**Current Phase:** Phase 9.12 — Streamlit UI Gap Closure (3/3 plans complete)
+**Current Phase:** Phase 10 — Tauri Desktop Application Distribution (1/6 plans complete)
 
 ## Phase Status
 
@@ -40,15 +40,16 @@ Progress: [███████████████████████
 | 8 | Intelligent Cut Quality | Complete (verified 2026-02-21) | 6/6 | 100% |
 | 9 | Automated Branding, Captions, and Multi-Track Sync | Complete (verified 2026-02-24) | 11/11 | 100% |
 | 9.12 | Streamlit UI Gap Closure | Complete (verified 2026-02-24) | 3/3 | 100% |
+| 10 | Tauri Desktop Application Distribution | In progress | 1/6 | 17% |
 
 ## Performance Metrics
 
 | Metric | Value |
 |--------|-------|
-| Plans completed | 65/65 |
+| Plans completed | 66/71 |
 | Requirements done | 35/83 (21 partial) |
-| Phases complete | 9/9 |
-| Estimated completion | All phases complete |
+| Phases complete | 9/10 (Phase 10 in progress) |
+| Estimated completion | Phase 10 in progress |
 
 ## Accumulated Context
 
@@ -214,9 +215,16 @@ Progress: [███████████████████████
 | Enable Stingers maps to decisions.sound_kit_enabled (existing render-wired field) | Render stage uses sound_kit_enabled to gate _mix_stingers; stingers checkbox directly controls existing render behavior | 2026-02-24 |
 | Enable Auto-Ducking maps to decisions.auto_duck_enabled — UI persistence only | Render-side granular ducking control deferred; current _mix_stingers always applies ducking when stingers present | 2026-02-24 |
 | Brand Studio file uploaders use branding_dir function parameter (not get_config()) | Avoids redundant config load inside Visual Assets expander; branding_dir already passed to _render_brand_studio_editor | 2026-02-24 |
+| PyInstaller --onedir (not --onefile) for backend sidecar | Avoids Python stdlib extraction overhead on startup; _internal/ dir bundled via bundle.resources | 2026-02-25 |
+| TailwindCSS v4 CSS-first config (no tailwind.config.js) | v4 uses @import "tailwindcss" + @theme block in CSS; eliminates separate config file | 2026-02-25 |
+| shadcn/ui installed manually (no npx shadcn init) | Interactive init not suitable for automated execution; manual component files give full control | 2026-02-25 |
+| @/* path alias added to both tsconfig.json and vite.config.ts | TypeScript resolution alone insufficient; Vite needs alias for runtime module resolution | 2026-02-25 |
+| tauri.conf.json bundle.resources for _internal/**/* | Tauri externalBin only bundles single files; _internal/ Python deps silently dropped without resources entry | 2026-02-25 |
 
 ### Roadmap Evolution
 
+- Phase 10 added: Tauri Desktop Application Distribution
+- Phase 10 execution started: completed 10-02-PLAN.md (CI --onedir + frontend toolchain: TailwindCSS v4, TanStack Query v5, Zustand v5, wavesurfer.js v7, shadcn/ui, Tauri window config)
 - Phase 4 added: Post-release hardening
 - Phase 4 planned: research complete + 10 plan files created
 - Phase 4 execution started: completed 04-01 runtime invariants hardening
@@ -364,16 +372,17 @@ Progress: [███████████████████████
 - 2026-02-24: Completed 09.12-01-PLAN.md (GAP-7 render wiring: decisions.captions_enabled/sound_kit_enabled/branding_profile_name now gate render passes; youtube_ultra registered; caption_aspect_ratio and auto_duck_enabled fields added; 6 regression tests)
 - 2026-02-24: Completed 09.12-02-PLAN.md (GAP-1/3A/3B/4: Settings provider selectbox for Claude/Gemini/Kimi; Anthropic API key status in Settings; caption aspect ratio selectbox in Production sidebar; sync artifact offset+confidence metrics display; slider range +/-5000ms; 1034 tests passing)
 - 2026-02-24: Completed 09.12-03-PLAN.md (GAP-5A/6A: Split sound kit into Enable Stingers + Enable Auto-Ducking checkboxes; logo/font file uploaders in Brand Studio Visual Assets; 1041 tests passing; Phase 9.12 complete)
+- 2026-02-25: Completed 10-02-PLAN.md (CI: --onefile→--onedir + full directory artifact upload; Tauri window 1440x900, minWidth 1024, CSP+media permissions, externalBin directory path, bundle.resources for _internal/**; prepare-sidecars.mjs onedir detection; TailwindCSS v4, TanStack Query v5, Zustand v5, wavesurfer.js v7, shadcn/ui components; pnpm build passes)
 
 ## Session Continuity
 
 ### Last session
 
-2026-02-24 — Phase 9.12 execution completed. Completed 09.12-03 (GAP-5A/6A: split sound kit controls + Brand Studio file uploaders). All 7 UI gaps are now closed. Phase 9.12 is complete (3/3 plans done).
+2026-02-25 — Phase 10 Plan 02 execution completed. CI migrated to --onedir, Tauri window config updated, frontend toolchain fully configured (TailwindCSS v4, TanStack Query v5, Zustand v5, wavesurfer.js v7, shadcn/ui components). pnpm build passes.
 
 ### Stopped at
 
-Completed 09.12-03-PLAN.md — Phase 9.12 is fully complete. All UI gaps (GAP-1 through GAP-7) are closed.
+Completed 10-02-PLAN.md — Phase 10 Plan 02 (frontend toolchain + CI --onedir migration) is done. Next: Plan 03 (Shell layout + navigation).
 
 ### Resume file
 
@@ -381,4 +390,4 @@ None
 
 ---
 
-*State updated: 2026-02-24 (09.12-01 executed -- GAP-7 render wiring fix; Phase 9.12 1/3 plans; 63/65 overall)*
+*State updated: 2026-02-25 (10-02 executed -- CI --onedir migration + frontend toolchain; Phase 10 1/6 plans complete; 66 plans overall)*
