@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -45,6 +46,24 @@ SERVICE_DEV_AUTH_BYPASS_ENV_VAR = "PODCAST_PIPELINE_SERVICE_ALLOW_UNAUTHENTICATE
 SERVICE_RECONCILE_INTERVAL_ENV_VAR = "PODCAST_PIPELINE_SERVICE_RECONCILE_INTERVAL_SECONDS"
 SERVICE_API_KEY_HEADER_NAME = "X-API-Key"
 DEFAULT_RECONCILE_INTERVAL_SECONDS = 30.0
+
+# CORS configuration — controls which browser origins may call the service.
+# In production the Tauri WebView uses the tauri:// scheme; in development
+# the Vite dev server runs on localhost:1420.  Additional origins can be
+# injected via the environment variable without modifying this file.
+CORS_ORIGINS_ENV_VAR = "PODCAST_PIPELINE_CORS_ORIGINS"
+DEFAULT_CORS_ORIGINS: list[str] = [
+    "http://localhost:1420",
+    "tauri://localhost",
+]
+
+
+def _load_cors_origins() -> list[str]:
+    """Load allowed CORS origins from env or return the default list."""
+    raw = os.getenv(CORS_ORIGINS_ENV_VAR)
+    if raw and raw.strip():
+        return [origin.strip() for origin in raw.split(",") if origin.strip()]
+    return list(DEFAULT_CORS_ORIGINS)
 
 
 def _parse_bool_env(raw: str | None, *, default: bool) -> bool:
@@ -188,6 +207,19 @@ def create_app() -> FastAPI:
         description="Local backend API for podcast pipeline job lifecycle",
         version=__version__,
         lifespan=lifespan,
+    )
+
+    # CORS middleware — must be added before exception handlers so that CORS
+    # preflight (OPTIONS) requests receive the correct headers even on errors.
+    # Never use allow_origins=["*"]; always use the explicit allow-list so
+    # production builds cannot be called from arbitrary origins.
+    origins = _load_cors_origins()
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
     )
 
     @app.exception_handler(StarletteHTTPException)
