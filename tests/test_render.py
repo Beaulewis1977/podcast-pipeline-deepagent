@@ -2902,10 +2902,10 @@ class TestEncoderCapabilityDetection:
         assert encoder == "libsvtav1"
         assert extra_args == []
 
-    def test_encoder_capability_av1_without_software_support_returns_codec_anyway(
+    def test_encoder_capability_av1_without_software_support_falls_back_to_libx265(
         self,
     ) -> None:
-        """AV1 codec with software_av1=False logs a warning but still returns the codec."""
+        """AV1 codec with software_av1=False falls back to libx265."""
         stage = self._make_stage_with_hw(software_av1=False)
         spec = PlatformSpec(
             video_codec="libsvtav1",
@@ -2915,8 +2915,8 @@ class TestEncoderCapabilityDetection:
         )
         encoder, extra_args = stage._resolve_video_encoder(spec, "youtube_ultra")
 
-        # Encoder is still returned with warning logged — caller decides whether to fail or warn
-        assert encoder == "libsvtav1"
+        # When AV1 is unavailable, fall back to libx265 to avoid FFmpeg failure
+        assert encoder == "libx265"
         assert extra_args == []
 
     # --- Standard codecs: verbatim pass-through ---

@@ -55,6 +55,18 @@ PROFILE_LEVEL_CODECS = {"h264", "libx264", "h265", "hevc", "libx265", "h264_nven
 THUMBNAIL_COMPLIANCE_PLATFORMS = ("youtube", "spotify_video", "apple_video")
 _EPSILON = 1e-6
 
+# FFmpeg filtergraph metacharacters that must be backslash-escaped in option values.
+_FFMPEG_FILTERGRAPH_META_RE = re.compile(r"([\[\]:;,\\'])")
+
+
+def _escape_ffmpeg_filter_value(value: str) -> str:
+    """Escape FFmpeg filtergraph metacharacters in an option value.
+
+    Characters ``[ ] : ; , \\ '`` are prefixed with a backslash so they are
+    treated as literal characters inside FFmpeg filter option strings.
+    """
+    return _FFMPEG_FILTERGRAPH_META_RE.sub(r"\\\1", value)
+
 
 @dataclass(frozen=True, slots=True)
 class _CutRange:
@@ -93,7 +105,7 @@ class RenderStage(Stage):
         # The MCP server pre-warms this cache on lifespan startup; here we just read it.
         try:
             self._hw_encoders: HardwareEncoderInfo = detect_hardware_encoders()
-        except Exception as exc:
+        except (subprocess.SubprocessError, OSError, FileNotFoundError) as exc:
             # Encoder detection is best-effort — fall back to software-only capability.
             self.logger.warning("hw_encoder_detection_failed", error=str(exc))
             self._hw_encoders = HardwareEncoderInfo()  # all False / software defaults
@@ -1372,7 +1384,7 @@ class RenderStage(Stage):
 
         try:
             artifact = json.loads(artifact_path.read_text())
-        except Exception as exc:
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
             self.logger.warning("sync_artifact_load_failed", error=str(exc))
             return None, {"source": None, "error": str(exc)}
 
@@ -1406,8 +1418,27 @@ class RenderStage(Stage):
             offset_ms: Offset in ms; positive = external track starts later.
 
         Returns:
-            Path to the synced file, or ``None`` on FFmpeg failure.
+            Path to the synced file, or ``None`` on FFmpeg failure or
+            when the input has fewer than 2 audio streams.
         """
+        # Probe audio stream count — mapping "1:a:1" requires at least 2 streams.
+        try:
+            probe_data = run_ffprobe(input_video)
+            audio_stream_count = sum(
+                1 for s in probe_data.get("streams", []) if s.get("codec_type") == "audio"
+            )
+        except (subprocess.SubprocessError, OSError, FileNotFoundError):
+            audio_stream_count = 0
+
+        if audio_stream_count < 2:
+            self.logger.warning(
+                "sync_offset_skipped_single_audio_stream",
+                offset_ms=offset_ms,
+                path=str(input_video),
+                audio_streams=audio_stream_count,
+            )
+            return None
+
         intermediate_dir = job_dir / "intermediate"
         intermediate_dir.mkdir(parents=True, exist_ok=True)
         suffix = input_video.suffix
@@ -1867,19 +1898,9 @@ class RenderStage(Stage):
 
         # Video encoding — use resolved encoder (NVENC/software fallback)
         # encoder_extra_args may override pix_fmt for NVENC→libx265 fallback
-        effective_pix_fmt = spec.pix_fmt
-        if encoder_extra_args:
-            # When _resolve_video_encoder returns extra args (e.g. libx265 fallback),
-            # extract pix_fmt override so the -pix_fmt flag stays before codec-specific args.
-            try:
-                pf_idx = encoder_extra_args.index("-pix_fmt")
-                effective_pix_fmt = encoder_extra_args[pf_idx + 1]
-                # Remaining extra args after stripping pix_fmt pair
-                remaining_extra = encoder_extra_args[:pf_idx] + encoder_extra_args[pf_idx + 2 :]
-            except ValueError:
-                remaining_extra = encoder_extra_args
-        else:
-            remaining_extra = []
+        effective_pix_fmt, remaining_extra = self._split_pix_fmt_from_extra_args(
+            encoder_extra_args, spec
+        )
 
         args.extend(
             [
@@ -1990,10 +2011,17 @@ class RenderStage(Stage):
 
         # Compliance validation runs AFTER caption burn-in so it checks the
         # final deliverable (not an intermediate that _burn_captions re-encodes).
+        # When encoder fallback changed pix_fmt (e.g. p010le -> yuv420p10le),
+        # create a shallow spec copy so compliance checks the actual output format.
+        compliance_spec = (
+            spec.model_copy(update={"pix_fmt": effective_pix_fmt})
+            if effective_pix_fmt != spec.pix_fmt
+            else spec
+        )
         self._validate_video_platform_compliance(
             platform=platform,
             output_file=output_file,
-            spec=spec,
+            spec=compliance_spec,
         )
 
         self.logger.info(f"{platform}_rendered", output=str(output_file))
@@ -2085,7 +2113,7 @@ class RenderStage(Stage):
                     active_profile_name,
                     branding_cfg.branding_dir,
                 )
-            except Exception as exc:
+            except (FileNotFoundError, ValueError, TypeError, OSError) as exc:
                 self.logger.warning(
                     "caption_branding_load_failed",
                     platform=platform,
@@ -2116,22 +2144,17 @@ class RenderStage(Stage):
         ext = spec.container if spec.container not in {"hls"} else "mp4"
         captioned_path = output_dir / f"captioned.{ext}"
 
-        # Escape path for FFmpeg ass= filter (POSIX forward slashes).
-        ass_filter = f"ass={ass_path.as_posix()}"
+        # Escape path for FFmpeg ass= filter (POSIX forward slashes, metachar-safe).
+        escaped_ass_path = _escape_ffmpeg_filter_value(ass_path.as_posix())
+        ass_filter = f"ass={escaped_ass_path}"
 
         # Resolve encoder consistently with the main render pipeline so caption
         # burn-in does not downgrade HEVC 10-bit → H.264 8-bit.
         resolved_encoder, encoder_extra_args = self._resolve_video_encoder(spec, platform)
 
-        effective_pix_fmt = spec.pix_fmt
-        remaining_extra: list[str] = []
-        if encoder_extra_args:
-            try:
-                pf_idx = encoder_extra_args.index("-pix_fmt")
-                effective_pix_fmt = encoder_extra_args[pf_idx + 1]
-                remaining_extra = encoder_extra_args[:pf_idx] + encoder_extra_args[pf_idx + 2 :]
-            except ValueError:
-                remaining_extra = list(encoder_extra_args)
+        effective_pix_fmt, remaining_extra = self._split_pix_fmt_from_extra_args(
+            encoder_extra_args, spec
+        )
 
         burn_args = [
             "-i",
@@ -2192,6 +2215,35 @@ class RenderStage(Stage):
     def _supports_profile_level_flags(self, video_codec: str) -> bool:
         """Return whether a codec supports profile/level and GOP cadence flags."""
         return video_codec.strip().lower() in PROFILE_LEVEL_CODECS
+
+    @staticmethod
+    def _split_pix_fmt_from_extra_args(
+        encoder_extra_args: list[str],
+        spec: PlatformSpec,
+    ) -> tuple[str, list[str]]:
+        """Extract ``-pix_fmt`` override from encoder extra args.
+
+        When ``_resolve_video_encoder`` returns extra args (e.g. libx265
+        software fallback), those args may contain a ``-pix_fmt`` override
+        that must be applied instead of ``spec.pix_fmt``.
+
+        Args:
+            encoder_extra_args: Extra args list from ``_resolve_video_encoder``.
+            spec: Platform specification carrying the default ``pix_fmt``.
+
+        Returns:
+            Tuple of ``(effective_pix_fmt, remaining_extra_args)``.
+        """
+        if not encoder_extra_args:
+            return spec.pix_fmt, []
+        try:
+            pf_idx = encoder_extra_args.index("-pix_fmt")
+            effective_pix_fmt = encoder_extra_args[pf_idx + 1]
+            remaining_extra = encoder_extra_args[:pf_idx] + encoder_extra_args[pf_idx + 2 :]
+        except (ValueError, IndexError):
+            effective_pix_fmt = spec.pix_fmt
+            remaining_extra = list(encoder_extra_args)
+        return effective_pix_fmt, remaining_extra
 
     def _resolve_video_encoder(
         self,
@@ -2256,8 +2308,10 @@ class RenderStage(Stage):
             )
             return "libx264", []
 
-        # AV1 — software-only experimental path
+        # AV1 — software-only experimental path; fall back to libx265 when unavailable.
         if codec in AV1_CODECS:
+            resolved_codec: str = codec
+            extra: list[str] = []
             if hw.software_av1:
                 self.logger.info(
                     "encoder_selected",
@@ -2266,16 +2320,18 @@ class RenderStage(Stage):
                     reason="av1_experimental_enabled",
                 )
             else:
+                resolved_codec = "libx265"
                 self.logger.warning(
-                    "av1_encoder_unavailable",
+                    "av1_encoder_fallback",
                     platform=platform,
-                    encoder=codec,
-                    action=(
-                        "libsvtav1 not found in FFmpeg build; install FFmpeg with SVT-AV1 support "
-                        "or switch to hevc_nvenc/libx265 for this platform."
+                    requested=codec,
+                    fallback="libx265",
+                    reason=(
+                        "libsvtav1 not found in FFmpeg build; falling back to libx265. "
+                        "Install FFmpeg with SVT-AV1 support to use AV1 encoding."
                     ),
                 )
-            return codec, []
+            return resolved_codec, extra
 
         # All other codecs (libx264, libx265, etc.) — verbatim
         return codec, []
@@ -2331,7 +2387,7 @@ class RenderStage(Stage):
                     output=str(uplifted_path),
                 )
                 return uplifted_path
-        except Exception as exc:
+        except (NotImplementedError, subprocess.SubprocessError, OSError) as exc:
             self.logger.warning(
                 "force_60fps_uplift_failed",
                 platform=platform,
@@ -3787,7 +3843,7 @@ class RenderStage(Stage):
                     profile_intro = branding_profile.intro_sound
                     profile_transition = branding_profile.transition_sound
                     profile_outro = branding_profile.outro_sound
-            except Exception as exc:
+            except (FileNotFoundError, ValueError, TypeError, OSError) as exc:
                 self.logger.warning(
                     "sound_kit_profile_load_failed",
                     profile=active_profile_name,
