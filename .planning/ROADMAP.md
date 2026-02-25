@@ -1,7 +1,7 @@
 # Roadmap: Podcast Pipeline
 
 **Created:** 2026-01-29
-**Last Updated:** 2026-02-24
+**Last Updated:** 2026-02-25
 **Milestone:** v1.0 (Streamlit-first)
 **Phases:** 8 + follow-ups 5.1 and 6.1
 
@@ -393,8 +393,8 @@ Plans run in 4 execution waves:
 - Add HEVC 10-bit NVENC default encode profiles to `PlatformSpec` with software `libx265` fallback and opt-in AV1 experimental toggle (`libsvtav1` only)
 - Implement `BrandingProfile` Pydantic model (`models/branding.py`) with `brand_voice`, logo, font, caption style, platform overrides; serialised to `branding/<name>.yaml`; inject `brand_voice` into `BaseProvider._build_prompt()` as optional kwarg
 - Create ASS caption generator (`utils/captions.py`) from `transcribe/word_alignment.json` with per-word color highlights and per-aspect-ratio safe-zone templates (16:9, 9:16, 1:1); burn-in via `libass`
-- Implement bounded cross-correlation audio sync (`utils/sync.py`) — downsample to 8 kHz mono, 60 s window, `scipy.signal.correlate`, `librosa.resample`; write offset to job manifest; add Streamlit ±5000 ms manual fallback slider
-- Implement production sound kits — intro/transition/outro stingers from `branding/sounds/`; FFmpeg `sidechaincompress` auto-ducking (attack 5 ms, release 200 ms, ratio 4:1, threshold −30 dB)
+- Implement bounded cross-correlation audio sync (`utils/sync.py`) — downsample to 8 kHz mono, 60 s window, `scipy.signal.correlate`, `librosa.resample`; write offset to job manifest; add Streamlit +-5000 ms manual fallback slider
+- Implement production sound kits — intro/transition/outro stingers from `branding/sounds/`; FFmpeg `sidechaincompress` auto-ducking (attack 5 ms, release 200 ms, ratio 4:1, threshold -30 dB)
 - Build AI Thumbnail Studio (`utils/thumbnails.py`) — Gemini Vision (`gemini-2.5-flash-image`) via google.genai SDK with prompt-hash cache; auto-branding overlay via `overlay_image` toolkit tool
 - Add Streamlit "Brand Studio" tab (profile CRUD, logo/font upload, brand voice text area) and "Production" sidebar (caption stylist, thumbnail gallery, audio mixer with sync slider and auto-duck toggle)
 - Add `scipy>=1.14.0` as core dep; `fastmcp>=2.0.0` as `[dev]`; `[thumbnails]` group emptied (google-genai is core dep)
@@ -406,42 +406,42 @@ Plans run in 4 execution waves:
 4. 1080p test video encodes HEVC 10-bit via NVENC; software `libx265` fallback works; AV1 toggle produces valid file
 5. `BrandingProfile` YAML loads, validates, and `brand_voice` appears in analysis prompt; platform overrides merge correctly
 6. ASS file generated from test transcript; FFmpeg burns it onto video; word highlighting renders for all 3 aspect ratios
-7. Two test audio tracks with clap sync within ±10 ms automatically; manual slider offsets correctly; low-confidence warning on missing clap
+7. Two test audio tracks with clap sync within +-10 ms automatically; manual slider offsets correctly; low-confidence warning on missing clap
 8. Rendered video has intro music with auto-ducking; transition whoosh at cut boundaries; outro fades correctly
 9. Gemini Vision generates thumbnails from AI prompts (cached on rerun); branding applied
-10. Brand Studio tab creates/saves/loads profiles; full pipeline demo: raw → synced → cut → branded → captioned → multi-platform export
+10. Brand Studio tab creates/saves/loads profiles; full pipeline demo: raw -> synced -> cut -> branded -> captioned -> multi-platform export
 
 Plans:
-- [x] 09-01-PLAN.md — FFmpeg media toolkit (14 tools, 5 groups) + unit tests + existing-callers regression locking
-- [x] 09-02-PLAN.md — FastMCP developer server (all 14 tools, lifespan HW cache, stdio transport, `.mcp.json` config)
-- [x] 09-03-PLAN.md — Claude analysis provider (Anthropic SDK, protocol conformance, API key config, test suite parity)
-- [x] 09-04-PLAN.md — HEVC 10-bit NVENC profiles + software `libx265` fallback + AV1 experimental toggle + codec regressions
-- [x] 09-05-PLAN.md — BrandingProfile model + brand voice prompt injection + platform-override merge + config wiring
-- [x] 09-06-PLAN.md — ASS caption generator (word-level highlights, aspect-ratio safe-zone templates, libass burn-in regressions)
-- [x] 09-07-PLAN.md — Bounded cross-correlation audio sync + Streamlit manual offset slider + job-manifest offset persistence
-- [x] 09-08-PLAN.md — Production sound kits (stingers, auto-ducking sidechaincompress, branding/sounds/ library)
-- [x] 09-09-PLAN.md — AI Thumbnail Studio (Gemini Vision single-backend, prompt-hash cache, auto-branding overlay)
-- [x] 09-10-PLAN.md — Streamlit Brand Studio tab + Production sidebar + full end-to-end pipeline demo integration
-- [x] 09-11-PLAN.md — Gemini Vision model pivot: replace Imagen 4 / FLUX.1 with exclusive Gemini Vision thumbnail generation
+- [x] 09-01-PLAN.md -- FFmpeg media toolkit (14 tools, 5 groups) + unit tests + existing-callers regression locking
+- [x] 09-02-PLAN.md -- FastMCP developer server (all 14 tools, lifespan HW cache, stdio transport, `.mcp.json` config)
+- [x] 09-03-PLAN.md -- Claude analysis provider (Anthropic SDK, protocol conformance, API key config, test suite parity)
+- [x] 09-04-PLAN.md -- HEVC 10-bit NVENC profiles + software `libx265` fallback + AV1 experimental toggle + codec regressions
+- [x] 09-05-PLAN.md -- BrandingProfile model + brand voice prompt injection + platform-override merge + config wiring
+- [x] 09-06-PLAN.md -- ASS caption generator (word-level highlights, aspect-ratio safe-zone templates, libass burn-in regressions)
+- [x] 09-07-PLAN.md -- Bounded cross-correlation audio sync + Streamlit manual offset slider + job-manifest offset persistence
+- [x] 09-08-PLAN.md -- Production sound kits (stingers, auto-ducking sidechaincompress, branding/sounds/ library)
+- [x] 09-09-PLAN.md -- AI Thumbnail Studio (Gemini Vision single-backend, prompt-hash cache, auto-branding overlay)
+- [x] 09-10-PLAN.md -- Streamlit Brand Studio tab + Production sidebar + full end-to-end pipeline demo integration
+- [x] 09-11-PLAN.md -- Gemini Vision model pivot: replace Imagen 4 / FLUX.1 with exclusive Gemini Vision thumbnail generation
 
 **Details:**
 Plans run in 6 execution waves:
-- Wave 1: `09-01` (toolkit foundation) — required by all subsequent plans
-- Wave 2: `09-02` (MCP server) and `09-03` (Claude provider) in parallel — both depend on `09-01` only
-- Wave 3: `09-04` (codec profiles) and `09-05` (branding model) in parallel — depend on `09-01`
-- Wave 4: `09-06` (captions), `09-07` (sync), `09-08` (sound kits) in parallel — depend on `09-05`
-- Wave 5: `09-09` (thumbnail studio) and `09-10` (Streamlit UI) in parallel — depend on Waves 3–4; `09-10` depends on all
-- Wave 6: `09-11` (Gemini Vision pivot) — replaces Imagen 4 / FLUX.1 with Gemini Vision models; depends on `09-09`
+- Wave 1: `09-01` (toolkit foundation) -- required by all subsequent plans
+- Wave 2: `09-02` (MCP server) and `09-03` (Claude provider) in parallel -- both depend on `09-01` only
+- Wave 3: `09-04` (codec profiles) and `09-05` (branding model) in parallel -- depend on `09-01`
+- Wave 4: `09-06` (captions), `09-07` (sync), `09-08` (sound kits) in parallel -- depend on `09-05`
+- Wave 5: `09-09` (thumbnail studio) and `09-10` (Streamlit UI) in parallel -- depend on Waves 3-4; `09-10` depends on all
+- Wave 6: `09-11` (Gemini Vision pivot) -- replaces Imagen 4 / FLUX.1 with Gemini Vision models; depends on `09-09`
 
 **Spec reference:** `docs/plans/2026-02-21-branding-automation-and-sync-spec_v4.md`
 
 **New dependencies:**
 | Package | Version | Extra | Purpose |
 |---|---|---|---|
-| `anthropic` | `>=0.80.0` | — | Claude analysis provider |
-| `scipy` | `>=1.14.0` | — | Cross-correlation for audio sync |
+| `anthropic` | `>=0.80.0` | -- | Claude analysis provider |
+| `scipy` | `>=1.14.0` | -- | Cross-correlation for audio sync |
 | `fastmcp` | `>=2.0.0` | `[dev]` | MCP server for FFmpeg toolkit |
-| `google-genai` | `>=1.0.0` | — (core) | Gemini Vision thumbnail generation (already installed) |
+| `google-genai` | `>=1.0.0` | -- (core) | Gemini Vision thumbnail generation (already installed) |
 
 ---
 
@@ -456,19 +456,19 @@ Plans run in 6 execution waves:
 
 Seven gaps identified in `09-UI-GAPS.md`. Ordered by priority:
 
-**P0 — Critical (features broken or completely inaccessible):**
-- GAP-7: Wire `ReviewDecisions.captions_enabled`, `sound_kit_enabled`, and `branding_profile_name` into `render.py` — these fields are persisted by the UI but completely ignored by the render stage; all three Production sidebar controls silently have zero effect
+**P0 -- Critical (features broken or completely inaccessible):**
+- GAP-7: Wire `ReviewDecisions.captions_enabled`, `sound_kit_enabled`, and `branding_profile_name` into `render.py` -- these fields are persisted by the UI but completely ignored by the render stage; all three Production sidebar controls silently have zero effect
 - GAP-2: Register `youtube_ultra` in `EXPORT_TARGETS` so the HEVC 10-bit export target appears in the export panel
 - GAP-1: Add Anthropic API key status to the Settings API Keys panel; add interactive provider selection so Claude can be selected without hand-editing `config.yaml`
 
-**P1 — Significant (features partially broken):**
+**P1 -- Significant (features partially broken):**
 - GAP-4: Add caption aspect ratio selector (`16:9` / `9:16` / `1:1`) to Production sidebar; add `caption_aspect_ratio` field to `ReviewDecisions`; thread into `_burn_captions()` so captions use the correct safe-zone template for the export target
-- GAP-3: Display auto-detected sync offset and confidence from `intermediate/sync_artifact.json` above the manual slider; extend slider range from ±2000ms to ±5000ms per original spec
+- GAP-3: Display auto-detected sync offset and confidence from `intermediate/sync_artifact.json` above the manual slider; extend slider range from +-2000ms to +-5000ms per original spec
 
-**P2 — Minor (polish and completeness):**
+**P2 -- Minor (polish and completeness):**
 - GAP-5: Split "Enable Sound Kit" checkbox into separate "Enable Stingers" and "Enable Auto-Ducking" controls; add `auto_duck_enabled` field to `ReviewDecisions`; wire both into `_mix_stingers()`
 
-**P3 — Nice-to-have (operator UX):**
+**P3 -- Nice-to-have (operator UX):**
 - GAP-6: Replace logo/font path text inputs in Brand Studio with `st.file_uploader` widgets; add interactive "Add Override" form to Platform Overrides expander
 
 **Success Criteria:**
@@ -479,20 +479,72 @@ Seven gaps identified in `09-UI-GAPS.md`. Ordered by priority:
 5. Claude provider can be selected in Settings without touching config files; ANTHROPIC_API_KEY status visible
 6. Caption aspect ratio persists through review_state and is used by `generate_ass()` at render time
 7. Auto-detected sync offset value and confidence displayed next to slider
-8. All tests pass — no regressions in Phase 9 (09-01 through 09-11)
+8. All tests pass -- no regressions in Phase 9 (09-01 through 09-11)
 
 **Gap reference:** `.planning/phases/09-automated-branding-captions-and-multi-track-sync/09-UI-GAPS.md`
 
 Plans:
-- [x] 09-12-01-PLAN.md — Render wiring fix (GAP-7) + youtube_ultra registration (GAP-2) + ReviewDecisions extension + regression tests
-- [x] 09-12-02-PLAN.md — Claude provider selectbox + Anthropic key status (GAP-1) + caption aspect ratio (GAP-4) + sync artifact display + slider range (GAP-3)
-- [x] 09-12-03-PLAN.md — Split sound kit checkboxes (GAP-5A) + logo/font file uploaders (GAP-6A) + optional P3 stretch goals
+- [x] 09-12-01-PLAN.md -- Render wiring fix (GAP-7) + youtube_ultra registration (GAP-2) + ReviewDecisions extension + regression tests
+- [x] 09-12-02-PLAN.md -- Claude provider selectbox + Anthropic key status (GAP-1) + caption aspect ratio (GAP-4) + sync artifact display + slider range (GAP-3)
+- [x] 09-12-03-PLAN.md -- Split sound kit checkboxes (GAP-5A) + logo/font file uploaders (GAP-6A) + optional P3 stretch goals
 
 **Details:**
 Plans run in 3 execution waves:
 - Wave 1: `09-12-01` fixes the critical render wiring (GAP-7), extends ReviewDecisions with new fields, and registers youtube_ultra (GAP-2). This is the foundation all other UI changes depend on.
 - Wave 2: `09-12-02` adds P0/P1 UI controls in Settings and Production sidebar (GAP-1, GAP-3, GAP-4). Depends on 09-12-01 for the new ReviewDecisions fields.
 - Wave 3: `09-12-03` adds P2/P3 polish controls (GAP-5A, GAP-6A, optional stretch goals). Depends on 09-12-02.
+
+### Phase 10: Tauri Desktop Application Distribution
+
+**Goal:** Build the Tauri v2 desktop application UI layer on top of the existing sidecar infrastructure -- shipping a production-quality NLE-grade desktop app that is a strict superset of the Streamlit UI.
+**Depends on:** Phase 9
+**Plans:** 6 plans
+
+**Scope / Requirements:**
+- Create missing PyInstaller entry point (`service/cli.py`) that CI references
+- Add CORS middleware to FastAPI backend for Tauri dev/production origins
+- Add pre-spawn coexistence health check to Tauri sidecar lifecycle (detect and attach to already-running backends)
+- Migrate CI PyInstaller from `--onefile` to `--onedir` mode
+- Install and configure frontend toolchain: TailwindCSS v4, TanStack Query v5, Zustand v5, wavesurfer.js v7, shadcn/ui
+- Build state management layer: Zustand stores (UI state, sidecar state) + TanStack Query hooks (jobs, health, system status)
+- Build layout components: AppShell, Sidebar, Header with 4-view navigation
+- Build 4 desktop views: Ingestion Dashboard (drag-drop + job list + system readiness), Audio Sync Editor (wavesurfer.js waveform + sync offset), Transcript Timeline (scrolling transcript + filler toggle), Branding Studio (brand profiles + export targets)
+- Replace monolithic App.tsx with AppShell + view routing while preserving boot/recovery logic
+
+**Success Criteria:**
+1. CI can build PyInstaller sidecar binary (cli.py exists, --onedir mode works)
+2. Tauri dev frontend can reach backend without CORS errors
+3. Desktop app detects and attaches to already-running backend (coexistence with Streamlit)
+4. All 4 views render and are navigable via sidebar tabs
+5. Drag-drop creates jobs from OS file paths (not browser File objects)
+6. Job list shows pipeline stage progress with colored indicators
+7. Waveform visualization works for job audio (wavesurfer.js)
+8. Frontend compiles and `pnpm build` succeeds
+
+Plans:
+- [ ] 10-01-PLAN.md -- Critical infrastructure: service/cli.py entry point + CORS middleware + lib.rs coexistence check
+- [ ] 10-02-PLAN.md -- Frontend toolchain: CI --onedir migration + dependency installation + Tailwind v4 + QueryClientProvider + shadcn/ui
+- [ ] 10-03-PLAN.md -- State layer: Zustand stores + TanStack Query hooks + AppShell/Sidebar/Header layout
+- [ ] 10-04-PLAN.md -- Views 1+3: Ingestion Dashboard (drag-drop + job list + system readiness) + Transcript Timeline (filler toggle)
+- [ ] 10-05-PLAN.md -- Views 2+4: Audio Sync Editor (wavesurfer.js waveform + offset slider) + Branding Studio (profiles + export config)
+- [ ] 10-06-PLAN.md -- Integration: App.tsx rebuild with AppShell + 4-view routing + boot sequence preservation + human verification
+
+**Details:**
+Plans run in 4 execution waves:
+- Wave 1: `10-01` (backend infra gaps) and `10-02` (frontend toolchain) in parallel -- no file overlap
+- Wave 2: `10-03` (state layer + layout) depends on `10-02` for installed dependencies
+- Wave 3: `10-04` (Ingestion + Transcript views) and `10-05` (Audio + Branding views) in parallel -- both depend on `10-03`
+- Wave 4: `10-06` (App.tsx integration + human verification) depends on `10-04` and `10-05`
+
+**Tech stack (locked):**
+| Library | Version | Purpose |
+|---|---|---|
+| TailwindCSS | v4 | Utility-first CSS (Vite plugin, no config file) |
+| shadcn/ui | latest | Component library |
+| TanStack Query | v5 | Server state + polling |
+| Zustand | v5 | Client-side state |
+| wavesurfer.js | v7 | Waveform visualization |
+| PyInstaller | latest | Backend sidecar binary (`--onedir` mode) |
 
 ---
 
