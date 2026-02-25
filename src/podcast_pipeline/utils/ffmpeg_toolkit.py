@@ -71,6 +71,26 @@ class FFmpegToolkitError(Exception):
         return " | ".join(parts)
 
 
+def _safe_int(value: object, default: int | None = None) -> int | None:
+    """Convert a value to int, returning *default* on ValueError/TypeError."""
+    if value is None:
+        return default
+    try:
+        return int(str(value))
+    except (ValueError, TypeError):
+        return default
+
+
+def _safe_float(value: object, default: float = 0.0) -> float:
+    """Convert a value to float, returning *default* on ValueError/TypeError."""
+    if value is None:
+        return default
+    try:
+        return float(str(value))
+    except (ValueError, TypeError):
+        return default
+
+
 def _wrap_ffmpeg_error(exc: FFmpegError, operation: str, cmd_args: list[str]) -> FFmpegToolkitError:
     """Convert FFmpegError to FFmpegToolkitError with structured context."""
     stderr_excerpt = exc.stderr[-500:] if exc.stderr else ""
@@ -595,10 +615,10 @@ def probe_media(path: Path) -> ProbeMediaResult:
             color_space=color_space or None,
             color_range=color_range or None,
             is_hdr=is_hdr,
-            sample_rate=int(s["sample_rate"]) if s.get("sample_rate") else None,
+            sample_rate=_safe_int(s.get("sample_rate")),
             channels=s.get("channels"),
             channel_layout=s.get("channel_layout"),
-            bit_rate=int(s["bit_rate"]) if s.get("bit_rate") else None,
+            bit_rate=_safe_int(s.get("bit_rate")),
         )
 
         # FPS from r_frame_rate
@@ -616,9 +636,9 @@ def probe_media(path: Path) -> ProbeMediaResult:
     return ProbeMediaResult(
         path=path,
         format_name=fmt.get("format_name", ""),
-        duration=float(fmt.get("duration", 0)),
-        size_bytes=int(fmt.get("size", 0)),
-        bit_rate=int(fmt.get("bit_rate", 0)),
+        duration=_safe_float(fmt.get("duration"), 0.0),
+        size_bytes=_safe_int(fmt.get("size")) or 0,
+        bit_rate=_safe_int(fmt.get("bit_rate")) or 0,
         streams=streams,
         video=video_streams[0] if video_streams else None,
         audio=audio_streams[0] if audio_streams else None,
@@ -1222,8 +1242,14 @@ def _compute_xfade_offsets(segments: list[Path], transition_d: float) -> list[fl
 def _build_xfade_filters(
     n: int, d: float, offsets: list[float], transition: str = "fade"
 ) -> list[str]:
-    """Build xfade + audio concat filter chain."""
+    """Build xfade video + acrossfade audio filter chain.
+
+    Both video and audio are crossfaded with duration ``d`` per transition so
+    the total timeline shortens by ``d * (n-1)`` and A/V stay in sync.
+    """
     filters: list[str] = []
+
+    # Video xfade chain
     prev_label = "[0:v]"
     for i in range(1, n):
         out_label = f"[vout{i}]" if i < n - 1 else "[voutfinal]"
@@ -1232,8 +1258,15 @@ def _build_xfade_filters(
             f":offset={offsets[i - 1]}{out_label}"
         )
         prev_label = out_label
-    audio_inputs = "".join(f"[{i}:a]" for i in range(n))
-    filters.append(f"{audio_inputs}concat=n={n}:v=0:a=1[aout]")
+
+    # Audio acrossfade chain — mirrors video xfade so both shorten by d per
+    # transition, preventing the A/V drift that concat would cause.
+    prev_audio = "[0:a]"
+    for i in range(1, n):
+        out_audio = f"[aout{i}]" if i < n - 1 else "[aout]"
+        filters.append(f"{prev_audio}[{i}:a]acrossfade=d={d}:c1=tri:c2=tri{out_audio}")
+        prev_audio = out_audio
+
     return filters
 
 

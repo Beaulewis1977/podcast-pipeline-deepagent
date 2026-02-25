@@ -1388,6 +1388,13 @@ class RenderStage(Stage):
             self.logger.warning("sync_artifact_load_failed", error=str(exc))
             return None, {"source": None, "error": str(exc)}
 
+        if not isinstance(artifact, dict):
+            self.logger.warning(
+                "sync_artifact_malformed_type",
+                actual_type=type(artifact).__name__,
+            )
+            return None, {"source": None, "error": "artifact is not a JSON object"}
+
         raw_offset = artifact.get("offset_ms", 0.0)
         try:
             offset_ms = float(raw_offset)
@@ -3874,10 +3881,13 @@ class RenderStage(Stage):
             return video_path
 
         current = video_path
+        # Use the same container/extension as the input so intermediates don't
+        # leak a mismatched container (e.g. .mkv) into final platform outputs.
+        container_ext = video_path.suffix or ".mkv"
 
         # ── Intro stinger ──────────────────────────────────────────────────────
         if intro_path is not None:
-            intro_out = output_dir / "__with_intro.mkv"
+            intro_out = output_dir / f"__with_intro{container_ext}"
             result = apply_intro_stinger(
                 video_path=current,
                 stinger_path=intro_path,
@@ -3906,7 +3916,7 @@ class RenderStage(Stage):
             content_boundaries.sort()
 
             if content_boundaries:
-                trans_out = output_dir / "__with_transitions.mkv"
+                trans_out = output_dir / f"__with_transitions{container_ext}"
                 result = apply_transition_stingers(
                     video_path=current,
                     stinger_path=transition_path,
@@ -3937,7 +3947,7 @@ class RenderStage(Stage):
 
         # ── Outro stinger ──────────────────────────────────────────────────────
         if outro_path is not None:
-            outro_out = output_dir / "__with_outro.mkv"
+            outro_out = output_dir / f"__with_outro{container_ext}"
             result = apply_outro_stinger(
                 video_path=current,
                 stinger_path=outro_path,

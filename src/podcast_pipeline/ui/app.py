@@ -291,6 +291,32 @@ def _unique_asset_path(assets_dir: Path, raw_name: str) -> Path:
     return assets_dir / f"{stem}_{uuid.uuid4().hex[:8]}{suffix}"
 
 
+def _persist_upload(uploaded_file: Any, assets_dir: Path, session_key: str) -> str:
+    """Write an uploaded file once and cache the resulting path in session_state.
+
+    On Streamlit reruns the uploader returns the same file object — this helper
+    ensures we only call ``write_bytes`` once per unique upload by comparing a
+    content fingerprint (name + size + leading bytes hash).
+    """
+    import hashlib
+
+    content = uploaded_file.getvalue()
+    fingerprint = (
+        f"{uploaded_file.name}:{len(content)}:"
+        f"{hashlib.md5(content[:4096]).hexdigest()[:8]}"  # noqa: S324
+    )
+    cache_key = f"_upload_cache_{session_key}"
+    cached = st.session_state.get(cache_key)
+    if cached is not None and cached.get("fingerprint") == fingerprint:
+        return str(cached["path"])
+
+    dest = _unique_asset_path(assets_dir, uploaded_file.name)
+    dest.write_bytes(content)
+    path_str = str(dest)
+    st.session_state[cache_key] = {"fingerprint": fingerprint, "path": path_str}
+    return path_str
+
+
 def _read_metadata_json(path: Path) -> dict[str, Any] | None:
     """Read metadata JSON and return a dict payload."""
     try:
@@ -2406,9 +2432,7 @@ def _render_brand_studio_create_form(branding_dir: Path) -> None:
         )
         new_logo_path_val = ""
         if new_logo_upload is not None:
-            dest = _unique_asset_path(assets_dir, new_logo_upload.name)
-            dest.write_bytes(new_logo_upload.getvalue())
-            new_logo_path_val = str(dest)
+            new_logo_path_val = _persist_upload(new_logo_upload, assets_dir, "new_logo")
         new_logo_path = st.text_input(
             "Logo Path",
             value=new_logo_path_val,
@@ -2439,9 +2463,7 @@ def _render_brand_studio_create_form(branding_dir: Path) -> None:
         )
         new_font_path_val = ""
         if new_font_upload is not None:
-            dest = _unique_asset_path(assets_dir, new_font_upload.name)
-            dest.write_bytes(new_font_upload.getvalue())
-            new_font_path_val = str(dest)
+            new_font_path_val = _persist_upload(new_font_upload, assets_dir, "new_font")
         new_font_path = st.text_input(
             "Font Path",
             value=new_font_path_val,
@@ -2528,9 +2550,7 @@ def _render_brand_studio_create_form(branding_dir: Path) -> None:
         )
         new_intro_val = ""
         if new_intro_upload is not None:
-            dest = _unique_asset_path(assets_dir, new_intro_upload.name)
-            dest.write_bytes(new_intro_upload.getvalue())
-            new_intro_val = str(dest)
+            new_intro_val = _persist_upload(new_intro_upload, assets_dir, "new_intro")
         new_intro_sound = st.text_input(
             "Intro Stinger Path",
             value=new_intro_val,
@@ -2544,9 +2564,7 @@ def _render_brand_studio_create_form(branding_dir: Path) -> None:
         )
         new_trans_val = ""
         if new_trans_upload is not None:
-            dest = _unique_asset_path(assets_dir, new_trans_upload.name)
-            dest.write_bytes(new_trans_upload.getvalue())
-            new_trans_val = str(dest)
+            new_trans_val = _persist_upload(new_trans_upload, assets_dir, "new_transition")
         new_transition_sound = st.text_input(
             "Transition Sound Path",
             value=new_trans_val,
@@ -2560,9 +2578,7 @@ def _render_brand_studio_create_form(branding_dir: Path) -> None:
         )
         new_outro_val = ""
         if new_outro_upload is not None:
-            dest = _unique_asset_path(assets_dir, new_outro_upload.name)
-            dest.write_bytes(new_outro_upload.getvalue())
-            new_outro_val = str(dest)
+            new_outro_val = _persist_upload(new_outro_upload, assets_dir, "new_outro")
         new_outro_sound = st.text_input(
             "Outro Stinger Path",
             value=new_outro_val,
@@ -2651,9 +2667,7 @@ def _render_brand_studio_editor(profile: BrandingProfile, branding_dir: Path) ->
             help="Upload a logo file. The path field below will update automatically.",
         )
         if logo_upload is not None:
-            dest = _unique_asset_path(assets_dir, logo_upload.name)
-            dest.write_bytes(logo_upload.getvalue())
-            logo_path_default = str(dest)
+            logo_path_default = _persist_upload(logo_upload, assets_dir, f"{pk}_logo")
         else:
             logo_path_default = str(profile.logo_path or "")
 
@@ -2690,9 +2704,7 @@ def _render_brand_studio_editor(profile: BrandingProfile, branding_dir: Path) ->
             help="Upload a font file for captions. The path field below will update automatically.",
         )
         if font_upload is not None:
-            dest = _unique_asset_path(assets_dir, font_upload.name)
-            dest.write_bytes(font_upload.getvalue())
-            font_path_default = str(dest)
+            font_path_default = _persist_upload(font_upload, assets_dir, f"{pk}_font")
         else:
             font_path_default = str(profile.font_path or "")
 
@@ -2799,9 +2811,7 @@ def _render_brand_studio_editor(profile: BrandingProfile, branding_dir: Path) ->
             key=f"brand_studio_{pk}_intro_upload",
         )
         if intro_upload is not None:
-            dest = _unique_asset_path(assets_dir, intro_upload.name)
-            dest.write_bytes(intro_upload.getvalue())
-            intro_default = str(dest)
+            intro_default = _persist_upload(intro_upload, assets_dir, f"{pk}_intro")
         else:
             intro_default = str(profile.intro_sound or "")
         intro_sound = st.text_input(
@@ -2818,9 +2828,7 @@ def _render_brand_studio_editor(profile: BrandingProfile, branding_dir: Path) ->
             key=f"brand_studio_{pk}_transition_upload",
         )
         if transition_upload is not None:
-            dest = _unique_asset_path(assets_dir, transition_upload.name)
-            dest.write_bytes(transition_upload.getvalue())
-            transition_default = str(dest)
+            transition_default = _persist_upload(transition_upload, assets_dir, f"{pk}_transition")
         else:
             transition_default = str(profile.transition_sound or "")
         transition_sound = st.text_input(
@@ -2837,9 +2845,7 @@ def _render_brand_studio_editor(profile: BrandingProfile, branding_dir: Path) ->
             key=f"brand_studio_{pk}_outro_upload",
         )
         if outro_upload is not None:
-            dest = _unique_asset_path(assets_dir, outro_upload.name)
-            dest.write_bytes(outro_upload.getvalue())
-            outro_default = str(dest)
+            outro_default = _persist_upload(outro_upload, assets_dir, f"{pk}_outro")
         else:
             outro_default = str(profile.outro_sound or "")
         outro_sound = st.text_input(
@@ -2886,7 +2892,7 @@ def _render_brand_studio_editor(profile: BrandingProfile, branding_dir: Path) ->
                     "Logo Placement",
                     options=placements,
                     index=ovr_placement_idx,
-                    key=f"brand_ovr_{platform_key}_placement",
+                    key=f"brand_ovr_{pk}_{platform_key}_placement",
                 )
                 ovr_opacity_raw = ovr_data.get("logo_opacity")
                 ovr_opacity = (
@@ -2898,7 +2904,7 @@ def _render_brand_studio_editor(profile: BrandingProfile, branding_dir: Path) ->
                     max_value=1.0,
                     value=ovr_opacity,
                     step=0.05,
-                    key=f"brand_ovr_{platform_key}_opacity",
+                    key=f"brand_ovr_{pk}_{platform_key}_opacity",
                 )
             with ovr_col2:
                 ovr_cap_raw = ovr_data.get("caption_style") or {}
@@ -2912,7 +2918,7 @@ def _render_brand_studio_editor(profile: BrandingProfile, branding_dir: Path) ->
                 ovr_cap_color = st.color_picker(
                     "Caption Color",
                     value=_hex_to_6digit(str(ovr_cap.get("color") or profile.caption_style.color)),
-                    key=f"brand_ovr_{platform_key}_cap_color",
+                    key=f"brand_ovr_{pk}_{platform_key}_cap_color",
                 )
                 ovr_cap_size_raw = ovr_cap.get("size")
                 ovr_cap_size = (
@@ -2925,7 +2931,7 @@ def _render_brand_studio_editor(profile: BrandingProfile, branding_dir: Path) ->
                     min_value=8,
                     max_value=256,
                     value=ovr_cap_size,
-                    key=f"brand_ovr_{platform_key}_cap_size",
+                    key=f"brand_ovr_{pk}_{platform_key}_cap_size",
                 )
                 current_overrides[platform_key]["caption_style"] = {
                     "color": ovr_cap_color,
@@ -2938,7 +2944,7 @@ def _render_brand_studio_editor(profile: BrandingProfile, branding_dir: Path) ->
 
             if st.button(
                 f"Remove {platform_key} override",
-                key=f"brand_ovr_remove_{platform_key}",
+                key=f"brand_ovr_{pk}_remove_{platform_key}",
             ):
                 overrides_to_remove.append(platform_key)
             st.divider()
@@ -2961,11 +2967,11 @@ def _render_brand_studio_editor(profile: BrandingProfile, branding_dir: Path) ->
                 new_platform = st.selectbox(
                     "Platform",
                     options=available_platforms,
-                    key="brand_ovr_new_platform",
+                    key=f"brand_ovr_{pk}_new_platform",
                 )
             with add_col2:
                 st.markdown("&nbsp;")  # vertical spacer
-                if st.button("Add Override", key="brand_ovr_add"):
+                if st.button("Add Override", key=f"brand_ovr_{pk}_add"):
                     current_overrides[new_platform] = {
                         "logo_placement": None,
                         "logo_opacity": None,
@@ -3059,19 +3065,25 @@ def _render_brand_studio_editor(profile: BrandingProfile, branding_dir: Path) ->
 
     with action_col3:
         if st.button("Set as Active", key=f"brand_studio_{pk}_activate"):
-            _set_active_branding_profile(profile.profile_name)
-            st.success(f"'{profile.profile_name}' set as active branding profile.")
+            if _set_active_branding_profile(profile.profile_name):
+                st.success(f"'{profile.profile_name}' set as active branding profile.")
+            else:
+                st.warning("No job selected — select a job first to set the active profile.")
 
 
-def _set_active_branding_profile(profile_name: str | None) -> None:
-    """Persist selected profile name into current job review state if a job is selected."""
+def _set_active_branding_profile(profile_name: str | None) -> bool:
+    """Persist selected profile name into current job review state if a job is selected.
+
+    Returns True if the profile was saved, False if no job is selected.
+    """
     job_id = st.session_state.get("current_job_id")
     if not job_id:
-        return
+        return False
     job_dir = _job_dir_for(job_id)
     decisions = _load_review_decisions(job_dir)
     decisions.branding_profile_name = profile_name
     save_review_decisions(job_dir, decisions)
+    return True
 
 
 # ============================================================================
