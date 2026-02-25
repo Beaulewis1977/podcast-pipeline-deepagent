@@ -76,7 +76,7 @@ jobs:
         run: |
           uv run pyinstaller \
             --name podcast-backend \
-            --onefile \
+            --onedir \
             --console \
             --hidden-import podcast_pipeline \
             --hidden-import uvicorn \
@@ -86,8 +86,7 @@ jobs:
       - name: Rename to target-triple convention
         run: |
           mkdir -p backend-dist
-          cp dist/podcast-backend${{ matrix.backend_ext }} \
-            backend-dist/podcast-backend-${{ matrix.target }}${{ matrix.backend_ext }}
+          cp -r dist/podcast-backend backend-dist/podcast-backend-${{ matrix.target }}
         shell: bash
 
       - name: Upload backend artifact
@@ -187,7 +186,7 @@ jobs:
         working-directory: desktop
         env:
           TAURI_TARGET_TRIPLE: ${{ matrix.settings.target }}
-          BACKEND_BIN: src-tauri/binaries/podcast-backend-${{ matrix.settings.target }}${{ matrix.settings.ext }}
+          BACKEND_BIN: src-tauri/binaries/podcast-backend-${{ matrix.settings.target }}/podcast-backend${{ matrix.settings.ext }}
         run: node scripts/prepare-sidecars.mjs
 
       # --- Build with Tauri ---

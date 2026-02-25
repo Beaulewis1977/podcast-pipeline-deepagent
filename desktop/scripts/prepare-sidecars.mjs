@@ -6,18 +6,32 @@
  * naming conventions so that `externalBin` entries resolve correctly in
  * both `tauri dev` and bundled production builds.
  *
+ * For the podcast-backend sidecar, supports both --onefile (single binary)
+ * and --onedir (directory with _internal/ Python deps) PyInstaller outputs.
+ * When --onedir layout is detected (binary's parent contains _internal/),
+ * the entire directory is copied to binaries/podcast-backend/ and the main
+ * binary is renamed to include the target triple suffix.
+ *
  * Usage:
  *   node desktop/scripts/prepare-sidecars.mjs              # prepare binaries
  *   node desktop/scripts/prepare-sidecars.mjs --check      # dry-run validation only
  *
  * Environment variables (optional overrides):
- *   BACKEND_BIN  - path to podcast-backend executable
+ *   BACKEND_BIN  - path to podcast-backend executable (inside --onedir dir or --onefile binary)
  *   FFMPEG_BIN   - path to ffmpeg executable
  *   FFPROBE_BIN  - path to ffprobe executable
  */
 
-import { existsSync, copyFileSync, chmodSync, mkdirSync, readdirSync } from "node:fs";
-import { resolve, join } from "node:path";
+import {
+  existsSync,
+  copyFileSync,
+  chmodSync,
+  mkdirSync,
+  readdirSync,
+  cpSync,
+  renameSync,
+} from "node:fs";
+import { resolve, join, dirname, basename } from "node:path";
 import { execSync } from "node:child_process";
 import { platform, arch } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -99,6 +113,15 @@ function resolveBinarySource(envVar, binaryName) {
   return null;
 }
 
+/**
+ * Detect whether a binary was produced by PyInstaller --onedir mode.
+ * Looks for an _internal/ directory as a sibling of the binary.
+ */
+function isOnedirBinary(binaryPath) {
+  const parentDir = dirname(binaryPath);
+  return existsSync(join(parentDir, "_internal"));
+}
+
 // ---------------------------------------------------------------------------
 // Sidecar definitions
 // ---------------------------------------------------------------------------
@@ -110,6 +133,7 @@ const SIDECARS = [
     binaryName: platform() === "win32" ? "podcast-backend.exe" : "podcast-backend",
     required: true,
     description: "FastAPI backend service (PyInstaller binary)",
+    isOnedir: true, // supports --onedir layout detection
   },
   {
     name: "ffmpeg",
@@ -117,6 +141,7 @@ const SIDECARS = [
     binaryName: platform() === "win32" ? "ffmpeg.exe" : "ffmpeg",
     required: true,
     description: "FFmpeg media processing binary",
+    isOnedir: false,
   },
   {
     name: "ffprobe",
@@ -124,6 +149,7 @@ const SIDECARS = [
     binaryName: platform() === "win32" ? "ffprobe.exe" : "ffprobe",
     required: false,
     description: "FFprobe media info binary",
+    isOnedir: false,
   },
 ];
 
@@ -150,50 +176,138 @@ function main() {
   const ext = platform() === "win32" ? ".exe" : "";
 
   for (const sidecar of SIDECARS) {
-    const destName = `${sidecar.name}-${targetTriple}${ext}`;
-    const destPath = join(binDir, destName);
-
     console.log(`[${sidecar.name}] ${sidecar.description}`);
 
-    // Check if already prepared from a previous run
-    if (existsSync(destPath)) {
-      console.log(`  OK: ${destName} already present`);
-      results.push({ ...sidecar, status: "ready", dest: destPath });
-      continue;
-    }
+    if (sidecar.isOnedir) {
+      // --- podcast-backend: supports both --onefile and --onedir ---
+      const sourcePath = resolveBinarySource(sidecar.envVar, sidecar.binaryName);
 
-    // Try to find source binary
-    const sourcePath = resolveBinarySource(sidecar.envVar, sidecar.binaryName);
-
-    if (!sourcePath) {
-      if (sidecar.required) {
-        console.error(`  FAIL: Cannot find ${sidecar.binaryName}`);
-        console.error(`        Set ${sidecar.envVar} or ensure it is on PATH`);
-        results.push({ ...sidecar, status: "missing" });
-      } else {
-        console.warn(`  SKIP: ${sidecar.binaryName} not found (optional)`);
-        results.push({ ...sidecar, status: "skipped" });
+      if (!sourcePath) {
+        if (sidecar.required) {
+          console.error(`  FAIL: Cannot find ${sidecar.binaryName}`);
+          console.error(`        Set ${sidecar.envVar} or ensure it is on PATH`);
+          results.push({ ...sidecar, status: "missing" });
+        } else {
+          console.warn(`  SKIP: ${sidecar.binaryName} not found (optional)`);
+          results.push({ ...sidecar, status: "skipped" });
+        }
+        continue;
       }
-      continue;
-    }
 
-    console.log(`  Source: ${sourcePath}`);
+      console.log(`  Source: ${sourcePath}`);
 
-    if (checkOnly) {
-      console.log(`  CHECK: Would copy to ${destName}`);
-      results.push({ ...sidecar, status: "would-prepare", source: sourcePath });
-      continue;
-    }
+      if (isOnedirBinary(sourcePath)) {
+        // --onedir layout: copy entire parent directory, rename binary inside
+        const sourceDir = dirname(sourcePath);
+        // Tauri expects: binaries/podcast-backend/podcast-backend-{triple}{ext}
+        // and:           binaries/podcast-backend/_internal/...
+        const destDir = join(binDir, "podcast-backend");
+        const destBinName = `podcast-backend-${targetTriple}${ext}`;
+        const destBinPath = join(destDir, destBinName);
 
-    // Copy and set executable permissions
-    copyFileSync(sourcePath, destPath);
-    try {
-      chmodSync(destPath, 0o755);
-    } catch {
-      // chmod may fail on Windows, that's fine
+        if (existsSync(destBinPath)) {
+          console.log(`  OK: ${destBinName} already present in ${destDir}`);
+          results.push({ ...sidecar, status: "ready", dest: destBinPath });
+          continue;
+        }
+
+        if (checkOnly) {
+          console.log(`  CHECK: Would copy --onedir from ${sourceDir} to ${destDir}`);
+          console.log(`  CHECK: Would rename binary to ${destBinName}`);
+          results.push({ ...sidecar, status: "would-prepare", source: sourcePath });
+          continue;
+        }
+
+        // Copy the entire --onedir output directory
+        mkdirSync(destDir, { recursive: true });
+        cpSync(sourceDir, destDir, { recursive: true });
+
+        // Rename the main binary to include the target triple suffix
+        const copiedBinName = basename(sourcePath);
+        const copiedBinPath = join(destDir, copiedBinName);
+        if (existsSync(copiedBinPath) && copiedBinName !== destBinName) {
+          renameSync(copiedBinPath, destBinPath);
+        }
+
+        try {
+          chmodSync(destBinPath, 0o755);
+        } catch {
+          // chmod may fail on Windows, that's fine
+        }
+
+        console.log(`  DONE: --onedir copied to ${destDir}, binary renamed to ${destBinName}`);
+        results.push({ ...sidecar, status: "ready", dest: destBinPath });
+      } else {
+        // --onefile layout (or plain binary): fall back to single-file copy
+        const destName = `${sidecar.name}-${targetTriple}${ext}`;
+        const destPath = join(binDir, destName);
+
+        if (existsSync(destPath)) {
+          console.log(`  OK: ${destName} already present`);
+          results.push({ ...sidecar, status: "ready", dest: destPath });
+          continue;
+        }
+
+        if (checkOnly) {
+          console.log(`  CHECK: Would copy single-file to ${destName}`);
+          results.push({ ...sidecar, status: "would-prepare", source: sourcePath });
+          continue;
+        }
+
+        copyFileSync(sourcePath, destPath);
+        try {
+          chmodSync(destPath, 0o755);
+        } catch {
+          // chmod may fail on Windows, that's fine
+        }
+        console.log(`  DONE: ${destName}`);
+        results.push({ ...sidecar, status: "ready", dest: destPath });
+      }
+    } else {
+      // --- ffmpeg / ffprobe: single-file copy logic (unchanged) ---
+      const destName = `${sidecar.name}-${targetTriple}${ext}`;
+      const destPath = join(binDir, destName);
+
+      // Check if already prepared from a previous run
+      if (existsSync(destPath)) {
+        console.log(`  OK: ${destName} already present`);
+        results.push({ ...sidecar, status: "ready", dest: destPath });
+        continue;
+      }
+
+      // Try to find source binary
+      const sourcePath = resolveBinarySource(sidecar.envVar, sidecar.binaryName);
+
+      if (!sourcePath) {
+        if (sidecar.required) {
+          console.error(`  FAIL: Cannot find ${sidecar.binaryName}`);
+          console.error(`        Set ${sidecar.envVar} or ensure it is on PATH`);
+          results.push({ ...sidecar, status: "missing" });
+        } else {
+          console.warn(`  SKIP: ${sidecar.binaryName} not found (optional)`);
+          results.push({ ...sidecar, status: "skipped" });
+        }
+        continue;
+      }
+
+      console.log(`  Source: ${sourcePath}`);
+
+      if (checkOnly) {
+        console.log(`  CHECK: Would copy to ${destName}`);
+        results.push({ ...sidecar, status: "would-prepare", source: sourcePath });
+        continue;
+      }
+
+      // Copy and set executable permissions
+      copyFileSync(sourcePath, destPath);
+      try {
+        chmodSync(destPath, 0o755);
+      } catch {
+        // chmod may fail on Windows, that's fine
+      }
+      console.log(`  DONE: ${destName}`);
+      results.push({ ...sidecar, status: "ready", dest: destPath });
     }
-    console.log(`  DONE: ${destName}`);
-    results.push({ ...sidecar, status: "ready", dest: destPath });
   }
 
   console.log("");

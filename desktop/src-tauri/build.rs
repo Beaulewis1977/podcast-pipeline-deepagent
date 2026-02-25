@@ -11,11 +11,15 @@ use std::path::PathBuf;
 
 /// Sidecar binaries that MUST be present for a production bundle.
 ///
-/// Each entry is `(logical_name, required)`.
-const SIDECARS: &[(&str, bool)] = &[
-    ("podcast-backend", true),
-    ("ffmpeg", true),
-    ("ffprobe", false),
+/// Each entry is `(logical_name, required, subpath_prefix)`.
+/// For --onedir sidecars, `subpath_prefix` is Some("dir/subdir/") and the
+/// expected binary path is `{prefix}{name}-{target}{ext}`.
+/// For single-file sidecars, `subpath_prefix` is None and the path is `{name}-{target}{ext}`.
+const SIDECARS: &[(&str, bool, Option<&str>)] = &[
+    // podcast-backend uses --onedir: binary lives at binaries/podcast-backend/podcast-backend-{triple}{ext}
+    ("podcast-backend", true, Some("podcast-backend/")),
+    ("ffmpeg", true, None),
+    ("ffprobe", false, None),
 ];
 
 fn main() {
@@ -63,8 +67,11 @@ fn main() {
 
     let mut missing_required: Vec<String> = Vec::new();
 
-    for &(name, required) in SIDECARS {
-        let expected = binaries_dir.join(format!("{name}-{target}{ext}"));
+    for &(name, required, subpath_prefix) in SIDECARS {
+        let expected = match subpath_prefix {
+            Some(prefix) => binaries_dir.join(format!("{prefix}{name}-{target}{ext}")),
+            None => binaries_dir.join(format!("{name}-{target}{ext}")),
+        };
 
         if expected.exists() {
             println!(
@@ -97,10 +104,11 @@ fn main() {
 
     // Re-run this check when binaries dir or individual sidecar files change.
     println!("cargo:rerun-if-changed={}", binaries_dir.display());
-    for &(name, _) in SIDECARS {
-        println!(
-            "cargo:rerun-if-changed={}",
-            binaries_dir.join(format!("{name}-{target}{ext}")).display()
-        );
+    for &(name, _, subpath_prefix) in SIDECARS {
+        let path = match subpath_prefix {
+            Some(prefix) => binaries_dir.join(format!("{prefix}{name}-{target}{ext}")),
+            None => binaries_dir.join(format!("{name}-{target}{ext}")),
+        };
+        println!("cargo:rerun-if-changed={}", path.display());
     }
 }
