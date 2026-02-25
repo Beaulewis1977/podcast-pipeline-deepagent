@@ -1,6 +1,6 @@
 # Phase 10: Tauri Desktop Application Distribution - Research
 
-**Researched:** 2026-02-25
+**Researched:** 2026-02-25 (updated with existing codebase inventory)
 **Domain:** Tauri v2 + Python FastAPI sidecar + PyInstaller + React desktop application
 **Confidence:** MEDIUM-HIGH (Tauri v2 APIs verified against official docs; PyInstaller ML bundling pitfalls based on community evidence with known gaps)
 
@@ -26,73 +26,117 @@
 
 Phase 10 wraps the existing FastAPI service (`src/podcast_pipeline/service/`) into a Tauri v2 desktop application using the "sidecar" pattern. The Python backend is compiled to a standalone executable with PyInstaller and bundled inside the Tauri app via `bundle.externalBin`. Tauri spawns it at startup through `tauri-plugin-shell` and shuts it down via stdin signaling. The React/TypeScript frontend communicates with the FastAPI sidecar over localhost HTTP REST and WebSocket.
 
-The biggest technical risk is PyInstaller bundling of the ML dependency chain (faster-whisper + ctranslate2 + torch + CUDA). CUDA-enabled torch bundles produce 2-4 GB executables; the standard mitigation is using `--onedir` mode instead of `--onefile` to avoid PyInstaller's extraction overhead on every launch. The ctranslate2/faster-whisper layer requires explicit `collect_dynamic_libs` in the spec file and correct CUDA DLL inclusion. A second major risk is the one-file PyInstaller bootloader limitation: Tauri only knows the PID of the bootloader process, not the actual Python child process, so `process.kill()` does not work; all shutdown must go through stdin signaling.
+**The sidecar lifecycle infrastructure is already complete.** The `desktop/` directory contains a fully working Tauri shell: Rust sidecar lifecycle commands (start/stop/status/PID tracking with cross-platform liveness checks), crash recovery (reconcile + resume via backend HTTP), a fully typed TypeScript API client (`backend.ts`), and dual-path recovery (`recovery.ts` — Tauri invoke with direct HTTP fallback). The CI/CD pipeline (`desktop-release.yml`) is fully written and handles PyInstaller per platform, Tauri builds, and smoke tests across 4 targets. What remains is the UI layer — the current `App.tsx` is a minimal "control panel" shell that must be replaced with the full NLE (Non-Linear Editor) UI per the spec.
 
-The frontend stack is React 19 + TypeScript + Vite + TailwindCSS v4 + shadcn/ui + Zustand (client state) + TanStack Query (server/API state). This is the established 2025 Tauri community stack, with multiple production templates demonstrating it. Wavesurfer.js v7 handles waveform visualization and has an experimental multitrack plugin. Distribution uses `tauri-apps/tauri-action@v0` GitHub Actions with matrix builds across Windows, macOS (ARM + Intel), and Linux.
+The biggest technical risk is PyInstaller bundling of the ML dependency chain (faster-whisper + ctranslate2 + torch + CUDA). The existing CI uses `--onefile` mode, which contradicts the research recommendation of `--onedir`. This gap must be resolved during the PyInstaller subtask. A second gap: `service/cli.py` does not exist yet but the CI references it as the PyInstaller entry point — this file must be created.
 
-**Primary recommendation:** Use `--onedir` PyInstaller mode (not `--onefile`) for the sidecar to avoid 5-10 second extraction delay on Windows. Ship the entire `dist/` directory as the Tauri sidecar "binary" entry. Implement a frontend health-check polling loop against `GET /health` (200ms interval, 30s timeout) before showing the main UI.
+**Primary recommendation:** Build the UI layer on top of the existing infrastructure. Don't rebuild what already works. The critical path is: (1) create `service/cli.py` PyInstaller entry point, (2) decide `--onefile` vs `--onedir` for the sidecar, (3) add TailwindCSS v4 + shadcn/ui to replace the existing plain CSS, (4) implement the 4 spec views as new components on top of `backend.ts` and `recovery.ts`.
+
+---
+
+## Existing Codebase Inventory
+
+### Rust Layer (src-tauri/)
+
+| File | What It Does | State | Phase 10 Changes Needed |
+|------|-------------|-------|------------------------|
+| `desktop/src-tauri/src/main.rs` | Entry point, calls `lib.run()` | Complete | None |
+| `desktop/src-tauri/src/lib.rs` | Three Tauri commands: `start_sidecar`, `stop_sidecar`, `sidecar_status`. Uses `SidecarState` (PID tracking with cross-platform liveness checks using libc/tasklist). Registers recovery commands. | Complete | Consider adding attach-or-connect logic for coexistence with CLI-started service (current code always tries to spawn) |
+| `desktop/src-tauri/src/recovery.rs` | `check_recovery` (reconcile + list resumable), `trigger_resume`. Makes HTTP calls to backend using `reqwest`. | Complete | None |
+| `desktop/src-tauri/Cargo.toml` | tauri 2.x, tauri-plugin-shell 2.x, serde, serde_json, reqwest 0.12 (json feature), libc (unix-only) | Complete | Add `tauri-plugin-websocket` when WebSocket progress feed is implemented |
+| `desktop/src-tauri/tauri.conf.json` | Product name "Podcast Pipeline", devUrl localhost:1420, externalBin: `["binaries/podcast-backend", "binaries/ffmpeg", "binaries/ffprobe"]`, CSP allows connect-src to 127.0.0.1:8787 | Complete | Update CSP when adding WebSocket: add `ws://127.0.0.1:8787` to connect-src |
+| `desktop/src-tauri/capabilities/default.json` | `core:default`, `shell:allow-spawn`, `shell:allow-execute`, `shell:allow-kill`, `shell:allow-stdin-write`, `shell:allow-open` (https://**) | Complete | Add `websocket:default` when WebSocket plugin is added; add drag-drop permissions |
+| `desktop/src-tauri/build.rs` | Validates required sidecar binaries (podcast-backend required, ffmpeg required, ffprobe optional) at build time. Panics with actionable error if missing. Respects `SKIP_SIDECAR_CHECK` env var. | Complete | None |
+
+**Key observation about lib.rs:** The current `start_sidecar` always attempts to spawn the sidecar and only returns early if a tracked PID is still alive. It does NOT implement the attach-or-connect pattern (check if port 8787 is reachable before spawning). If Streamlit already started the service, `start_sidecar` will attempt to spawn a second instance. The coexistence requirement requires adding a pre-spawn health check.
+
+### TypeScript Layer (src/)
+
+| File | What It Does | State | Phase 10 Changes Needed |
+|------|-------------|-------|------------------------|
+| `desktop/src/lib/backend.ts` | Full typed API client. Constants: `BACKEND_PORT=8787`, `HEALTH_POLL_INTERVAL_MS=5000`. Functions: `startSidecar`, `stopSidecar`, `getSidecarStatus`, `checkHealth`, `waitForReady` (15s timeout, 500ms probe), `bootBackend` (orchestrates start + wait), `listJobs`, `createJob`, `runJob` (background + foreground), `resumeJob`, `getJob`, `deleteJob`, `reconcileJobs`, `getRuntimeDiagnostics`. Typed interfaces for all API shapes. | Complete | Add file upload endpoint wrapper when drag-drop ingestion is implemented. Add WebSocket connection helper. |
+| `desktop/src/lib/recovery.ts` | `checkRecovery` (Tauri invoke → direct HTTP fallback), `triggerResume` (Tauri invoke → direct HTTP fallback), `reconcileNow`, `getRuntimeDiagnostics`. Dual-path pattern: tries `@tauri-apps/api/core` invoke first, falls back to direct fetch for dev/browser context. | Complete | None |
+| `desktop/src/App.tsx` | Minimal "control panel" shell. Implements: boot sequence, health polling, job list with Run/Resume/Delete/Stage controls, recovery banner, runtime diagnostics panel, job detail view. Uses only plain React state (no TanStack Query, no Zustand). CSS via `styles.css`. | Partial — functional but not spec UI | Replace/extend with 4 spec views: Ingestion Dashboard, Audio Sync Editor, Transcript Timeline, Branding Studio. Keep boot/recovery logic, replace the render layer. |
+| `desktop/src/main.tsx` | React entry point, wraps App in StrictMode. | Complete | Add QueryClientProvider when TanStack Query is added |
+| `desktop/src/styles.css` | Dark CSS custom properties (`--bg-primary: #1a1a2e`, `--accent: #e94560`). Plain CSS classes for status dots, job list, buttons. No Tailwind. | Partial — needs replacement | Replace with TailwindCSS v4 + shadcn/ui (keep the color tokens as Tailwind CSS variables) |
+
+### Build/Script Layer
+
+| File | What It Does | State | Phase 10 Changes Needed |
+|------|-------------|-------|------------------------|
+| `desktop/package.json` | Dependencies: react 19, react-dom 19, @tauri-apps/api ^2.10.1, @tauri-apps/plugin-shell ^2.3.5. devDeps: @tauri-apps/cli ^2.10.0, TypeScript ~5.7.0, Vite ^6.0.0 | Partial — missing UI libraries | Add: `@tanstack/react-query`, `zustand`, `tailwindcss`, `@tailwindcss/vite`, `wavesurfer.js`, `@wavesurfer/react`, `@tauri-apps/plugin-websocket`; add shadcn/ui via CLI |
+| `desktop/vite.config.ts` | Standard Tauri Vite config (port 1420, strictPort, TAURI_DEV_HOST support). No TailwindCSS plugin. | Partial — needs Tailwind | Add `tailwindcss()` Vite plugin import |
+| `desktop/tsconfig.json` | Strict TypeScript (ES2020, noUnusedLocals, noUnusedParameters, noFallthroughCasesInSwitch). | Complete | None |
+| `desktop/scripts/prepare-sidecars.mjs` | Resolves target triple (TAURI_TARGET_TRIPLE env or os.platform/arch mapping), copies podcast-backend + ffmpeg + ffprobe to `src-tauri/binaries/<name>-<triple>` convention. Required=true for podcast-backend + ffmpeg, optional for ffprobe. Supports `--check` dry-run. | Complete | None |
+| `desktop/scripts/smoke-test-desktop.sh` | Validates installer artifact (size check), extracts AppImage/deb/dmg, verifies podcast-backend sidecar presence, runs backend health check, checks ffmpeg presence. | Complete | None |
+| `desktop/scripts/run-tests.mjs` | Runs `tests/test_desktop_backend.ts` via Node `--experimental-strip-types --test`. | Complete | None |
+
+### CI/CD Layer
+
+| File | What It Does | State | Phase 10 Changes Needed |
+|------|-------------|-------|------------------------|
+| `.github/workflows/desktop-release.yml` | 3-job workflow: (1) build-backend: PyInstaller per platform (4 matrix targets), (2) build-desktop: downloads backend artifact + prepare-sidecars + tauri-action@v0 with codesigning, (3) smoke-test: runs smoke scripts. Triggers on git tags + workflow_dispatch. | Complete | Fix PyInstaller mode: currently uses `--onefile` per research recommendation vs `--onedir`; create `service/cli.py` (currently referenced but doesn't exist); add `PYTHONUTF8=1` env to PyInstaller step |
+
+### FastAPI Service Layer
+
+| File | What It Does | State | Phase 10 Changes Needed |
+|------|-------------|-------|------------------------|
+| `src/podcast_pipeline/service/app.py` | FastAPI app factory. Lifespan: loads config, Pipeline, Supervisor, auth policy, starts reconcile task. Auth: `ServiceAuthPolicy` (production requires API key; development bypasses with env var). Routes: `/health`, `/jobs/*`, `/system/*`. **No CORS middleware.** | Complete as backend; missing CORS | Add `CORSMiddleware` for Tauri dev (`http://localhost:1420`) and production (`tauri://localhost`) |
+| `src/podcast_pipeline/service/routes/jobs.py` | All job lifecycle endpoints: POST /jobs, GET /jobs, GET /jobs/{id}, DELETE /jobs/{id}, POST /jobs/{id}/run, POST /jobs/{id}/run/background, POST /jobs/{id}/resume, GET /jobs/resumable, POST /jobs/reconcile | Complete | None |
+| `src/podcast_pipeline/service/routes/system.py` | Asset readiness: GET /system/status (binaries + model check), GET /system/binaries/{name}, GET /system/models/{name}, POST /system/models/warmup, GET /system/runtime (stale/orphaned job diagnostics) | Complete | None — frontend needs to call these for readiness UI |
+| `src/podcast_pipeline/service/schemas.py` | All request/response Pydantic models. StageName literal: `("ingest", "transcribe", "analyze", "review", "render")` | Complete | None |
+| `src/podcast_pipeline/service/supervisor.py` | Supervisor with GPULease, heartbeat tracking, background asyncio tasks. RuntimeMeta persisted to runtime.json per job. | Complete | None |
+| `src/podcast_pipeline/service/cli.py` | **DOES NOT EXIST.** The CI workflow at line 83 runs `src/podcast_pipeline/service/cli.py` as the PyInstaller entry point. This file must be created. | Missing | Create: uvicorn server startup script with UTF-8 env setup, --port argument, stdout readiness signal |
+| `src/podcast_pipeline/service/assets.py` | Asset resolution (ffmpeg, ffprobe, podcast-backend binaries; whisper model cache detection) | Complete | None |
 
 ---
 
 ## Standard Stack
 
-### Core
+### Core (existing installation status)
 
-| Library | Version | Purpose | Why Standard |
-|---------|---------|---------|--------------|
-| tauri | 2.10.2 | Desktop application shell (Rust) | Stable v2 release; official sidecar, plugin, and IPC APIs |
-| @tauri-apps/api | 2.10.1 | JavaScript API for Tauri features | Official, typed, maintained by core team |
-| @tauri-apps/cli | 2.10.0 | Build/dev toolchain | Required for `tauri dev` and `tauri build` |
-| tauri-plugin-shell | 2.x | Spawn/manage sidecar subprocess | Only official way to spawn external binaries in v2 |
-| tauri-plugin-websocket | 2.x | Native WebSocket client | Required for ws:// connections in Tauri v2 (browser WS API not available) |
-| React | 19.x | UI framework | Community default; official Tauri templates target React |
-| TypeScript | 5.x | Type safety | Required for maintainable frontend codebase |
-| Vite | 6.x | Frontend bundler | Tauri's official recommended build tool |
-| TailwindCSS | 4.x | Utility-first CSS | v4 supports CSS-native config; Vite plugin integration |
-| shadcn/ui | latest | Component library | Copy-owned components; pairs with Tailwind; dark mode first |
-| Zustand | 5.x | Client-side state | Minimal boilerplate; 2025 ecosystem standard |
-| TanStack Query | 5.x | Server state / API calls | Caching, polling, refetch on window focus; pairs with Zustand |
-| PyInstaller | 6.19+ | Bundle Python+FastAPI into binary | Ecosystem standard for Tauri Python sidecar; most mature |
-| wavesurfer.js | 7.x | Waveform visualization | Official React wrapper; has multitrack experiment |
+| Library | Version | Purpose | Status |
+|---------|---------|---------|--------|
+| tauri | 2.x | Desktop application shell (Rust) | INSTALLED (Cargo.toml) |
+| @tauri-apps/api | ^2.10.1 | JavaScript API for Tauri features | INSTALLED (package.json) |
+| @tauri-apps/cli | ^2.10.0 | Build/dev toolchain | INSTALLED (package.json devDep) |
+| tauri-plugin-shell | 2.x (Rust) / ^2.3.5 (JS) | Spawn/manage sidecar subprocess | INSTALLED (both) |
+| tauri-plugin-websocket | 2.x | Native WebSocket client | NOT INSTALLED — needed for job progress feed |
+| React | ^19.0.0 | UI framework | INSTALLED |
+| TypeScript | ~5.7.0 | Type safety | INSTALLED |
+| Vite | ^6.0.0 | Frontend bundler | INSTALLED |
+| TailwindCSS | 4.x | Utility-first CSS | NOT INSTALLED — needed to replace styles.css |
+| shadcn/ui | latest | Component library | NOT INSTALLED — needed for glassmorphism spec UI |
+| Zustand | 5.x | Client-side state | NOT INSTALLED — App.tsx uses raw useState |
+| TanStack Query | 5.x | Server state / API calls | NOT INSTALLED — App.tsx uses raw useEffect fetch |
+| PyInstaller | 6.19+ | Bundle Python+FastAPI into binary | NOT IN REPO (installed per-build in CI) |
+| wavesurfer.js | 7.x | Waveform visualization | NOT INSTALLED — needed for audio sync view |
+| reqwest | 0.12 | HTTP client in Rust (for recovery) | INSTALLED (Cargo.toml) |
+| libc | 0.2 | Unix signal/process operations | INSTALLED (Cargo.toml, unix-only) |
 
 ### Supporting
 
-| Library | Version | Purpose | When to Use |
-|---------|---------|---------|-------------|
-| @tauri-apps/plugin-fs | 2.x | File system access | Reading dropped files after getting paths from onDragDropEvent |
-| glasscn-ui / shadcn-glass-ui | latest | Glassmorphism component overlays | For the deep dark glassmorphism aesthetic from spec |
-| @wavesurfer/react | 7.x | React hook for wavesurfer | Official wrapper; use instead of raw wavesurfer in React |
-| tauri-action | v0.6.1 | GitHub Actions build CI | Official action; handles matrix builds and release artifacts |
+| Library | Version | Purpose | Status |
+|---------|---------|---------|--------|
+| @tauri-apps/plugin-fs | 2.x | File system access after drag-drop | NOT INSTALLED — may be needed for file reading post-drop |
+| @wavesurfer/react | 7.x | React hook for wavesurfer | NOT INSTALLED |
+| tauri-action | v0 | GitHub Actions build CI | INSTALLED (workflow uses tauri-apps/tauri-action@v0) |
 
-### Alternatives Considered
-
-| Instead of | Could Use | Tradeoff |
-|------------|-----------|----------|
-| PyInstaller | Nuitka | Nuitka compiles to C, potentially smaller output, but significantly harder to configure with binary ML dependencies; not community-standard for Tauri sidecar pattern |
-| PyInstaller | PyOxidizer | Abandoned/unmaintained as of 2024; needs to build deps from source; worse ML support |
-| shadcn/ui | Ant Design / MUI | Both work in Tauri; but shadcn is component-owned (no version lock-in) and is design-first for dark mode apps |
-| TanStack Query | SWR | Both work; TanStack Query has better WebSocket integration story via cache invalidation pattern |
-| React | Vue 3 | Both work equally well in Tauri; React has wider Tauri template/example ecosystem in 2025 |
-
-### Installation
+### Installation Commands for Missing Libraries
 
 ```bash
-# Scaffold Tauri v2 + React + TypeScript + Vite
-npm create tauri-app@latest -- --template react-ts
+# Inside desktop/ directory:
+cd desktop
 
-# Inside the new project:
-npm install
+# Frontend UI stack
+pnpm add @tanstack/react-query zustand
+pnpm add tailwindcss @tailwindcss/vite
+pnpm add wavesurfer.js @wavesurfer/react
 
-# Add Tauri plugins
-npm run tauri add shell
-npm run tauri add websocket
+# Tauri WebSocket plugin
+pnpm run tauri add websocket
 
-# Frontend dependencies
-npm install @tanstack/react-query zustand
-npm install tailwindcss @tailwindcss/vite
-npm install @wavesurfer/react wavesurfer.js
-
-# shadcn/ui setup (run after tailwind configured)
+# shadcn/ui (after tailwind configured)
 npx shadcn@latest init
 ```
 
@@ -100,339 +144,173 @@ npx shadcn@latest init
 
 ## Architecture Patterns
 
-### Recommended Project Structure
+### Actual Project Structure (What Exists)
 
 ```
-podcast-pipeline-desktop/         # Tauri workspace root
-├── src/                          # React frontend (TypeScript)
-│   ├── main.tsx                  # React entry point
-│   ├── App.tsx                   # Root component with QueryClient
-│   ├── components/               # UI components
-│   │   ├── ui/                   # shadcn/ui generated components
-│   │   ├── waveform/             # Wavesurfer.js wrappers
-│   │   └── layout/               # App shell, sidebar, nav
-│   ├── views/                    # Page-level views (Dashboard, Studio, etc.)
-│   ├── hooks/                    # TanStack Query hooks for FastAPI endpoints
-│   ├── stores/                   # Zustand stores (UI state, theme, preferences)
-│   ├── api/                      # API client (fetch wrappers for localhost:8787)
-│   └── lib/                      # Utilities
-├── src-tauri/                    # Tauri Rust shell
+desktop/                             # Tauri project root (exists)
+├── src/                             # React frontend (exists)
+│   ├── main.tsx                     # React entry (complete)
+│   ├── App.tsx                      # Control panel shell (partial - needs UI rebuild)
+│   ├── styles.css                   # Plain CSS (partial - replace with Tailwind)
+│   └── lib/
+│       ├── backend.ts               # Full typed API client (complete)
+│       └── recovery.ts              # Dual-path recovery (complete)
+├── src-tauri/                       # Tauri Rust shell (exists)
 │   ├── src/
-│   │   ├── lib.rs                # App setup, sidecar spawn, lifecycle
-│   │   └── main.rs               # Entry point (calls lib.rs run())
-│   ├── binaries/                 # Compiled Python sidecar goes here
-│   │   └── podcast-pipeline-sidecar-x86_64-pc-windows-msvc.exe
+│   │   ├── main.rs                  # Entry point (complete)
+│   │   ├── lib.rs                   # Sidecar lifecycle commands (complete)
+│   │   └── recovery.rs              # Recovery Tauri commands (complete)
+│   ├── binaries/                    # Sidecar binaries (gitignored, built in CI)
 │   ├── capabilities/
-│   │   └── default.json          # Shell, WebSocket, FS permissions
-│   └── tauri.conf.json           # Bundle config with externalBin
-├── src-python/                   # Python sidecar entrypoint + spec
-│   ├── sidecar_main.py           # FastAPI server startup script
-│   └── sidecar.spec              # PyInstaller spec file
-└── scripts/
-    ├── build-sidecar-windows.sh
-    ├── build-sidecar-macos.sh
-    └── build-sidecar-linux.sh
+│   │   └── default.json             # Shell permissions (complete - needs websocket)
+│   ├── tauri.conf.json              # Bundle config (complete - needs CSP update for WS)
+│   └── build.rs                    # Sidecar binary validation (complete)
+├── scripts/
+│   ├── prepare-sidecars.mjs         # Binary naming/copy helper (complete)
+│   ├── run-tests.mjs                # Test runner (complete)
+│   ├── smoke-test-desktop.sh        # Linux/macOS smoke test (complete)
+│   └── smoke-test-desktop.ps1       # Windows smoke test (complete)
+├── package.json                     # Deps (partial - missing UI libraries)
+├── vite.config.ts                   # Vite config (partial - missing Tailwind plugin)
+└── tsconfig.json                    # TypeScript config (complete)
 ```
 
-### Pattern 1: Sidecar Lifecycle Management (Rust)
+### Target Project Structure (What Needs to Be Added)
 
-**What:** Rust spawns the PyInstaller binary at app startup, monitors stdout for readiness signal, and sends shutdown via stdin on window close.
-**When to use:** Every Tauri + Python sidecar app.
+```
+desktop/src/
+├── main.tsx                         # Add: QueryClientProvider wrapper
+├── App.tsx                          # Replace render: add view routing
+├── styles.css                       # Replace with Tailwind @import "tailwindcss"
+├── lib/
+│   ├── backend.ts                   # Extend: add upload, WebSocket helpers
+│   └── recovery.ts                  # Keep as-is
+├── components/
+│   ├── ui/                          # shadcn/ui generated components (new)
+│   ├── waveform/                    # Wavesurfer.js wrappers (new)
+│   └── layout/                      # App shell, sidebar, nav (new)
+├── views/                           # Four spec views (all new)
+│   ├── IngestionView.tsx            # Drag-drop + pipeline dashboard
+│   ├── AudioSyncView.tsx            # Multi-track waveform timeline
+│   ├── TranscriptView.tsx           # Scrolling transcript + filler toggle
+│   └── BrandingView.tsx             # Branding CRUD + export settings
+├── hooks/                           # TanStack Query hooks (new)
+│   ├── useJobs.ts
+│   ├── useSidecarReady.ts
+│   └── useSystemStatus.ts
+└── stores/                          # Zustand stores (new)
+    ├── uiStore.ts                   # selectedJobId, activeView, theme
+    └── sidecarStore.ts              # sidecar status, backend connection
+```
 
+### Pattern 1: Sidecar Lifecycle — Extend Existing (Not Rebuild)
+
+**What exists:** `lib.rs` has `start_sidecar`, `stop_sidecar`, `sidecar_status` commands with cross-platform PID liveness checking. `backend.ts` has `bootBackend()`, `waitForReady()`, `startSidecar()`, `stopSidecar()`.
+
+**Gap:** `start_sidecar` always spawns — it does NOT implement the coexistence check (attach if already running). For Streamlit coexistence, the app must check health BEFORE spawning.
+
+**Extension needed in `lib.rs`:**
 ```rust
-// Source: https://v2.tauri.app/develop/sidecar/ + aiechoes.substack.com production guide
-// src-tauri/src/lib.rs
-
-use tauri_plugin_shell::ShellExt;
-use tauri_plugin_shell::process::CommandEvent;
-
-pub fn run() {
-    tauri::Builder::default()
-        .plugin(tauri_plugin_shell::init())
-        .plugin(tauri_plugin_websocket::init())
-        .setup(|app| {
-            let sidecar_command = app.shell()
-                .sidecar("podcast-pipeline-sidecar")?
-                // CRITICAL: prevents Windows encoding crashes on emoji/special chars in logs
-                .env("PYTHONUTF8", "1")
-                .env("PYTHONIOENCODING", "utf-8");
-
-            let (mut rx, child) = sidecar_command.spawn()?;
-
-            // Store child handle for shutdown
-            app.manage(std::sync::Mutex::new(Some(child)));
-
-            // Pipe stdout/stderr to Tauri logs
-            tauri::async_runtime::spawn(async move {
-                while let Some(event) = rx.recv().await {
-                    match event {
-                        CommandEvent::Stdout(line) => {
-                            println!("[sidecar] {}", String::from_utf8_lossy(&line));
-                        }
-                        CommandEvent::Stderr(line) => {
-                            eprintln!("[sidecar:err] {}", String::from_utf8_lossy(&line));
-                        }
-                        _ => {}
-                    }
-                }
-            });
-
-            Ok(())
-        })
-        .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { .. } = event {
-                // Send shutdown signal via stdin (process.kill() DOES NOT WORK for PyInstaller one-file)
-                // For --onedir builds, you can attempt child.kill() but stdin signal is more reliable
-                if let Some(child_guard) = window.app_handle().try_state::<std::sync::Mutex<Option<tauri_plugin_shell::process::CommandChild>>>() {
-                    if let Ok(mut guard) = child_guard.lock() {
-                        if let Some(child) = guard.take() {
-                            let _ = child.write(b"shutdown\n");
-                        }
-                    }
-                }
-            }
-        })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
-}
-```
-
-### Pattern 2: Tauri Configuration for Sidecar
-
-**What:** `tauri.conf.json` bundle configuration for external binary packaging.
-**When to use:** Every build.
-
-```json
-// Source: https://v2.tauri.app/develop/sidecar/
-// src-tauri/tauri.conf.json
-{
-  "bundle": {
-    "externalBin": [
-      "binaries/podcast-pipeline-sidecar"
-    ]
-  }
-}
-```
-
-Binary naming convention (REQUIRED):
-```bash
-# Find your target triple
-rustc --print host-tuple
-# Output example: x86_64-pc-windows-msvc
-
-# Binary must be named:
-# binaries/podcast-pipeline-sidecar-x86_64-pc-windows-msvc.exe  (Windows)
-# binaries/podcast-pipeline-sidecar-x86_64-unknown-linux-gnu    (Linux)
-# binaries/podcast-pipeline-sidecar-aarch64-apple-darwin        (macOS ARM)
-```
-
-### Pattern 3: Permissions Configuration
-
-**What:** Capability file enabling shell spawn and WebSocket.
-**When to use:** Required for sidecar and WebSocket to work.
-
-```json
-// Source: https://v2.tauri.app/develop/sidecar/ + https://v2.tauri.app/plugin/websocket/
-// src-tauri/capabilities/default.json
-{
-  "identifier": "default",
-  "description": "Default capabilities",
-  "windows": ["main"],
-  "permissions": [
-    {
-      "identifier": "shell:allow-execute",
-      "allow": [{
-        "name": "binaries/podcast-pipeline-sidecar",
-        "sidecar": true
-      }]
-    },
-    "websocket:default",
-    "fs:allow-read-file",
-    "fs:allow-write-file"
-  ]
-}
-```
-
-### Pattern 4: Sidecar-or-Attach Startup (Coexistence with Streamlit)
-
-**What:** On startup, first check if FastAPI is already running (started by CLI for Streamlit). If yes, attach to it. If no, spawn sidecar. On shutdown, only kill sidecar if Tauri started it.
-**When to use:** Every Tauri app startup. This is REQUIRED because Streamlit and Desktop must coexist.
-
-```rust
-// src-tauri/src/lib.rs — enhanced setup with attach-or-spawn logic
-// The Rust side attempts to spawn sidecar. If port is already bound,
-// it skips spawn and sets a flag so shutdown doesn't kill the service.
-
+// Add pre-spawn health check in start_sidecar
+// Before attempting spawn, check if http://127.0.0.1:8787/health responds.
+// If yes — set a flag (TAURI_OWNS_SIDECAR=false), skip spawn.
+// If no — spawn sidecar, set TAURI_OWNS_SIDECAR=true.
+// In stop_sidecar — only kill if TAURI_OWNS_SIDECAR=true.
 use std::sync::atomic::{AtomicBool, Ordering};
-
 static TAURI_OWNS_SIDECAR: AtomicBool = AtomicBool::new(false);
-
-// In setup:
-// 1. Check if http://127.0.0.1:8787/health is reachable
-// 2. If yes → set TAURI_OWNS_SIDECAR=false, skip spawn
-// 3. If no → spawn sidecar, set TAURI_OWNS_SIDECAR=true
-
-// In on_window_event CloseRequested:
-// Only send shutdown signal if TAURI_OWNS_SIDECAR is true
 ```
 
+**Extension needed in `App.tsx` boot sequence:**
 ```typescript
-// Source: Community pattern, verified against TanStack Query docs
-// src/hooks/useSidecarReady.ts
+// The existing boot sequence already handles the fallback correctly:
+// If startSidecar() throws (port in use), it falls through to checkHealth().
+// This partially works for coexistence but should be made explicit.
+// Current code (App.tsx line ~403):
+const healthy = await checkHealth();
+if (healthy !== null) {
+  setStatus("connected");
+  markInfo("Connected to an already-running backend service.");
+}
+```
+
+### Pattern 2: TailwindCSS v4 + Vite — Add to Existing Config
+
+**What exists:** `vite.config.ts` has React plugin only. `styles.css` has custom properties.
+
+**How to extend `vite.config.ts`:**
+```typescript
+// Source: https://tailwindcss.com/docs/guides/vite
+import tailwindcss from '@tailwindcss/vite'
+
+export default defineConfig(async () => ({
+  plugins: [
+    react(),
+    tailwindcss(),   // Add this
+  ],
+  // ... rest of existing config unchanged
+}));
+```
+
+**Replace `styles.css` header:**
+```css
+/* Replace the :root block with Tailwind v4 import + CSS variables */
+@import "tailwindcss";
+
+/* Keep existing color tokens as CSS custom properties */
+:root {
+  --bg-primary: #1a1a2e;
+  --bg-secondary: #16213e;
+  --bg-card: #0f3460;
+  /* ... etc */
+}
+
+/* Dark mode via class strategy */
+@custom-variant dark (&:where(.dark, .dark *));
+```
+
+### Pattern 3: Add TanStack Query to Existing App
+
+**What exists:** `App.tsx` uses raw `useState` + `useEffect` + `setInterval` for polling. Works but doesn't handle deduplication, cache, or background refetch well.
+
+**Add QueryClientProvider in `main.tsx`:**
+```typescript
+// Source: Verified against TanStack Query v5 docs
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+
+const queryClient = new QueryClient();
+
+ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
+  <React.StrictMode>
+    <QueryClientProvider client={queryClient}>
+      <App />
+    </QueryClientProvider>
+  </React.StrictMode>,
+);
+```
+
+**Convert existing job polling to a hook:**
+```typescript
+// src/hooks/useJobs.ts - replaces App.tsx manual interval logic
 import { useQuery } from '@tanstack/react-query';
+import { listJobs } from '../lib/backend';
 
-const API_BASE = 'http://127.0.0.1:8787';
-
-export function useSidecarReady() {
+export function useJobs() {
   return useQuery({
-    queryKey: ['health'],
-    queryFn: async () => {
-      const res = await fetch(`${API_BASE}/health`);
-      if (!res.ok) throw new Error('Not ready');
-      return res.json();
-    },
-    retry: 150,           // up to 30 seconds
-    retryDelay: 200,      // 200ms between polls
-    refetchInterval: false,
-    staleTime: Infinity,
+    queryKey: ['jobs'],
+    queryFn: listJobs,
+    refetchInterval: 5000,  // matches existing HEALTH_POLL_INTERVAL_MS
   });
 }
 ```
 
-### Pattern 5: Native File Drag-Drop (Tauri v2)
+### Pattern 4: Sidecar Entry Point — Create service/cli.py
 
-**What:** Get real OS file paths from drag-drop events. Browser File API does NOT give full paths in Tauri.
-**When to use:** Project ingestion screen.
+**What exists:** Nothing. CI references `src/podcast_pipeline/service/cli.py` at line 83 of `desktop-release.yml`.
 
-```typescript
-// Source: https://v2.tauri.app/reference/javascript/api/namespacewebview/
-import { getCurrentWebview } from "@tauri-apps/api/webview";
-
-const unlisten = await getCurrentWebview().onDragDropEvent((event) => {
-  if (event.payload.type === 'drop') {
-    const filePaths: string[] = event.payload.paths;
-    // filePaths contains full OS paths - send these to FastAPI /jobs endpoint
-    console.log('Dropped files:', filePaths);
-  }
-});
-
-// Cleanup on component unmount
-return () => unlisten();
-```
-
-**Critical:** `app.window.dragDropEnabled` must be `true` in `tauri.conf.json` (it is by default). Do NOT use react-dropzone for getting file paths - it returns browser File objects without paths.
-
-### Pattern 6: WebSocket Progress Feed (FastAPI → Frontend)
-
-**What:** Connect to FastAPI WebSocket for job progress events.
-**When to use:** Progress bars during pipeline execution.
-
-```typescript
-// Source: https://v2.tauri.app/plugin/websocket/
-import WebSocket from '@tauri-apps/plugin-websocket';
-
-const ws = await WebSocket.connect('ws://127.0.0.1:8787/jobs/{jobId}/ws');
-const remove = ws.addListener((msg) => {
-  // msg.data is the JSON progress event from FastAPI
-  const event = JSON.parse(msg.data as string);
-  // Update Zustand store with progress
-});
-
-// Disconnect when component unmounts or job completes
-await ws.disconnect();
-```
-
-### Pattern 7: PyInstaller Spec File for FastAPI + ML Stack
-
-**What:** PyInstaller spec file that correctly bundles ctranslate2, faster-whisper, and torch.
-**When to use:** Building the sidecar binary.
-
+**What must be created:**
 ```python
-# Source: Verified against aiechoes.substack.com production guide + pyinstaller docs
-# src-python/sidecar.spec
-
-from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, collect_submodules
-
-# Collect binary DLLs for ML libraries that have native extensions
-ct2_binaries = collect_dynamic_libs('ctranslate2')
-ct2_datas = collect_data_files('ctranslate2')
-
-faster_whisper_datas = collect_data_files('faster_whisper')
-
-a = Analysis(
-    ['sidecar_main.py'],
-    pathex=[],
-    binaries=ct2_binaries,
-    datas=[
-        *ct2_datas,
-        *faster_whisper_datas,
-        # Include tokenizer model files if needed
-    ],
-    hiddenimports=[
-        'ctranslate2',
-        'faster_whisper',
-        'uvicorn.logging',
-        'uvicorn.loops',
-        'uvicorn.loops.auto',
-        'uvicorn.protocols',
-        'uvicorn.protocols.http',
-        'uvicorn.protocols.http.auto',
-        'uvicorn.lifespan',
-        'uvicorn.lifespan.on',
-    ],
-    hookspath=[],
-    excludes=[
-        # Exclude test frameworks to reduce size
-        'pytest', 'unittest', 'doctest',
-        # Exclude GUI frameworks not needed
-        'tkinter', 'wx', 'PyQt5',
-        # Exclude streamlit (not needed in sidecar)
-        'streamlit',
-    ],
-    noarchive=False,
-)
-
-pyz = PYZ(a.pure)
-
-# Use COLLECT (--onedir mode) NOT EXE onefile -- avoids PyInstaller extraction
-# overhead on every launch (critical for 1-4GB torch bundles)
-exe = EXE(
-    pyz,
-    a.scripts,
-    [],
-    exclude_binaries=True,   # Keep binaries separate (onedir)
-    name='podcast-pipeline-sidecar',
-    debug=False,
-    bootloader_ignore_signals=False,
-    strip=False,
-    upx=False,               # UPX causes issues with CUDA DLLs
-    console=True,            # Keep console for stdout/stderr sidecar comms
-)
-
-coll = COLLECT(
-    exe,
-    a.binaries,
-    a.datas,
-    strip=False,
-    upx=False,
-    upx_exclude=[],
-    name='podcast-pipeline-sidecar',
-)
-```
-
-**Build command:**
-```bash
-# From project root, with uv
-uv run pyinstaller src-python/sidecar.spec --distpath src-tauri/binaries/
-```
-
-**CRITICAL (--onedir + Tauri):** Tauri's `externalBin` expects a single file. With `--onedir`, wrap the dist directory in a launcher script, or configure Tauri to point to the executable inside the dist folder. The community pattern is to copy the entire `dist/podcast-pipeline-sidecar/` directory to `src-tauri/binaries/` and set `externalBin` to `"binaries/podcast-pipeline-sidecar/podcast-pipeline-sidecar"`. The surrounding directory travels alongside the executable in the Tauri bundle.
-
-### Pattern 8: sidecar_main.py Entrypoint (UTF-8 Fix)
-
-```python
-# Source: aiechoes.substack.com production guide - critical for Windows
-# src-python/sidecar_main.py
+# src/podcast_pipeline/service/cli.py
+# PyInstaller sidecar entry point
 import os
 import sys
 
@@ -443,71 +321,177 @@ os.environ["PYTHONUTF8"] = "1"
 if sys.stdout.encoding != 'utf-8':
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
+import argparse
 import uvicorn
-from podcast_pipeline.service.app import create_app
 
-if __name__ == '__main__':
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Podcast Pipeline Backend Service")
+    parser.add_argument("--port", type=int, default=8787, help="Port to listen on")
+    parser.add_argument("--host", default="127.0.0.1", help="Host to bind to")
+    args = parser.parse_args()
+
+    # Signal readiness to Tauri sidecar listener on stdout
+    print(f"BACKEND_READY port={args.port}", flush=True)
+
+    from podcast_pipeline.service.app import create_app
     app = create_app()
-    uvicorn.run(app, host="127.0.0.1", port=8787, log_level="info")
+    uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+
+if __name__ == "__main__":
+    main()
 ```
 
-### Pattern 9: TailwindCSS v4 + Vite Configuration
+### Pattern 5: Native File Drag-Drop (New Work)
+
+**What exists:** No drag-drop in current App.tsx. The spec requires it for the Ingestion View.
 
 ```typescript
-// Source: https://tailwindcss.com/docs/guides/vite
-// vite.config.ts
-import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
-import tailwindcss from '@tailwindcss/vite'
+// Source: https://v2.tauri.app/reference/javascript/api/namespacewebview/
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 
-export default defineConfig({
-  plugins: [
-    react(),
-    tailwindcss(),   // v4 uses Vite plugin, NOT tailwind.config.js
-  ],
-  // Required for Tauri: prevents Vite from replacing undefined
-  envPrefix: ['VITE_', 'TAURI_ENV_*'],
-  build: {
-    target: process.env.TAURI_ENV_PLATFORM == 'windows' ? 'chrome105' : 'safari13',
-  },
-});
+// In IngestionView.tsx
+useEffect(() => {
+  let unlisten: (() => void) | null = null;
+  getCurrentWebview().onDragDropEvent((event) => {
+    if (event.payload.type === 'drop') {
+      const filePaths: string[] = event.payload.paths;
+      // Send full OS paths to backend POST /jobs
+      for (const path of filePaths) {
+        void createJob(path);
+      }
+    }
+  }).then((fn) => { unlisten = fn; });
+  return () => unlisten?.();
+}, []);
 ```
 
-```css
-/* src/index.css */
-@import "tailwindcss";
+**Critical:** Do NOT use react-dropzone for getting file paths — it returns browser File objects without full OS paths.
 
-/* Dark mode via class strategy */
-@custom-variant dark (&:where(.dark, .dark *));
+### Pattern 6: WebSocket Progress Feed (New Work)
+
+**What exists:** No WebSocket in current frontend. No WebSocket endpoints in FastAPI. No `tauri-plugin-websocket` installed.
+
+**Two-step implementation:**
+1. Add WebSocket endpoint to FastAPI (`service/routes/jobs.py`)
+2. Connect from frontend using `@tauri-apps/plugin-websocket`
+
+```typescript
+// Source: https://v2.tauri.app/plugin/websocket/
+// After: npm run tauri add websocket
+import WebSocket from '@tauri-apps/plugin-websocket';
+
+const ws = await WebSocket.connect('ws://127.0.0.1:8787/jobs/{jobId}/ws');
+const remove = ws.addListener((msg) => {
+  const event = JSON.parse(msg.data as string);
+  // Invalidate TanStack Query cache for this job
+  queryClient.invalidateQueries({ queryKey: ['jobs', jobId] });
+});
+await ws.disconnect();
+```
+
+**Note:** Update `tauri.conf.json` CSP when adding WebSocket:
+```json
+"csp": "default-src 'self'; connect-src 'self' http://127.0.0.1:8787 ws://127.0.0.1:8787; style-src 'self' 'unsafe-inline'"
+```
+
+### Pattern 7: PyInstaller Spec for FastAPI + ML Stack
+
+**Current CI approach (must be evaluated):**
+```bash
+# From desktop-release.yml (lines 77-83)
+uv run pyinstaller \
+  --name podcast-backend \
+  --onefile \                    # ← CONFLICTS with research recommendation
+  --console \
+  --hidden-import podcast_pipeline \
+  --hidden-import uvicorn \
+  src/podcast_pipeline/service/cli.py   # ← FILE DOESN'T EXIST YET
+```
+
+**Recommended approach (--onedir with spec file):**
+```python
+# src-python/sidecar.spec
+from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs
+
+ct2_binaries = collect_dynamic_libs('ctranslate2')
+ct2_datas = collect_data_files('ctranslate2')
+faster_whisper_datas = collect_data_files('faster_whisper')
+
+a = Analysis(
+    ['src/podcast_pipeline/service/cli.py'],
+    binaries=ct2_binaries,
+    datas=[*ct2_datas, *faster_whisper_datas],
+    hiddenimports=[
+        'ctranslate2', 'faster_whisper',
+        'uvicorn.logging', 'uvicorn.loops', 'uvicorn.loops.auto',
+        'uvicorn.protocols', 'uvicorn.protocols.http',
+        'uvicorn.protocols.http.auto', 'uvicorn.lifespan', 'uvicorn.lifespan.on',
+    ],
+    excludes=['pytest', 'unittest', 'tkinter', 'wx', 'PyQt5', 'streamlit'],
+)
+pyz = PYZ(a.pure)
+exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name='podcast-backend', console=True)
+coll = COLLECT(exe, a.binaries, a.datas, name='podcast-backend')
 ```
 
 ### Anti-Patterns to Avoid
 
-- **Using `process.kill()` for PyInstaller one-file sidecars:** Tauri only knows the bootloader PID, not the actual Python process. Use `--onedir` mode OR stdin signaling for shutdown.
-- **Using browser WebSocket API (`new WebSocket()`) in Tauri:** This is not available in Tauri's webview context for localhost connections. Use `@tauri-apps/plugin-websocket` instead.
-- **Using react-dropzone for file paths:** It provides browser `File` objects without full OS paths. Use `getCurrentWebview().onDragDropEvent()` to get `event.payload.paths`.
-- **Importing streamlit or heavy dev deps in the sidecar entrypoint:** Bloats the bundle. Use `excludes` in the spec file.
-- **Using `--onefile` PyInstaller mode with CUDA torch:** Produces 2-4 GB executable that extracts to temp on every launch (5-10 second delay). Use `--onedir` instead.
-- **Hot-reloading Python changes during `tauri dev`:** PyInstaller binary must be manually recompiled after any Python change. No live reload for the sidecar.
-- **Running `tauri build` before copying the sidecar binary:** Build will fail if `binaries/` doesn't contain the platform-specific binary. Always build sidecar first.
-- **Forgetting UTF-8 environment variables:** Windows crashes when structlog or other libraries emit emoji/Unicode in logs. Set `PYTHONUTF8=1` in both the spec env and in `sidecar_main.py` before any imports.
+- **Rebuilding sidecar lifecycle:** `lib.rs` + `backend.ts` + `recovery.ts` already implement it. Extend don't replace.
+- **Rebuilding health polling:** `waitForReady()` and `checkHealth()` in `backend.ts` already handle timeouts and intervals.
+- **Using `process.kill()` for PyInstaller one-file sidecars:** Tauri only knows the bootloader PID. Use `--onedir` mode OR stdin signaling.
+- **Using browser WebSocket API:** Not available for localhost ws:// in Tauri webview. Use `@tauri-apps/plugin-websocket`.
+- **Using react-dropzone for file paths:** Returns browser File objects without OS paths. Use `getCurrentWebview().onDragDropEvent()`.
+- **Committing PyInstaller binaries:** `src-tauri/binaries/` is gitignored and built in CI per-platform.
+- **Forgetting UTF-8 env before structlog imports:** Windows crashes on emoji/Unicode in logs.
 
 ---
 
 ## Don't Hand-Roll
 
-| Problem | Don't Build | Use Instead | Why |
-|---------|-------------|-------------|-----|
-| Waveform visualization | Custom SVG/Canvas waveform renderer | wavesurfer.js v7 + @wavesurfer/react | Pre-decoded peaks, zoom, regions, pan; battle-tested |
-| WebSocket client in Tauri | Raw WebSocket or EventSource | @tauri-apps/plugin-websocket | Browser WS not available; plugin handles native Rust WS |
-| File drag-drop with OS paths | Browser drag-drop API (no paths) | getCurrentWebview().onDragDropEvent() | Only Tauri webview API returns full OS file paths |
-| Progress/job polling | Manual setInterval fetch loop | TanStack Query refetchInterval or WS invalidation | Cache management, error states, retry logic already solved |
-| Component system for dark glassmorphism | Custom CSS component library | shadcn/ui + glasscn-ui or shadcn-glass-ui | WCAG-compliant dark mode, React 19 + Tailwind v4 compatible |
-| Cross-platform builds | Custom GitHub Actions matrix | tauri-apps/tauri-action@v0 | Handles codesigning, artifact upload, release creation |
-| Auto-updater | Custom update mechanism | tauri-plugin-updater | Signature verification, rollback, GitHub releases hosting |
-| State management for API data | useState + useEffect fetch patterns | TanStack Query | Background refetch, deduplication, optimistic updates |
+| Problem | Don't Build | Use Instead | Status |
+|---------|-------------|-------------|--------|
+| Sidecar lifecycle (start/stop/status) | Custom process management | Existing `lib.rs` + `backend.ts` | ALREADY DONE |
+| Health polling with timeout | Manual setInterval | Existing `waitForReady()` in `backend.ts` | ALREADY DONE |
+| Crash recovery (reconcile + resume) | Custom recovery logic | Existing `recovery.ts` + `recovery.rs` | ALREADY DONE |
+| Typed API client for all backend endpoints | Raw fetch calls | Existing `backend.ts` | ALREADY DONE |
+| Cross-platform sidecar binary preparation | Custom shell scripts | Existing `prepare-sidecars.mjs` | ALREADY DONE |
+| Cross-platform CI build + codesigning | Custom Actions matrix | Existing `desktop-release.yml` | ALREADY DONE |
+| Waveform visualization | Custom SVG/Canvas renderer | wavesurfer.js v7 + @wavesurfer/react | NOT DONE — add |
+| WebSocket client in Tauri | Raw WebSocket | @tauri-apps/plugin-websocket | NOT DONE — add |
+| File drag-drop with OS paths | Browser drag-drop API | `getCurrentWebview().onDragDropEvent()` | NOT DONE — add |
+| Progress/job polling | Manual setInterval fetch | TanStack Query `refetchInterval` | NOT DONE — add |
+| Component system for glassmorphism | Custom CSS components | shadcn/ui + Tailwind v4 | NOT DONE — add |
+| Auto-updater | Custom update mechanism | tauri-plugin-updater | NOT DONE — future work |
 
-**Key insight:** The Tauri + Python sidecar ecosystem has mature tooling. Custom solutions in every one of these areas introduce well-documented failure modes the libraries already handle.
+**Key insight:** The infrastructure layer is complete. All remaining work is UI/UX.
+
+---
+
+## Gap Analysis (Existing → Target)
+
+| Feature | Spec Requirement | Current State | Gap | Effort |
+|---------|-----------------|---------------|-----|--------|
+| Sidecar lifecycle | Start/stop/status + PID tracking | `lib.rs` + `backend.ts` — complete | NONE | 0 |
+| Coexistence with Streamlit | Attach to existing service if running | `start_sidecar` always spawns; `App.tsx` has fallback checkHealth on error | Partial — needs pre-spawn health check in `lib.rs` | S |
+| Crash recovery | Reconcile + resume after crash | `recovery.rs` + `recovery.ts` — complete | NONE | 0 |
+| PyInstaller entry point | `service/cli.py` to build sidecar | `service/cli.py` does NOT exist | Critical blocker for CI | S |
+| `--onefile` vs `--onedir` | Research: `--onedir` preferred | CI uses `--onefile` | Must decide and update CI | S |
+| CORS middleware | FastAPI allows Tauri dev + prod origins | No CORS in `app.py` | Blocks `tauri dev` (CORS errors) | S |
+| WebSocket job progress | FastAPI WS endpoint + Tauri WS plugin | No WS in FastAPI; no plugin installed | Missing both backend and frontend | M |
+| TailwindCSS v4 | Dark glassmorphism spec UI | Plain CSS in `styles.css` | Config + class migration | S |
+| shadcn/ui components | Design-first component library | None installed | Setup + add to UI | M |
+| Zustand stores | Client UI state management | Raw useState in App.tsx | Add stores, migrate state | M |
+| TanStack Query | Server state + polling | Raw useEffect in App.tsx | Add provider, migrate fetches | M |
+| View 1: Ingestion Dashboard | Drag-drop batch queue + pipeline progress | Text input + basic job list | New view, replace create section | L |
+| View 2: Audio Sync Editor | Multi-track wavesurfer.js timeline | Nothing | New view (wavesurfer.js install required) | L |
+| View 3: Transcript Timeline | Scrolling transcript + filler toggle | Nothing | New view (requires transcript data from backend) | L |
+| View 4: Branding Studio | Color/font/thumbnail/export controls | Nothing | New view (requires brand profile API) | L |
+| Native drag-drop | OS file paths via Tauri webview event | Text input for file path | Add onDragDropEvent listener | M |
+| Window sizing | NLE-grade wide layout (1440+ min) | 1024x768 in tauri.conf.json | Update window dimensions | XS |
+| Asset readiness UI | Show binary/model status before first run | Nothing | Use existing `/system/status` endpoint | S |
+| Auto-updater | In-app update mechanism | Not implemented | Needs tauri-plugin-updater | L (future) |
+
+**Effort key:** XS (<2h) / S (2-4h) / M (4-8h) / L (1-2 days)
 
 ---
 
@@ -518,84 +502,134 @@ export default defineConfig({
 **What goes wrong:** `--onefile` produces a 2-4 GB exe that extracts to a temp directory on every launch. On Windows with CUDA torch, extraction takes 8-15 seconds every time the app opens, making it feel broken.
 **Why it happens:** PyInstaller one-file mode packs everything into a self-extracting archive. CUDA runtime DLLs are enormous.
 **How to avoid:** Use `--onedir` mode. Ship the sidecar as a directory. Tauri bundles the entire directory. First launch still takes longer (Python init + torch load), but there is no extraction step.
-**Warning signs:** Sidecar takes >10 seconds to appear on health check poll. Temp folder grows to 2-4 GB on Windows (`%TEMP%\_{MEIXXXXXX}` directories accumulate if app crashes before cleanup).
+**Warning signs:** Sidecar takes >10 seconds to appear on health check poll. Temp folder grows to 2-4 GB on Windows (`%TEMP%\_MEIXXXXXX` directories accumulate if app crashes before cleanup).
 
-### Pitfall 2: process.kill() Fails for One-File Sidecars
+### Pitfall 2: CI Uses --onefile but Research Recommends --onedir
 
-**What goes wrong:** `child.kill()` in Rust kills the PyInstaller bootloader process, but the actual Python interpreter (child of the bootloader) keeps running in the background. FastAPI continues to hold port 8787. On next app launch, sidecar fails to bind the port.
+**What goes wrong:** The existing `desktop-release.yml` uses `pyinstaller --onefile`. This contradicts the research recommendation and introduces the extraction-delay problem (Pitfall 1) plus the PID tracking problem (Pitfall 2). If torch/CUDA is included, the binary will be 2-4 GB and extract on every launch.
+**Why it happens:** The CI workflow was written before the PyInstaller research was complete. `--onefile` is simpler to integrate with Tauri's `externalBin` (single file path); `--onedir` requires pointing Tauri at the executable inside a directory while bundling the directory alongside.
+**Migration path:**
+1. Evaluate if startup delay is acceptable without CUDA torch (base bundle without torch may be small enough for `--onefile`)
+2. If torch must be included, switch to `--onedir`: set `externalBin` to `"binaries/podcast-backend/podcast-backend"`, copy entire dist directory to `src-tauri/binaries/podcast-backend/`
+3. Update `prepare-sidecars.mjs` to handle the directory case
+**Warning signs:** App feels sluggish on open. `%TEMP%` fills up with `_MEI*` directories. Startup health check times out during extraction.
+
+### Pitfall 3: service/cli.py Missing — CI Will Fail
+
+**What goes wrong:** The CI workflow at line 83 of `desktop-release.yml` runs `src/podcast_pipeline/service/cli.py` as the PyInstaller entry point. This file does not exist. Every CI build will fail until it is created.
+**Why it happens:** The CI was scaffolded ahead of the file being created.
+**How to avoid:** Create `service/cli.py` as the first task of Phase 10. It must parse `--port`, set UTF-8 env vars, print readiness signal, and start uvicorn.
+**Warning signs:** CI fails immediately at the PyInstaller step with `ModuleNotFoundError` or `FileNotFoundError`.
+
+### Pitfall 4: No CORS Middleware in service/app.py
+
+**What goes wrong:** `tauri dev` runs the Vite frontend at `http://localhost:1420`. The FastAPI backend at `http://127.0.0.1:8787` has no CORS middleware. Every API call from the dev frontend will fail with "CORS policy" errors.
+**Why it happens:** The existing `app.py` was written for Streamlit (same-process) and CLI use, not cross-origin browser clients. Confirmed by code inspection: no `CORSMiddleware` import or `app.add_middleware(CORSMiddleware, ...)` call anywhere in the service directory.
+**How to avoid:** Add `CORSMiddleware` to `app.py` before first `tauri dev` run. Control allowed origins via env var (`PODCAST_PIPELINE_CORS_ORIGINS`). Default: `["http://localhost:1420", "tauri://localhost"]`. Never use `allow_origins=["*"]` in production.
+**Warning signs:** Browser console shows "blocked by CORS policy" for every API call. Works fine when running service via CLI alone but breaks under `tauri dev`.
+
+### Pitfall 5: No stdin Shutdown Handler in Sidecar
+
+**What goes wrong:** The current `lib.rs` uses `taskkill /PID /F` (Windows) and `libc::kill(pid, SIGTERM)` (Unix) to stop the sidecar. For PyInstaller `--onefile`, this kills the bootloader but not the actual Python process (the port stays bound). For `--onedir`, SIGTERM works correctly.
+**Why it happens:** With `--onefile`, PyInstaller spawns a child process for the actual Python code. The tracked PID is the bootloader parent, not the Python child.
+**How to avoid:** If using `--onefile`, implement stdin shutdown in `service/cli.py` that listens for a `shutdown\n` line and calls `sys.exit(0)`. The Rust `stop_sidecar` would need to write to stdin before sending the signal. If using `--onedir`, SIGTERM via the existing `stop_sidecar` implementation works correctly.
+**Warning signs:** Port 8787 remains bound after `stop_sidecar`. Second app launch fails to start sidecar. Orphan Python processes visible in Task Manager.
+
+### Pitfall 6: process.kill() Fails for One-File Sidecars
+
+**What goes wrong:** `child.kill()` in Rust kills the PyInstaller bootloader process, but the actual Python interpreter (child of the bootloader) keeps running in the background. FastAPI continues to hold port 8787.
 **Why it happens:** PyInstaller bootloader spawns a second process. Tauri only tracks the bootloader PID.
-**How to avoid:** Use `--onedir` mode (process tree is simpler and `kill()` works) OR implement stdin shutdown signaling in the FastAPI sidecar (`sidecar_main.py` listens for a `shutdown\n` line on stdin and calls `sys.exit(0)`).
+**How to avoid:** Use `--onedir` mode (process tree is simpler and `kill()` works) OR implement stdin shutdown signaling in the FastAPI sidecar.
 **Warning signs:** Port 8787 already in use error on second app launch. Orphan Python processes visible in Task Manager.
 
-### Pitfall 3: ctranslate2 DLL Not Found on Windows
+### Pitfall 7: ctranslate2 DLL Not Found on Windows
 
 **What goes wrong:** Bundled sidecar runs but crashes with `ImportError: libctranslate2.dll not found` because PyInstaller didn't auto-detect the native DLLs.
 **Why it happens:** ctranslate2 uses `ctypes`-based dynamic loading that PyInstaller's static analysis cannot follow.
 **How to avoid:** In the spec file, explicitly call `collect_dynamic_libs('ctranslate2')` and add result to `binaries`. Also add `'ctranslate2'` to `hiddenimports`.
 **Warning signs:** Sidecar exits immediately after spawn with code 1. stderr shows ImportError or DLL load failure.
 
-### Pitfall 4: Missing Binary Before tauri build
+### Pitfall 8: Missing Binary Before tauri build
 
-**What goes wrong:** `npm run tauri build` fails with `external binary not found` because the PyInstaller step was skipped or the binary is in the wrong location/named incorrectly.
-**Why it happens:** Tauri validates that all `externalBin` paths exist at build time.
-**How to avoid:** Add a pre-build script in `package.json` that runs the PyInstaller build first. Enforce the exact naming convention: `<name>-<target-triple>(.exe)`. Always get the target triple from `rustc --print host-tuple`.
-**Warning signs:** Error mentioning `externalBin` or `external binary` during `tauri build`. Missing file in `src-tauri/binaries/`.
+**What goes wrong:** `pnpm tauri build` fails with `external binary not found` because the PyInstaller step was skipped or the binary is in the wrong location.
+**Why it happens:** Tauri validates that all `externalBin` paths exist at build time. The existing `build.rs` will panic with an actionable error if binaries are missing (unless `SKIP_SIDECAR_CHECK=1`).
+**How to avoid:** Always run `node scripts/prepare-sidecars.mjs` before `tauri build`. In CI, `SKIP_SIDECAR_CHECK=1` is set — the binary must still be present (just not validated by build.rs). The CI downloads the artifact from the previous job step.
+**Warning signs:** Panic from `build.rs` mentioning missing sidecar. Or (in CI with skip): tauri-action fails with missing externalBin error.
 
-### Pitfall 5: WebSocket Connection Fails in Tauri WebView
+### Pitfall 9: WebSocket Connection Fails in Tauri WebView
 
 **What goes wrong:** Frontend code using `new WebSocket('ws://127.0.0.1:8787/...')` throws an error or silently fails in the packaged Tauri app.
-**Why it happens:** Tauri's webview does not have the browser's native WebSocket API available for localhost ws:// connections in the same way a browser does.
-**How to avoid:** Install and use `@tauri-apps/plugin-websocket`. Add `npm run tauri add websocket` to setup. Add `"websocket:default"` to capabilities.
-**Warning signs:** WebSocket connects fine in `tauri dev` (which uses a browser-like context) but fails in production build.
+**Why it happens:** Tauri's webview does not have the browser's native WebSocket API available for localhost ws:// connections.
+**How to avoid:** Install and use `@tauri-apps/plugin-websocket`. Run `pnpm run tauri add websocket`. Add `"websocket:default"` to capabilities. Update CSP in `tauri.conf.json` to include `ws://127.0.0.1:8787`.
+**Warning signs:** WebSocket connects fine in `tauri dev` but fails in production build.
 
-### Pitfall 6: Sidecar Not Ready When Frontend Loads
+### Pitfall 10: Sidecar Not Ready When Frontend Loads
 
-**What goes wrong:** Frontend renders and immediately calls `/jobs` or other API endpoints, gets connection refused, shows error state permanently.
-**Why it happens:** FastAPI sidecar + Python interpreter initialization takes 2-10 seconds. UI loads in ~200ms.
-**How to avoid:** Implement a mandatory health-check polling gate in the React app root. Don't render job management UI until `GET /health` returns 200. Show a loading splash screen during sidecar startup.
-**Warning signs:** "Connection refused" or "Failed to fetch" errors in console on first load. API calls fail on cold start but work after app has been open for a few seconds.
+**What goes wrong:** Frontend renders and immediately calls API endpoints, gets connection refused.
+**Why it happens:** FastAPI + Python initialization takes 2-10 seconds. The existing `waitForReady()` in `backend.ts` handles this (15s timeout, 500ms probe), and `App.tsx` gates the UI on connection. Preserve this gate in the new UI.
+**Warning signs:** "Connection refused" in console. Happens on cold start but not after app warms up.
 
-### Pitfall 7: CORS Errors in Development
+### Pitfall 11: Tauri v1 API Used Instead of v2
 
-**What goes wrong:** During `tauri dev`, the frontend runs at `localhost:1420` (Vite dev server). FastAPI rejects requests from this origin.
-**Why it happens:** FastAPI's default CORS middleware blocks cross-origin requests. In production (packaged Tauri app), the frontend is served from `tauri://localhost` not a Vite port.
-**How to avoid:** In development mode, configure FastAPI's CORSMiddleware with `allow_origins=["http://localhost:1420", "tauri://localhost"]`. In the existing `service/app.py`, add CORS middleware. Do NOT add `allow_origins=["*"]` in production.
-**Warning signs:** Browser console shows CORS policy errors when calling the FastAPI API. Only happens in dev, not in packaged build (or vice versa).
-
-### Pitfall 8: Tauri v1 API Used Instead of v2
-
-**What goes wrong:** Community examples, blog posts, and Stack Overflow answers frequently reference Tauri v1 APIs (e.g., `tauri.window.fileDropEnabled` instead of `app.window.dragDropEnabled`; `@tauri-apps/api/tauri` import instead of `@tauri-apps/api`).
-**Why it happens:** Tauri v2 was released October 2024; most content predates it.
-**How to avoid:** Always check `v2.tauri.app` not `tauri.app` or `v1.tauri.app`. When reading community examples, verify the Tauri version being used.
+**What goes wrong:** Community examples frequently reference v1 APIs (e.g., `tauri.window.fileDropEnabled` instead of `app.window.dragDropEnabled`).
+**How to avoid:** Always check `v2.tauri.app`. When reading community examples, verify the Tauri version.
 **Warning signs:** TypeScript type errors on Tauri API imports. Configuration keys not recognized in `tauri.conf.json`.
 
 ---
 
 ## Code Examples
 
-Verified patterns from official sources:
+Verified patterns from official sources and existing codebase:
 
-### Sidecar Spawn (Rust - Tauri v2)
-
-```rust
-// Source: https://v2.tauri.app/develop/sidecar/
-use tauri_plugin_shell::ShellExt;
-
-let sidecar_command = app.shell().sidecar("podcast-pipeline-sidecar").unwrap();
-let (mut rx, mut child) = sidecar_command.spawn().expect("Failed to spawn sidecar");
-```
-
-### Sidecar Spawn via JavaScript (Alternative)
+### Existing: Boot Sequence (from backend.ts)
 
 ```typescript
-// Source: https://v2.tauri.app/develop/sidecar/
-import { Command } from '@tauri-apps/plugin-shell';
-
-const command = Command.sidecar('binaries/podcast-pipeline-sidecar');
-const output = await command.execute();
+// Source: desktop/src/lib/backend.ts - already implemented
+export async function bootBackend(): Promise<{
+  sidecar: SidecarStatus;
+  health: HealthResponse | null;
+}> {
+  const sidecar = await startSidecar();
+  const health = await waitForReady();  // 15s timeout, 500ms probe interval
+  return { sidecar, health };
+}
 ```
 
-### Native File Drop
+### Existing: Dual-Path Recovery (from recovery.ts)
+
+```typescript
+// Source: desktop/src/lib/recovery.ts - already implemented
+export async function checkRecovery(): Promise<RecoveryStatus> {
+  try {
+    return await tauriInvoke<RecoveryStatus>("check_recovery");
+  } catch {
+    // Outside Tauri context -- fall back to direct HTTP
+    return checkRecoveryDirect();
+  }
+}
+```
+
+### New: TailwindCSS v4 in vite.config.ts
+
+```typescript
+// Source: https://tailwindcss.com/docs/guides/vite
+// Extend existing desktop/vite.config.ts
+import tailwindcss from '@tailwindcss/vite'
+
+export default defineConfig(async () => ({
+  plugins: [
+    react(),
+    tailwindcss(),   // v4 uses Vite plugin, NOT tailwind.config.js
+  ],
+  // ... existing server config unchanged
+  build: {
+    // Add: Tauri platform targets
+    target: process.env.TAURI_ENV_PLATFORM == 'windows' ? 'chrome105' : 'safari13',
+  },
+}));
+```
+
+### New: Native File Drop
 
 ```typescript
 // Source: https://v2.tauri.app/reference/javascript/api/namespacewebview/
@@ -604,110 +638,107 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 const unlisten = await getCurrentWebview().onDragDropEvent((event) => {
   if (event.payload.type === 'drop') {
     const paths: string[] = event.payload.paths; // Full OS paths
+    for (const videoPath of paths) {
+      void createJob(videoPath);  // from existing backend.ts
+    }
   }
 });
+return () => unlisten();
 ```
 
-### WebSocket Plugin
+### New: WebSocket Plugin
 
 ```typescript
 // Source: https://v2.tauri.app/plugin/websocket/
+// After: pnpm run tauri add websocket
 import WebSocket from '@tauri-apps/plugin-websocket';
 
 const ws = await WebSocket.connect('ws://127.0.0.1:8787/jobs/abc/ws');
-const remove = ws.addListener((msg) => { /* handle event */ });
+const remove = ws.addListener((msg) => { /* handle progress event */ });
 await ws.disconnect();
 ```
 
-### Auto-Updater Config
-
-```json
-// Source: https://v2.tauri.app/plugin/updater/
-// tauri.conf.json
-{
-  "bundle": {
-    "createUpdaterArtifacts": true
-  },
-  "plugins": {
-    "updater": {
-      "pubkey": "CONTENT_FROM_PUBLICKEY.PEM",
-      "endpoints": [
-        "https://github.com/YOUR_ORG/podcast-pipeline-desktop/releases/latest/download/update-{{target}}-{{arch}}.json"
-      ]
-    }
-  }
-}
-```
-
-### GitHub Actions Cross-Platform Build
-
-```yaml
-# Source: https://v2.tauri.app/distribute/pipelines/github/
-# tauri-action v0.6.1 (January 2026)
-strategy:
-  fail-fast: false
-  matrix:
-    include:
-      - platform: 'macos-latest'
-        args: '--target aarch64-apple-darwin'
-      - platform: 'macos-latest'
-        args: '--target x86_64-apple-darwin'
-      - platform: 'ubuntu-22.04'
-        args: ''
-      - platform: 'windows-latest'
-        args: ''
-
-steps:
-  - uses: actions/checkout@v4
-  - uses: actions/setup-node@v4
-    with: { node-version: lts/* }
-  - uses: dtolnay/rust-toolchain@stable
-  - uses: swatinem/rust-cache@v2
-  - name: Build Python sidecar
-    run: scripts/build-sidecar-${{ matrix.platform }}.sh
-  - uses: tauri-apps/tauri-action@v0
-    env:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-    with:
-      tagName: v__VERSION__
-      releaseName: 'Podcast Pipeline v__VERSION__'
-      args: ${{ matrix.args }}
-```
-
-**Ubuntu-specific (before tauri-action):**
-```yaml
-- name: Install Linux dependencies
-  run: sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
-```
-
-### Zustand + TanStack Query Pattern
+### New: TanStack Query Job Hook
 
 ```typescript
-// Source: Community pattern - verified against TanStack Query v5 docs
-// stores/uiStore.ts
-import { create } from 'zustand';
-
-interface UIStore {
-  selectedJobId: string | null;
-  setSelectedJob: (id: string | null) => void;
-}
-
-export const useUIStore = create<UIStore>((set) => ({
-  selectedJobId: null,
-  setSelectedJob: (id) => set({ selectedJobId: id }),
-}));
-
-// hooks/useJobs.ts
+// Source: Verified against TanStack Query v5 docs
+// Replaces manual setInterval in App.tsx
 import { useQuery } from '@tanstack/react-query';
+import { listJobs } from '../lib/backend';
 
 export function useJobs() {
   return useQuery({
     queryKey: ['jobs'],
-    queryFn: () => fetch('http://127.0.0.1:8787/jobs').then(r => r.json()),
-    refetchInterval: 5000,  // poll every 5s for job status updates
+    queryFn: listJobs,
+    refetchInterval: 5000,  // matches existing HEALTH_POLL_INTERVAL_MS
   });
 }
+```
+
+### New: Zustand UI Store
+
+```typescript
+// Source: Verified against Zustand v5 docs
+import { create } from 'zustand';
+
+interface UIStore {
+  selectedJobId: string | null;
+  activeView: 'ingestion' | 'audio' | 'transcript' | 'branding';
+  setSelectedJob: (id: string | null) => void;
+  setActiveView: (view: UIStore['activeView']) => void;
+}
+
+export const useUIStore = create<UIStore>((set) => ({
+  selectedJobId: null,
+  activeView: 'ingestion',
+  setSelectedJob: (id) => set({ selectedJobId: id }),
+  setActiveView: (view) => set({ activeView: view }),
+}));
+```
+
+### New: service/cli.py (Must Create)
+
+```python
+# Source: Pattern 4 above + aiechoes.substack.com production guide
+# src/podcast_pipeline/service/cli.py
+import os, sys
+
+os.environ["PYTHONIOENCODING"] = "utf-8"
+os.environ["PYTHONUTF8"] = "1"
+
+if sys.stdout.encoding != 'utf-8':
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+
+import argparse
+import uvicorn
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--port", type=int, default=8787)
+    parser.add_argument("--host", default="127.0.0.1")
+    args = parser.parse_args()
+    print(f"BACKEND_READY port={args.port}", flush=True)
+    from podcast_pipeline.service.app import create_app
+    uvicorn.run(create_app(), host=args.host, port=args.port, log_level="info")
+
+if __name__ == "__main__":
+    main()
+```
+
+### Existing GitHub Actions CI (already working)
+
+```yaml
+# Source: .github/workflows/desktop-release.yml - complete and working
+# PyInstaller step (needs service/cli.py to exist first):
+- name: Build backend binary with PyInstaller
+  run: |
+    uv run pyinstaller \
+      --name podcast-backend \
+      --onefile \          # ← evaluate: change to --onedir for large bundles
+      --console \
+      --hidden-import podcast_pipeline \
+      --hidden-import uvicorn \
+      src/podcast_pipeline/service/cli.py
 ```
 
 ---
@@ -716,47 +747,47 @@ export function useJobs() {
 
 | Old Approach | Current Approach | When Changed | Impact |
 |--------------|------------------|--------------|--------|
-| Tauri v1 allowlist (on/off toggles) | Tauri v2 capabilities + permissions (scoped, granular) | Oct 2024 (Tauri v2 stable) | All permission configs must use v2 format |
-| `tauri.window.fileDropEnabled` | `app.window.dragDropEnabled` | Oct 2024 (v2) | Config key renamed; v1 examples are wrong |
-| `@tauri-apps/api/tauri` imports | `@tauri-apps/api` flat imports | Oct 2024 (v2) | API surface reorganized; v1 import paths fail |
-| Tauri shell built-in | `tauri-plugin-shell` (separate plugin) | Oct 2024 (v2) | Must explicitly install and register the plugin |
+| Tauri v1 allowlist | Tauri v2 capabilities + permissions | Oct 2024 (v2 stable) | All permission configs must use v2 format |
+| `tauri.window.fileDropEnabled` | `app.window.dragDropEnabled` | Oct 2024 (v2) | Config key renamed |
+| `@tauri-apps/api/tauri` imports | `@tauri-apps/api` flat imports | Oct 2024 (v2) | Import paths reorganized |
+| Tauri shell built-in | `tauri-plugin-shell` (separate plugin) | Oct 2024 (v2) | Already installed in this project |
 | TailwindCSS v3 (tailwind.config.js) | TailwindCSS v4 (@tailwindcss/vite Vite plugin) | Jan 2025 | No config file needed; CSS-native theming |
-| Redux for React state | Zustand + TanStack Query | 2023-2024 | Redux considered overkill; Zustand usage 28%→41% |
+| Redux for React state | Zustand + TanStack Query | 2023-2024 | Redux overkill; Zustand is simpler |
 | Wavesurfer.js v6 (class-based) | Wavesurfer.js v7 (TypeScript, Shadow DOM) | 2023 | Plugin arrays must be memoized in React |
 | PyInstaller 5.x | PyInstaller 6.x (6.19 current) | 2024 | Better hooks for ML libraries |
 
 **Deprecated/outdated:**
-- PyOxidizer: Effectively abandoned; last meaningful activity 2022-2023. Do not use.
-- Tauri v1 for new projects: v2 is stable since Oct 2024; v1 documentation will be deprecated.
+- PyOxidizer: Effectively abandoned as of 2022-2023. Do not use.
+- Tauri v1: v2 is stable since Oct 2024; existing project correctly uses v2.
 
 ---
 
 ## Open Questions
 
-1. **PyInstaller --onedir Tauri Integration Mechanics**
-   - What we know: --onedir produces a directory, not a single file. Tauri's `externalBin` expects a file path.
-   - What's unclear: Exact configuration to point Tauri at the executable inside the dist directory while bundling the entire directory alongside it. Community examples use --onefile despite its downsides.
-   - Recommendation: During subtask 10-02, test both modes. If --onefile startup is acceptable (<5 seconds without torch GPU init), use it for simplicity. If torch GPU init makes it unacceptable, investigate the --onedir + Tauri bundle directory inclusion pattern before finalizing.
+1. **PyInstaller --onefile vs --onedir Decision**
+   - What we know: CI uses `--onefile`. Research recommends `--onedir`. The decision depends on bundle size.
+   - What's unclear: Whether this project will include CUDA torch in the sidecar at all. The `--onedir` + Tauri exact configuration (how to point externalBin at executable inside a directory) needs empirical testing.
+   - Recommendation: During subtask 10-02, test both. If bundle without torch is <200 MB, `--onefile` is acceptable. If torch must be included, switch to `--onedir`.
 
-2. **torch/CUDA Bundle Size for This Project**
-   - What we know: CUDA-enabled torch bundles are 2-4 GB. The project uses torch for RIFE GPU features (RTX 5060 Ti, sm_120, CUDA 12.8).
-   - What's unclear: Whether RIFE/torch must be included in the sidecar at all. The spec notes "optional: torch/torchvision (for RIFE GPU features)." If the sidecar can detect GPU availability at runtime and import torch lazily, the base bundle could be much smaller (100-300 MB without torch).
-   - Recommendation: Design sidecar so torch is imported conditionally (runtime optional dependency). Offer two build modes: `build:sidecar-cpu` (no torch) and `build:sidecar-gpu` (with CUDA torch).
+2. **torch/CUDA Bundle Size**
+   - What we know: CUDA torch bundles are 2-4 GB. Project uses torch for RIFE GPU (Phase 8). The `service/cli.py` will import the full pipeline.
+   - What's unclear: Whether torch can be made optional (lazy import) so base bundle is 100-300 MB.
+   - Recommendation: Design `service/cli.py` so torch is NOT imported at module level. Let pipeline stages import it on demand. Offer `build:sidecar-cpu` vs `build:sidecar-gpu` CI variants.
 
-3. **Windows CUDA 12.8 (sm_120) PyInstaller Support**
-   - What we know: RTX 5060 Ti uses CUDA compute capability sm_120. ctranslate2 requires CUDA 12 + cuDNN 9. CUDA 12.8 DLLs are large.
-   - What's unclear: Whether PyInstaller correctly bundles all CUDA 12.8 runtime DLLs (cublas, cublasLt, cudnn, etc.) for sm_120 targets. CTranslate2 4.4.0 had breaking changes with certain CUDA versions (noted as breaking in Oct 2024).
-   - Recommendation: Pin ctranslate2 version in PyInstaller build environment. Test the bundled sidecar on a clean Windows system without CUDA installed (confirms DLLs are self-contained). Use `pipreqs` or `pip-audit` to audit the dep tree before bundling.
+3. **WebSocket Endpoint Design**
+   - What we know: FastAPI service has no WebSocket endpoints. The frontend has `backend.ts` ready to call them. Tauri v2 needs `@tauri-apps/plugin-websocket`.
+   - What's unclear: Whether WebSocket progress is essential for Phase 10 or can be added later (polling via TanStack Query may suffice for MVP).
+   - Recommendation: Implement polling-first (TanStack Query refetchInterval), add WebSocket as enhancement once core views work.
 
-4. **Wavesurfer.js Multitrack Status**
-   - What we know: Wavesurfer.js v7 lists "Multi-track" under "Experiments" on the examples page. Not GA.
-   - What's unclear: Whether the experimental multitrack API is stable enough for production use in subtask 10-06.
-   - Recommendation: Evaluate the experimental multitrack plugin during 10-06. If unstable, implement multi-track visualization as multiple independent WaveSurfer instances synchronized via a shared AudioContext and playback offset — this is the documented community pattern for Soundcloud-like multi-track views.
+4. **Coexistence Pre-Spawn Health Check Scope**
+   - What we know: `App.tsx` boot sequence catches the spawn error and falls back to `checkHealth()` — this partially implements coexistence. The `lib.rs` `start_sidecar` command does not do a pre-spawn check.
+   - What's unclear: Whether the current error-fallback approach is sufficient or whether a clean pre-spawn check is needed.
+   - Recommendation: Add explicit pre-spawn HTTP health check in `start_sidecar` Rust command. Return a flag indicating whether sidecar was spawned or attached. Use this flag to gate shutdown behavior.
 
-5. **FastAPI CORS for Tauri Dev vs Production**
-   - What we know: Dev mode serves from `http://localhost:1420`; production uses `tauri://localhost`. FastAPI needs different CORS origins for each.
-   - What's unclear: The existing `service/app.py` does not have CORS middleware configured (inspected above). It will need to be added for Tauri integration.
-   - Recommendation: Add CORS middleware to `app.py` in subtask 10-01 with env-var-controlled origins. Default dev: `["http://localhost:1420"]`. Production/packaged: `["tauri://localhost"]`.
+5. **Transcript/Filler Toggle API**
+   - What we know: The spec requires a View 3 transcript timeline where operators can toggle filler words. The existing `service/routes/jobs.py` has no transcript-editing endpoints.
+   - What's unclear: Whether the transcript data (filler words, timestamps) needs a new REST endpoint or can be derived from existing job stage outputs.
+   - Recommendation: Map this gap during subtask 10-06. The analyze stage likely produces transcript JSON; the frontend may be able to read it from job outputs without a new API endpoint.
 
 ---
 
@@ -767,877 +798,35 @@ export function useJobs() {
 - [Tauri v2 Sidecar Official Docs](https://v2.tauri.app/develop/sidecar/) - externalBin config, Rust spawn API, permissions, naming convention
 - [Tauri v2 WebSocket Plugin](https://v2.tauri.app/plugin/websocket/) - Installation, connect API, permissions
 - [Tauri v2 Webview API](https://v2.tauri.app/reference/javascript/api/namespacewebview/) - onDragDropEvent, DragDropEvent payload structure
-- [Tauri v2 Updater Plugin](https://v2.tauri.app/plugin/updater/) - Auto-update config, key generation, endpoint format
-- [Tauri GitHub Actions Pipeline](https://v2.tauri.app/distribute/pipelines/github/) - Complete CI/CD matrix workflow
-- [tauri-action v0.6.1](https://github.com/tauri-apps/tauri-action) - Latest action version, matrix strategy
+- [Tauri v2 Updater Plugin](https://v2.tauri.app/plugin/updater/) - Auto-update config, key generation
+- [Tauri GitHub Actions Pipeline](https://v2.tauri.app/distribute/pipelines/github/) - CI/CD matrix workflow
+- [TailwindCSS v4 Vite Guide](https://tailwindcss.com/docs/guides/vite) - @tailwindcss/vite plugin
+- Direct codebase inspection: `desktop/` directory — all source files read and documented above
 
 ### Secondary (MEDIUM confidence)
 
-- [Building Production-Ready Desktop LLM Apps: Tauri, FastAPI, PyInstaller](https://aiechoes.substack.com/p/building-production-ready-desktop) - Production PyInstaller spec pattern, UTF-8 fix, Tauri sidecar config, bundle metrics
-- [example-tauri-v2-python-server-sidecar](https://github.com/dieharders/example-tauri-v2-python-server-sidecar) - process.kill() limitation for PyInstaller one-file, stdin/stdout shutdown pattern
-- [tauri-fastapi-full-stack-template](https://github.com/fudanglp/tauri-fastapi-full-stack-template) - React + TanStack Query + shadcn/ui + Tauri architecture; HTTP REST for primary comms
-- [TailwindCSS v4 Vite Guide](https://tailwindcss.com/docs/guides/vite) - @tailwindcss/vite plugin, no config file needed
-- [Tauri 2.0 Stable Release Blog](https://v2.tauri.app/blog/tauri-20/) - Release date (Oct 2, 2024), v2 API changes
+- [Building Production-Ready Desktop LLM Apps: Tauri, FastAPI, PyInstaller](https://aiechoes.substack.com/p/building-production-ready-desktop) - Production PyInstaller spec, UTF-8 fix, sidecar config
+- [example-tauri-v2-python-server-sidecar](https://github.com/dieharders/example-tauri-v2-python-server-sidecar) - process.kill() limitation for PyInstaller one-file, stdin/stdout pattern
 - [Tauri Core Ecosystem Releases](https://v2.tauri.app/release/) - Version 2.10.2 confirmed as latest stable
 
 ### Tertiary (LOW confidence - needs validation)
 
-- Community WebSearch findings about PyInstaller CUDA bundle sizes (2-4 GB claim) - multiple sources agree but no 2025 benchmarks for this exact dep set
-- Wavesurfer.js multitrack "experiments" status - confirmed via examples page listing, but stability for production use is unverified
-- ctranslate2 + PyInstaller Windows DLL collection pattern - based on similar ML library patterns (llama-cpp-python), not faster-whisper specific. **Must validate** during subtask 10-02.
+- Community WebSearch findings about PyInstaller CUDA bundle sizes (2-4 GB claim) — multiple sources agree but no 2025 benchmarks for this exact dep set
+- Wavesurfer.js multitrack "experiments" status — confirmed via examples page listing, stability unverified
+- ctranslate2 + PyInstaller Windows DLL collection — based on similar ML library patterns, not faster-whisper specific. **Must validate** during subtask 10-02.
 
 ---
 
 ## Metadata
 
 **Confidence breakdown:**
-- Standard stack: HIGH — Tauri v2 APIs verified against official v2.tauri.app docs; React+Vite+Tailwind v4 pattern verified against official guides and multiple community templates
-- Architecture (sidecar spawn/shutdown): MEDIUM-HIGH — Tauri v2 official docs + production community guide verified; one-file PID limitation confirmed by official example repo
-- PyInstaller ML bundling: MEDIUM — General pattern verified; faster-whisper/ctranslate2 specific DLL collection needs empirical validation during implementation
-- Distribution CI/CD: HIGH — Official tauri-action@v0.6.1 workflow verified against official docs
+- Standard stack: HIGH — Tauri v2 APIs verified against official docs; existing package.json confirms all installed versions
+- Architecture (sidecar spawn/shutdown): HIGH — verified against existing working code; patterns documented from actual source files
+- PyInstaller ML bundling: MEDIUM — general pattern verified; `--onefile` vs `--onedir` gap and faster-whisper/ctranslate2 specific DLL collection needs empirical validation
+- Distribution CI/CD: HIGH — existing `desktop-release.yml` is complete and working
+- Gap analysis: HIGH — based on direct codebase inspection of all source files
 
 **Research date:** 2026-02-25
-**Valid until:** 2026-03-25 (30 days; Tauri releases frequently but v2.x APIs are stable; PyInstaller ML ecosystem changes slowly)
+**Valid until:** 2026-03-25 (30 days; Tauri releases frequently but v2.x APIs are stable)
 
 ---
-
----
-
-## Future MCP Server Tools Research
-
-**Researched:** 2026-02-25
-**Domain:** FFmpeg dynamic crop, video overlay filter_complex, platform upload APIs (YouTube, Spotify, TikTok)
-**Confidence:** MEDIUM (FFmpeg filter syntax verified against official docs; platform API flows verified against official developer portals; OpenCV capabilities verified against installed package 4.13.0)
-
-### Summary
-
-This section covers implementation specifications for three tools to be added to `src/podcast_pipeline/mcp/ffmpeg_server.py` and `src/podcast_pipeline/utils/ffmpeg_toolkit.py`. All three follow the existing pattern: typed Pydantic request model, FFmpeg command construction (or API call), result model returned as JSON-safe dict via `_result_dict()`.
-
-**Tool 1 (`smart_crop_subject`):** OpenCV `FaceDetectorYN` (YuNet, already installed as `opencv-python-headless 4.13.0`) detects face bounding boxes frame-by-frame. Smoothed crop coordinates are written to an FFmpeg `sendcmd` file. FFmpeg then executes a single pass using `sendcmd=f={file}` to drive a named `crop@cam` filter with dynamically updating x/y values. This is the correct bridging pattern — FFmpeg cannot read CSV natively but can consume a sendcmd file that was generated by any external tool. OpenCV does NOT need to decode/encode video frames directly; FFmpeg handles all I/O.
-
-**Tool 2 (`overlay_video`):** Uses FFmpeg `filter_complex` with the `overlay` filter (for video) and `amix` (for audio). The B-roll overlay approach uses `enable='between(t,START,END)'` to constrain when the overlay appears. For Picture-in-Picture, the secondary stream is scaled and positioned in a corner. Audio has two modes: main-only (single `-map 0:a`) or mixed (`amix=inputs=2:weights=1 0.3`).
-
-**Tool 3 (`upload_to_platform`):** YouTube uses the official `google-api-python-client` + `google-auth-oauthlib` with a resumable upload to `videos.insert`. Spotify has no upload API; the standard approach is RSS feed generation via `feedgen`, which Spotify ingests automatically. TikTok has an official Content Posting API (`video.publish` scope) that supports direct file upload. For platforms without APIs (Instagram Direct), the fallback is Playwright browser automation.
-
-**Primary recommendation:** Implement tools in this order: `overlay_video` first (pure FFmpeg, no new dependencies), then `smart_crop_subject` (uses installed OpenCV, needs YuNet model download at first run), then `upload_to_platform` (requires new library installs and OAuth setup).
-
----
-
-## Standard Stack (MCP Tools)
-
-### Core
-
-| Library | Version | Purpose | Why Standard |
-|---------|---------|---------|--------------|
-| opencv-python-headless | 4.13.0 (INSTALLED) | Face detection and frame analysis | Already in `gpu` extra; `FaceDetectorYN` and `TrackerMIL_create` confirmed available |
-| google-api-python-client | 2.x | YouTube Data API v3 upload | Official Google client; required by Google Developer docs for `videos.insert` |
-| google-auth-oauthlib | 1.x | OAuth2 flow for YouTube | `InstalledAppFlow` for desktop/headless credential management; tokens storable as JSON |
-| google-auth | 2.48.0 (INSTALLED) | OAuth2 credential management | Already installed; provides `Credentials` refresh logic |
-| feedgen | 0.9.0+ | RSS feed generation for Spotify | Standard library for podcast RSS with Apple Podcasts + Spotify spec support |
-| playwright | 1.x | Browser automation fallback | Required for TikTok (if not using API) or Instagram; headless Chromium-based |
-
-### Supporting
-
-| Library | Version | Purpose | When to Use |
-|---------|---------|---------|-------------|
-| numpy | already installed (scipy dep) | Smoothing face bounding box trajectories | Required for Gaussian/exponential smoothing of crop x/y coordinates |
-| httpx | 0.28.0 (INSTALLED) | TikTok Content Posting API HTTP calls | Already in core deps; use for direct TikTok API calls (no official Python SDK) |
-
-### New Dependencies Required
-
-```bash
-# For YouTube upload
-uv add google-api-python-client google-auth-oauthlib
-
-# For Spotify RSS feed generation
-uv add feedgen
-
-# For TikTok/Instagram browser automation fallback
-uv add playwright
-uv run playwright install chromium
-```
-
-**Note:** `opencv-python-headless 4.13.0` is already installed under the `gpu` extra. The `smart_crop_subject` tool must guard its import with a try/except and return a clear error if the `gpu` extra is not installed.
-
----
-
-## Architecture Patterns (MCP Tools)
-
-### Pattern 10: smart_crop_subject — Two-Pass Architecture
-
-**What:** Pass 1 (analysis): OpenCV reads video frames, detects faces with YuNet, writes smoothed crop coordinates to a sendcmd file. Pass 2 (render): FFmpeg reads the sendcmd file and performs the actual crop+encode in a single pass.
-**When to use:** Converting 16:9 landscape footage to 9:16 vertical TikTok/Short format with dynamic speaker tracking.
-
-**Why two passes instead of OpenCV writing frames directly:**
-- FFmpeg handles codec, bitrate, hardware encoding, and all output format concerns. Piping decoded frames through OpenCV and back into FFmpeg is complex, slow, and loses hardware acceleration.
-- The sendcmd approach delegates all encoding to FFmpeg while OpenCV provides only the coordinate time-series.
-- Verified: FFmpeg's `crop` filter supports `x` and `y` commands via `sendcmd`. The crop filter explicitly documents: "The command accepts the same syntax of the corresponding option."
-
-**Face Detection Tool:** Use `cv2.FaceDetectorYN` (YuNet). Confirmed available in installed `opencv-python-headless 4.13.0`. Requires downloading `face_detection_yunet_2023mar.onnx` from the OpenCV model zoo at first run.
-
-**Tracker for between-detection frames:** Use `cv2.TrackerMIL_create()`. Confirmed available in 4.13.0. No model file required. Initialize with the face bounding box from YuNet, then update each frame. Re-detect with YuNet every N frames to correct drift.
-
-**Smoothing algorithm:** Exponential moving average (EMA) on the crop center x/y coordinates. EMA prevents sudden jumps when a face moves. Deadzone threshold (e.g., 20px) prevents jitter from micro-movements.
-
-**Output crop dimensions for 9:16:** Input is 16:9 (e.g., 1920x1080). Output crop width = `1080 * 9/16 = 607px`. Output height = `1080px`. The crop window slides horizontally only (y is fixed at 0 for podcast use case where speakers are at full height).
-
-**sendcmd file format** (verified against FFmpeg filter docs):
-```
-# Generated sendcmd file — one entry per second or per keyframe
-# Format: START[-END] [enter] FILTER_NAME COMMAND VALUE;
-0.000 crop@cam x 656;
-0.033 crop@cam x 658;
-0.067 crop@cam x 659;
-...
-```
-
-**FFmpeg command for pass 2:**
-```bash
-# Source: FFmpeg filters docs (https://ffmpeg.org/ffmpeg-filters.html) + sendcmd filter docs
-ffmpeg -i input_16x9.mp4 \
-  -filter_complex "
-    [0:v]crop@cam=w=607:h=1080:x=656:y=0,
-    sendcmd=f=/tmp/crop_commands.txt[v_out]
-  " \
-  -map "[v_out]" \
-  -map 0:a \
-  -c:v libx264 -preset fast -crf 23 \
-  -c:a aac \
-  output_9x16.mp4
-```
-
-**Important:** The `sendcmd` filter must appear AFTER the `crop@cam` filter in the chain — sendcmd sends commands TO crop, it does not replace it.
-
-**Performance profile:**
-- YuNet detection: ~1.6ms per frame at 320x320 on modern i7 CPU (~30-50 FPS detection throughput). For 30 FPS video, detection is real-time on CPU.
-- Pass 1 (OpenCV analysis only, no re-encode): Processes 1080p at approximately 5-15x real-time speed on CPU (OpenCV reads frames via VideoCapture without decoding to display).
-- Pass 2 (FFmpeg encode with sendcmd): Normal FFmpeg encode speed (hardware-accelerated where available).
-- Total overhead vs. static crop: Approximately 10-30 seconds of pre-processing for a 60-minute video.
-
-### Pattern 11: overlay_video — filter_complex Graphs
-
-**What:** FFmpeg `filter_complex` with timed overlay using `enable='between(t,START,END)'`.
-**When to use:** B-roll cutaway, Picture-in-Picture remote guest.
-
-**B-roll cutaway (full-frame replacement, timed):**
-```bash
-# Source: FFmpeg official docs overlay filter + community-verified pattern
-# Video B overlays Video A for a window of time. Audio is from A (primary).
-ffmpeg -i main_video.mp4 -i broll_video.mp4 \
-  -filter_complex "
-    [1:v]setpts=PTS-STARTPTS+{start_s}/TB[broll_delayed];
-    [0:v][broll_delayed]overlay=enable='between(t,{start_s},{end_s})':x=0:y=0[v_out]
-  " \
-  -map "[v_out]" \
-  -map 0:a \
-  -c:v libx264 -preset fast -crf 23 \
-  -c:a copy \
-  output.mp4
-```
-
-**Key detail:** `setpts=PTS-STARTPTS+{start_s}/TB` delays B-roll so it starts playing at `start_s` in the output timeline. Without this, B-roll would show frame 0 of B at time 0 of A, making the overlay always show the beginning of B-roll content regardless of where it's placed.
-
-**Picture-in-Picture (PiP), corner position with audio mix:**
-```bash
-# Source: FFmpeg official docs overlay + amix filters
-ffmpeg -i main_video.mp4 -i guest_video.mp4 \
-  -filter_complex "
-    [1:v]scale=iw/4:ih/4[pip_scaled];
-    [0:v][pip_scaled]overlay=x=main_w-overlay_w-20:y=20[v_out];
-    [0:a][1:a]amix=inputs=2:weights=1 0.3[a_out]
-  " \
-  -map "[v_out]" \
-  -map "[a_out]" \
-  -c:v libx264 -preset fast \
-  output_pip.mp4
-```
-
-**Audio modes for overlay_video:**
-- `main_only`: `-map 0:a -c:a copy` — take audio from input 0 entirely; simplest, fastest
-- `mixed`: `amix=inputs=2:weights=1 {secondary_vol}` — blend both audio streams (weights: `1` = 100% main, `0.3` = 30% secondary)
-- `replace`: `-map 1:a` — take audio from B-roll/secondary only (uncommon)
-
-**Critical:** When B-roll has its own audio that should duck under main audio during PiP, use `amix` with `weights=1 0.15` (85% reduction of secondary audio) rather than silence.
-
-### Pattern 12: upload_to_platform — Per-Platform Architecture
-
-**YouTube Data API v3 (HIGH confidence — official docs verified)**
-
-Authentication flow for installed/desktop app:
-1. Create OAuth2 client credentials in Google Cloud Console (Desktop app type)
-2. Download `client_secrets.json`
-3. First run: `InstalledAppFlow.from_client_secrets_file()` opens browser for user consent
-4. Store `credentials.json` (contains refresh token) after first authorization
-5. Subsequent runs: load from `credentials.json` and auto-refresh with `google.auth.transport.requests.Request()`
-
-Required scope: `https://www.googleapis.com/auth/youtube.upload`
-
-Upload endpoint: `POST https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status`
-
-Resumable upload (for large video files — mandatory for files >5MB):
-- Send initial POST with video metadata JSON + `X-Upload-Content-Length` header
-- Receive `Location` header with session URI
-- PUT chunks to session URI with `Content-Range` header
-- Chunks must be multiples of 256KB
-- On 308 response: resume from position in `Range` response header
-- On 201 response: upload complete
-
-Quota: `videos.insert` costs 1,600 units. Default daily quota is 10,000 units. This means only 6 video uploads per day on the free quota. **Apply for quota increase** in Google Cloud Console for production use.
-
-**Spotify (VERIFIED — no upload API exists)**
-
-Spotify does NOT have a public API for uploading podcast episodes. This is confirmed by the official Spotify developer community and has not changed as of 2026. The standard integration path is RSS:
-
-1. Host the audio file (MP3/AAC) on any web-accessible storage (S3, GCS, R2, self-hosted)
-2. Generate/update a podcast RSS feed using `feedgen` library
-3. The RSS feed was previously submitted to Spotify for Podcasters (podcasters.spotify.com) — Spotify polls it automatically
-4. New episodes appear on Spotify within minutes to hours of the RSS feed update
-
-The `upload_to_platform` tool for Spotify should: upload the audio file to configured storage, update the RSS feed XML, and push the updated feed to its hosting location. Spotify ingests automatically.
-
-**TikTok Content Posting API (MEDIUM confidence — official docs verified, but requires app audit)**
-
-TikTok has an official Content Posting API at `https://open.tiktokapis.com/v2/`:
-- Scope required: `video.publish`
-- App must be registered at developers.tiktok.com
-- Before audit: content restricted to `SELF_ONLY` visibility; maximum 5 uploads per 24h
-- After audit: public posting enabled
-
-Upload flow (File Upload method):
-1. `POST /v2/post/publish/creator_info/query/` — get creator info and posting constraints
-2. `POST /v2/post/publish/video/init/` — with video_size_bytes, chunk_size, total_chunk_count, title, privacy_level
-3. `PUT {upload_url}` — upload video file in chunks (URL valid for 1 hour)
-4. `POST /v2/post/publish/status/fetch/` — poll until `PUBLISH_COMPLETE`
-
-OAuth: Standard OAuth 2.0 authorization code flow. Access token expires in 24h but can be refreshed.
-
-**Instagram / Platforms Without Upload API (Playwright fallback)**
-
-For platforms with no upload API or where API access is not feasible, use `playwright` for browser automation:
-- Playwright is available as a Python library (`pip install playwright`)
-- Use `playwright install chromium` for the browser binary
-- Authentication: persist browser storage state (cookies + localStorage) after first manual login via `context.storage_state(path="session.json")`; subsequent runs load the saved state
-- Headless mode: `browser = await playwright.chromium.launch(headless=True)`
-- Anti-bot detection: Playwright is detectable by sophisticated platforms; use `playwright-stealth` plugin or run non-headless for sensitive platforms
-
-**Architecture for upload_to_platform MCP tool:**
-
-The tool accepts a `platform` parameter and dispatches to the appropriate uploader class. Each uploader is a separate module under `src/podcast_pipeline/uploaders/`:
-```
-src/podcast_pipeline/uploaders/
-├── __init__.py
-├── base.py          # PlatformUploader protocol
-├── youtube.py       # YouTubeUploader (google-api-python-client)
-├── spotify_rss.py   # SpotifyRSSUploader (feedgen + storage upload)
-├── tiktok.py        # TikTokUploader (httpx REST calls)
-└── playwright_base.py  # PlaywrightUploader base for browser-based platforms
-```
-
----
-
-## Don't Hand-Roll (MCP Tools)
-
-| Problem | Don't Build | Use Instead | Why |
-|---------|-------------|-------------|-----|
-| Face detection algorithm | Custom Haar cascade or DNN wrapper | `cv2.FaceDetectorYN` (YuNet, already installed) | YuNet achieves 30-50 FPS on CPU; 75k parameters; millisecond latency; bundled with OpenCV |
-| Object tracker between detections | Custom optical flow tracker | `cv2.TrackerMIL_create()` (no model file needed) | MIL tracker is model-free, CPU-only, and available in installed OpenCV 4.13.0 |
-| RSS feed XML generation | Custom XML string assembly | `feedgen` library | Handles all podcast namespace prefixes, enclosure tags, iTunes/Spotify extensions, XML escaping |
-| YouTube upload chunking + retry | Custom multipart HTTP uploader | `google-api-python-client` + `MediaFileUpload(resumable=True)` | Handles 308 Resume Incomplete, exponential backoff, chunk sizing automatically |
-| OAuth2 browser flow + token storage | Custom OAuth2 implementation | `google-auth-oauthlib` + `InstalledAppFlow` | Handles PKCE, token refresh, credential JSON serialization |
-| TikTok API HTTP client | Custom requests wrapper | `httpx` (already installed) | Already a core dependency; handles chunked PUT uploads, timeout, retries |
-| Platform browser automation | Selenium or custom WebDriver | `playwright` | Playwright is faster, more reliable, auto-waits for network idle, better cookie persistence |
-| Smooth pan interpolation | Custom linear interpolation | numpy EMA (exponential moving average) | `alpha * new_val + (1 - alpha) * prev_val` is 1 line; numpy already installed as scipy transitive dep |
-
-**Key insight:** The critical "don't hand-roll" for `smart_crop_subject` is the face detection itself. Haar cascades (the built-in `haarcascade_frontalface_default.xml`) are significantly less accurate and slower than YuNet for this use case. YuNet detects side-facing and partially occluded faces, which Haar cascades miss — critical for two-speaker podcast footage where one speaker may turn their head.
-
----
-
-## Common Pitfalls (MCP Tools)
-
-### Pitfall 9: sendcmd Crop Filter Ordering
-
-**What goes wrong:** `sendcmd` is placed BEFORE `crop@cam` in the filtergraph chain. The sendcmd filter has no target to send commands to, and crop ignores runtime updates entirely.
-**Why it happens:** Confusion about data flow direction. `sendcmd` is a SOURCE of commands, not a filter transformation — it must appear downstream of the filter it controls in the chain, or in a separate filter node connected to the same filtergraph.
-**How to avoid:** Always place `sendcmd` AFTER the filter it controls: `crop@cam=..., sendcmd=f={file}` or use the `[0:v]sendcmd=f={file}[cmd]; [0:v]crop@cam[v]` pattern with proper input routing.
-**Warning signs:** FFmpeg runs without error but crop position never changes. Output video is a static crop at the initial x/y values.
-
-### Pitfall 10: YuNet Model File Not Bundled
-
-**What goes wrong:** `smart_crop_subject` is called on a machine that does not have `face_detection_yunet_2023mar.onnx` present at the expected path. `cv2.FaceDetectorYN.create()` raises a cryptic OpenCV error about the model file.
-**Why it happens:** YuNet requires a downloaded ONNX model file (not bundled with `opencv-python-headless`). The model must be downloaded separately from the opencv_zoo repository.
-**How to avoid:** In the toolkit function, check for the model file at a configurable path (default: `~/.cache/podcast-pipeline/models/face_detection_yunet_2023mar.onnx`). If absent, download it automatically from `https://github.com/opencv/opencv_zoo/raw/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx` on first run. Log the download clearly.
-**Warning signs:** `cv2.error: (-215:Assertion failed)` or `Error reading model file`. File not found at the model path.
-
-### Pitfall 11: setpts Missing in B-roll Overlay
-
-**What goes wrong:** B-roll is overlaid but always shows its first frame (or first few seconds) at the wrong point in the main video. The B-roll does not appear at the specified `start_s` position in the output.
-**Why it happens:** Without `setpts=PTS-STARTPTS+{start_s}/TB`, the B-roll's timestamps are relative to its own start (0.0). FFmpeg merges frames by timestamp, so B-roll frame at t=0 overlays main video at t=0, regardless of the `enable` expression.
-**How to avoid:** Always apply `[1:v]setpts=PTS-STARTPTS+{start_s}/TB[delayed_broll]` before the overlay filter when B-roll has a specific placement time.
-**Warning signs:** B-roll appears at the correct enable/disable time window but shows the wrong content (first few seconds of B-roll instead of the middle).
-
-### Pitfall 12: YouTube Quota Exhaustion
-
-**What goes wrong:** The `upload_to_platform` tool succeeds for a few uploads, then starts receiving 403 quota exceeded errors. All YouTube API operations fail until the next day's quota reset.
-**Why it happens:** `videos.insert` costs 1,600 units. The default quota is 10,000 units/day. After 6 successful video uploads in a day, the quota is exhausted. Other API calls also consume units.
-**How to avoid:** Cache the quota cost in tool documentation. Implement pre-upload quota checking via `youtube.channels().list()` if a quota monitoring endpoint is available. Instruct users to apply for quota increase in Google Cloud Console. Add a per-day upload counter in the MCP tool's response metadata.
-**Warning signs:** HTTP 403 with `quotaExceeded` in the error body. First uploads succeed, then all fail.
-
-### Pitfall 13: TikTok Unaudited Client Restrictions
-
-**What goes wrong:** TikTok upload appears successful (201 response) but the video is only visible to the authenticating account itself (`SELF_ONLY` privacy). The video never appears publicly.
-**Why it happens:** TikTok's Content Posting API enforces private-only mode for all clients that have not completed the audit process. Even if `privacy_level=PUBLIC_TO_EVERYONE` is requested, it is silently overridden to `SELF_ONLY` for unaudited apps.
-**How to avoid:** Document this limitation clearly in the MCP tool's docstring. After completing the basic integration and testing with self-only content, submit the app for TikTok audit at developers.tiktok.com to lift the restriction. Rate limit: 5 uploads per 24h per user for unaudited apps.
-**Warning signs:** Upload returns 200/201 but the video is invisible to other users. Status endpoint shows `PUBLISH_COMPLETE` but privacy is `SELF_ONLY` even when `PUBLIC_TO_EVERYONE` was requested.
-
-### Pitfall 14: Spotify RSS Feed URL Stability
-
-**What goes wrong:** The Spotify RSS feed connection is broken when the hosting URL for the RSS XML file changes (e.g., migration from one S3 bucket to another). Episodes stop appearing on Spotify.
-**Why it happens:** Spotify caches the original RSS feed URL submitted during initial setup. Changing the URL requires a feed redirect update in Spotify for Podcasters settings, which takes several days to propagate.
-**How to avoid:** Use a stable URL for the RSS feed (custom domain with redirect, not a bucket URL directly). Store the feed URL in project configuration. Never change it without updating Spotify for Podcasters.
-**Warning signs:** New episodes are uploaded to storage and the RSS XML is updated, but episodes do not appear on Spotify. The Spotify for Podcasters dashboard shows the old feed URL.
-
-### Pitfall 15: OpenCV VideoCapture Memory for Long Videos
-
-**What goes wrong:** Processing a 2-hour podcast video with OpenCV `VideoCapture` consumes multiple GB of memory or is extremely slow because OpenCV attempts to seek to specific frame numbers rather than reading sequentially.
-**Why it happens:** `cv2.VideoCapture.set(cv2.CAP_PROP_POS_FRAMES, N)` for large N performs a slow seek. Sequential `cap.read()` in a loop is the correct pattern for face detection across all frames.
-**How to avoid:** Always read frames sequentially. For memory: process 1 frame at a time, never accumulate raw frames in a list. For skipping frames (e.g., detect every 5th frame): call `cap.read()` to advance but discard the frame, rather than `set(CAP_PROP_POS_FRAMES)`. Write smoothed crop coordinates to the sendcmd file incrementally.
-**Warning signs:** Memory usage grows linearly with video duration. Analysis pass takes 10+ minutes for a 1-hour video.
-
----
-
-## Code Examples (MCP Tools)
-
-Verified patterns from official sources and installed package inspection:
-
-### smart_crop_subject: Pass 1 — YuNet Face Detection + EMA Smoothing
-
-```python
-# Source: OpenCV official docs (docs.opencv.org/4.x/d0/dd4/tutorial_dnn_face.html)
-# + transloadit.com YuNet tutorial (verified)
-# Installed package: opencv-python-headless 4.13.0 (confirmed FaceDetectorYN available)
-
-import cv2
-import numpy as np
-from pathlib import Path
-
-def detect_and_smooth_face_centers(
-    video_path: Path,
-    model_path: Path,
-    output_crop_width: int = 607,   # 1080 * 9/16 for 9:16 from 1080p source
-    output_crop_height: int = 1080,
-    detection_interval_frames: int = 5,  # Re-detect every 5 frames; track in between
-    ema_alpha: float = 0.15,             # Lower = smoother but laggier
-    deadzone_px: int = 20,              # Ignore movements smaller than this
-) -> list[tuple[float, int]]:           # [(timestamp_s, crop_x), ...]
-    """Pass 1: analyse video, return per-frame smoothed crop x positions."""
-    detector = cv2.FaceDetectorYN.create(
-        str(model_path),
-        "",
-        (320, 320),
-        score_threshold=0.9,
-        nms_threshold=0.3,
-        top_k=5000,
-    )
-    cap = cv2.VideoCapture(str(video_path))
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    frame_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-
-    # Maximum x range for the crop window
-    max_crop_x = frame_w - output_crop_width
-
-    # Initialize EMA at center
-    smoothed_x = float(frame_w // 2 - output_crop_width // 2)
-    tracker = cv2.TrackerMIL_create()
-    tracker_initialized = False
-    results: list[tuple[float, int]] = []
-    frame_idx = 0
-
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
-
-        timestamp_s = frame_idx / fps
-
-        if frame_idx % detection_interval_frames == 0 or not tracker_initialized:
-            # YuNet detection pass
-            detector.setInputSize((frame.shape[1], frame.shape[0]))
-            _, faces = detector.detect(frame)
-            if faces is not None and len(faces) > 0:
-                # Use the highest-confidence face (first result after NMS)
-                x, y, w, h = faces[0][0:4].astype(int)
-                face_center_x = x + w // 2
-                # Re-init tracker on the detected face
-                tracker = cv2.TrackerMIL_create()
-                tracker.init(frame, (x, y, w, h))
-                tracker_initialized = True
-                # Desired crop: center the face horizontally
-                desired_x = float(face_center_x - output_crop_width // 2)
-                desired_x = max(0.0, min(float(max_crop_x), desired_x))
-                # EMA smoothing with deadzone
-                delta = desired_x - smoothed_x
-                if abs(delta) > deadzone_px:
-                    smoothed_x = ema_alpha * desired_x + (1 - ema_alpha) * smoothed_x
-        elif tracker_initialized:
-            # Between detections: use tracker to update bounding box
-            success, bbox = tracker.update(frame)
-            if success:
-                tx, ty, tw, th = [int(v) for v in bbox]
-                face_center_x = tx + tw // 2
-                desired_x = float(face_center_x - output_crop_width // 2)
-                desired_x = max(0.0, min(float(max_crop_x), desired_x))
-                delta = desired_x - smoothed_x
-                if abs(delta) > deadzone_px:
-                    smoothed_x = ema_alpha * desired_x + (1 - ema_alpha) * smoothed_x
-
-        results.append((timestamp_s, int(smoothed_x)))
-        frame_idx += 1
-
-    cap.release()
-    return results
-
-
-def write_sendcmd_file(
-    crop_positions: list[tuple[float, int]],
-    output_path: Path,
-) -> None:
-    """Write FFmpeg sendcmd file from per-frame crop x positions."""
-    # Source: FFmpeg sendcmd filter docs (ayosec.github.io/ffmpeg-filters-docs/7.0/)
-    # Format: START crop@cam x VALUE;
-    with output_path.open("w") as f:
-        for timestamp_s, crop_x in crop_positions:
-            f.write(f"{timestamp_s:.3f} crop@cam x {crop_x};\n")
-```
-
-### smart_crop_subject: Pass 2 — FFmpeg sendcmd Render
-
-```python
-# Source: FFmpeg filter_complex docs + sendcmd filter docs
-# Verified: crop filter supports 'x' command via sendcmd (crop.html #commands)
-
-def build_smart_crop_ffmpeg_args(
-    input_path: Path,
-    output_path: Path,
-    sendcmd_path: Path,
-    crop_width: int,
-    crop_height: int,
-    initial_x: int,
-    timeout: int,
-) -> list[str]:
-    """Build FFmpeg args for the smart crop render pass."""
-    return [
-        "-i", str(input_path),
-        "-vf", (
-            f"crop@cam=w={crop_width}:h={crop_height}:x={initial_x}:y=0,"
-            f"sendcmd=f={sendcmd_path}"
-        ),
-        "-map", "0:v",
-        "-map", "0:a",
-        "-c:v", "libx264",
-        "-preset", "fast",
-        "-crf", "23",
-        "-c:a", "aac",
-        "-y",
-        str(output_path),
-    ]
-```
-
-### overlay_video: B-Roll filter_complex
-
-```python
-# Source: FFmpeg overlay filter docs + dev.to/oskarahl verified community pattern
-# setpts delay pattern confirmed correct for B-roll placement
-
-def build_broll_overlay_args(
-    main_path: Path,
-    broll_path: Path,
-    output_path: Path,
-    start_s: float,
-    end_s: float,
-    audio_mode: str = "main_only",  # "main_only" | "mixed" | "replace"
-    secondary_audio_volume: float = 0.3,
-    timeout: int = 3600,
-) -> list[str]:
-    """Build FFmpeg args for B-roll overlay."""
-    # setpts delay so B-roll frame 0 aligns with start_s in the output
-    filter_graph = (
-        f"[1:v]setpts=PTS-STARTPTS+{start_s}/TB[broll_delayed];"
-        f"[0:v][broll_delayed]overlay=enable='between(t,{start_s},{end_s})':x=0:y=0[v_out]"
-    )
-    args = ["-i", str(main_path), "-i", str(broll_path),
-            "-filter_complex", filter_graph,
-            "-map", "[v_out]"]
-
-    if audio_mode == "main_only":
-        args += ["-map", "0:a", "-c:a", "copy"]
-    elif audio_mode == "mixed":
-        # Modify filter_graph to include amix — requires rebuilding
-        # (simplified here; actual impl amends filter_graph string)
-        args += ["-filter_complex",
-                 filter_graph.rstrip("'") + (
-                     f";[0:a][1:a]amix=inputs=2:"
-                     f"weights=1 {secondary_audio_volume}[a_out]"
-                 ),
-                 "-map", "[a_out]"]
-    elif audio_mode == "replace":
-        args += ["-map", "1:a", "-c:a", "aac"]
-
-    args += ["-c:v", "libx264", "-preset", "fast", "-y", str(output_path)]
-    return args
-```
-
-### overlay_video: Picture-in-Picture
-
-```python
-# Source: FFmpeg overlay + scale filter docs; oodlestechnologies.com PiP blog (verified)
-
-def build_pip_overlay_args(
-    main_path: Path,
-    pip_path: Path,
-    output_path: Path,
-    pip_scale: float = 0.25,       # PiP is 25% of main video width
-    position: str = "top_right",   # "top_right" | "top_left" | "bottom_right" | "bottom_left"
-    margin_px: int = 20,
-    audio_mode: str = "mixed",
-    secondary_audio_volume: float = 0.3,
-) -> list[str]:
-    """Build FFmpeg args for Picture-in-Picture overlay."""
-    # Position expressions using FFmpeg overlay filter variables
-    positions = {
-        "top_right":    f"main_w-overlay_w-{margin_px}:{margin_px}",
-        "top_left":     f"{margin_px}:{margin_px}",
-        "bottom_right": f"main_w-overlay_w-{margin_px}:main_h-overlay_h-{margin_px}",
-        "bottom_left":  f"{margin_px}:main_h-overlay_h-{margin_px}",
-    }
-    pos_expr = positions[position]
-    scale_filter = f"scale=iw*{pip_scale}:ih*{pip_scale}"
-
-    filter_complex = (
-        f"[1:v]{scale_filter}[pip_scaled];"
-        f"[0:v][pip_scaled]overlay={pos_expr}[v_out];"
-        f"[0:a][1:a]amix=inputs=2:weights=1 {secondary_audio_volume}[a_out]"
-    )
-    return [
-        "-i", str(main_path),
-        "-i", str(pip_path),
-        "-filter_complex", filter_complex,
-        "-map", "[v_out]",
-        "-map", "[a_out]",
-        "-c:v", "libx264", "-preset", "fast",
-        "-y", str(output_path),
-    ]
-```
-
-### upload_to_platform: YouTube OAuth2 + Resumable Upload
-
-```python
-# Source: developers.google.com/youtube/v3/guides/uploading_a_video (official)
-# + googleapis.github.io/google-api-python-client/docs/oauth-installed.html (official)
-# Requires: google-api-python-client, google-auth-oauthlib (not yet in pyproject.toml)
-
-from pathlib import Path
-import json
-from google.oauth2.credentials import Credentials
-from google.auth.transport.requests import Request
-from google_auth_oauthlib.flow import InstalledAppFlow
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaFileUpload
-
-YOUTUBE_SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
-
-
-def get_youtube_credentials(
-    client_secrets_path: Path,
-    token_path: Path,
-) -> Credentials:
-    """Load stored credentials or run OAuth2 browser flow on first use."""
-    creds = None
-    if token_path.exists():
-        creds = Credentials.from_authorized_user_file(str(token_path), YOUTUBE_SCOPES)
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            # First run: opens browser for user consent
-            flow = InstalledAppFlow.from_client_secrets_file(
-                str(client_secrets_path), YOUTUBE_SCOPES
-            )
-            creds = flow.run_local_server(port=0)
-        # Persist credentials for next run
-        token_path.write_text(creds.to_json())
-    return creds
-
-
-def upload_to_youtube(
-    video_path: Path,
-    title: str,
-    description: str,
-    privacy_status: str = "private",  # "private" | "unlisted" | "public"
-    category_id: str = "22",           # 22 = People & Blogs
-    client_secrets_path: Path = Path("client_secrets.json"),
-    token_path: Path = Path("~/.cache/podcast-pipeline/youtube_token.json"),
-) -> dict:
-    """Upload a video to YouTube using resumable upload. Returns video ID and URL."""
-    creds = get_youtube_credentials(client_secrets_path, token_path.expanduser())
-    youtube = build("youtube", "v3", credentials=creds)
-
-    body = {
-        "snippet": {
-            "title": title,
-            "description": description,
-            "categoryId": category_id,
-        },
-        "status": {
-            "privacyStatus": privacy_status,
-        },
-    }
-
-    # chunksize=-1 sends the entire file in one request (simpler for local files)
-    # Use a positive chunksize (multiple of 256KB) for very large files or slow networks
-    insert_request = youtube.videos().insert(
-        part=",".join(body.keys()),
-        body=body,
-        media_body=MediaFileUpload(str(video_path), chunksize=-1, resumable=True),
-    )
-
-    response = None
-    while response is None:
-        status, response = insert_request.next_chunk()
-
-    video_id = response["id"]
-    return {
-        "video_id": video_id,
-        "url": f"https://www.youtube.com/watch?v={video_id}",
-        "privacy_status": privacy_status,
-    }
-```
-
-### upload_to_platform: Spotify RSS Feed Update
-
-```python
-# Source: feedgen PyPI (pypi.org/project/feedgen/) + Spotify RSS support confirmation
-# Spotify has no upload API — RSS is the only integration path (verified 2026-02-25)
-
-from feedgen.feed import FeedGenerator
-from pathlib import Path
-from datetime import datetime, timezone
-
-
-def update_podcast_rss_feed(
-    feed_path: Path,
-    podcast_title: str,
-    podcast_description: str,
-    podcast_link: str,         # https://yourpodcast.com
-    new_episode_title: str,
-    new_episode_description: str,
-    audio_url: str,            # https://storage.example.com/episode.mp3
-    audio_length_bytes: int,
-    audio_duration_s: int,
-    episode_number: int | None = None,
-) -> None:
-    """Append a new episode to the podcast RSS feed XML file.
-
-    After calling this, push the updated feed_path to its hosting location.
-    Spotify will pick up the new episode automatically (typically within 1 hour).
-    """
-    fg = FeedGenerator()
-    fg.load_extension("podcast")
-
-    # Feed-level metadata
-    fg.id(podcast_link)
-    fg.title(podcast_title)
-    fg.description(podcast_description)
-    fg.link(href=podcast_link, rel="alternate")
-    fg.language("en")
-
-    # New episode entry
-    fe = fg.add_entry()
-    fe.id(audio_url)  # GUID must be unique and stable
-    fe.title(new_episode_title)
-    fe.description(new_episode_description)
-    fe.published(datetime.now(tz=timezone.utc))
-    fe.enclosure(audio_url, str(audio_length_bytes), "audio/mpeg")
-    fe.podcast.itunes_duration(str(audio_duration_s))
-    if episode_number:
-        fe.podcast.itunes_episode(str(episode_number))
-
-    fg.rss_file(str(feed_path), pretty=True)
-```
-
-### upload_to_platform: TikTok File Upload
-
-```python
-# Source: developers.tiktok.com/doc/content-posting-api-reference-upload-video (official)
-# + developers.tiktok.com/doc/content-posting-api-get-started (official)
-# Uses httpx (already in core deps at 0.28.0)
-# Requires user access token with video.publish scope
-
-import httpx
-from pathlib import Path
-
-TIKTOK_API_BASE = "https://open.tiktokapis.com/v2"
-TIKTOK_UPLOAD_BASE = "https://open-upload.tiktokapis.com"
-
-
-def upload_to_tiktok(
-    video_path: Path,
-    title: str,
-    access_token: str,
-    privacy_level: str = "SELF_ONLY",  # "SELF_ONLY" until audit; then "PUBLIC_TO_EVERYONE"
-) -> dict:
-    """Upload a video to TikTok via Content Posting API.
-
-    WARNING: Until the TikTok app passes their audit process, all content
-    will be forced to SELF_ONLY regardless of the privacy_level parameter.
-    Rate limit: 6 requests per minute per access_token.
-    Unaudited limit: 5 uploads per 24 hours per user.
-    """
-    headers = {"Authorization": f"Bearer {access_token}"}
-    video_size = video_path.stat().st_size
-    chunk_size = min(10 * 1024 * 1024, video_size)  # 10MB chunks max
-
-    # Step 1: Initialize upload session
-    init_resp = httpx.post(
-        f"{TIKTOK_API_BASE}/post/publish/video/init/",
-        headers=headers,
-        json={
-            "post_info": {
-                "title": title,
-                "privacy_level": privacy_level,
-                "disable_duet": False,
-                "disable_comment": False,
-                "disable_stitch": False,
-            },
-            "source_info": {
-                "source": "FILE_UPLOAD",
-                "video_size": video_size,
-                "chunk_size": chunk_size,
-                "total_chunk_count": (video_size + chunk_size - 1) // chunk_size,
-            },
-        },
-        timeout=30.0,
-    )
-    init_resp.raise_for_status()
-    data = init_resp.json()["data"]
-    publish_id = data["publish_id"]
-    upload_url = data["upload_url"]
-
-    # Step 2: Upload file chunks via PUT
-    with video_path.open("rb") as f:
-        chunk_index = 0
-        while True:
-            chunk = f.read(chunk_size)
-            if not chunk:
-                break
-            start = chunk_index * chunk_size
-            end = start + len(chunk) - 1
-            httpx.put(
-                upload_url,
-                content=chunk,
-                headers={
-                    "Content-Range": f"bytes {start}-{end}/{video_size}",
-                    "Content-Length": str(len(chunk)),
-                    "Content-Type": "video/mp4",
-                },
-                timeout=300.0,
-            ).raise_for_status()
-            chunk_index += 1
-
-    # Step 3: Return publish_id for status polling
-    return {"publish_id": publish_id, "status": "PROCESSING"}
-```
-
----
-
-## State of the Art (MCP Tools)
-
-| Old Approach | Current Approach | When Changed | Impact |
-|--------------|------------------|--------------|--------|
-| Haar cascade face detection | YuNet (FaceDetectorYN) via OpenCV DNN module | OpenCV 4.5.4 (2021), stable in 4.8+ | YuNet handles profile faces and partial occlusion; Haar cascades miss ~40% of faces in podcast footage |
-| opencv-contrib TrackerCSRT | cv2.TrackerMIL_create() (base OpenCV) | OpenCV 4.5+ (base module reorganization) | TrackerCSRT moved out of base; TrackerMIL is the no-model-file option in base OpenCV |
-| oauth2client (deprecated) | google-auth + google-auth-oauthlib | 2019 (Google deprecated oauth2client) | All Google developer docs now use google-auth; oauth2client raises deprecation warnings |
-| YouTube simple upload | YouTube resumable upload (uploadType=resumable) | 2015, standard since | Required for files >5MB; handles network interruption; exponential backoff built in |
-| Manual RSS XML editing | feedgen library | N/A (RSS still the standard) | feedgen handles namespace declarations, escaping, validation, iTunes/Spotify extensions |
-| TikTok Selenium automation | TikTok Content Posting API (official) | 2022 (API launched) | Official API is more reliable; Selenium/Playwright still needed for unaudited use cases |
-
-**Deprecated/outdated for MCP tools:**
-- `oauth2client`: Deprecated by Google in 2019. All existing code using it should be migrated to `google-auth`.
-- Haar cascade (`haarcascade_frontalface_default.xml`) for podcast face detection: Accurate only for frontal faces. YuNet is superior for all use cases involving real video footage.
-- TikTok Selenium automation as primary approach: TikTok actively detects Selenium. The official Content Posting API is the correct path; Playwright automation is only the fallback for unaudited apps that cannot wait for the audit.
-
----
-
-## Open Questions (MCP Tools)
-
-1. **YuNet Model Versioning and Auto-Download**
-   - What we know: The current model is `face_detection_yunet_2023mar.onnx`. OpenCV zoo is updated periodically.
-   - What's unclear: Whether newer models (2024 or 2025 vintage) are available and whether they break the `FaceDetectorYN` API.
-   - Recommendation: Pin the model filename in config. Download from the raw GitHub URL for the specific commit SHA, not from `main` branch (which may change). Store SHA in config for reproducibility.
-
-2. **sendcmd Performance for Very Long Videos**
-   - What we know: Pass 1 (OpenCV analysis) runs at approximately 5-15x real-time. A 3-hour podcast would take 12-36 minutes to analyze.
-   - What's unclear: Whether FFmpeg's sendcmd file parsing has performance degradation for files with hundreds of thousands of lines (one per frame at 30 FPS over 3 hours = ~324,000 lines).
-   - Recommendation: During implementation, test with a large sendcmd file. If slow, reduce to 1 entry per unique x position change (delta-encode: only write a new sendcmd line when crop_x changes by more than 1px). This reduces a 324,000-line file to potentially a few hundred lines.
-
-3. **TikTok Content Posting API Audit Timeline**
-   - What we know: Unaudited apps are restricted to SELF_ONLY, 5 uploads/day. The audit process is required for public posting.
-   - What's unclear: Typical audit approval timeline. TikTok documentation does not specify SLAs.
-   - Recommendation: Implement the tool with SELF_ONLY as the default and documented limitation. Register the app immediately to start the audit process. Until audit approval, offer the Playwright browser automation fallback as an alternative code path.
-
-4. **Spotify Video Podcast Support via RSS**
-   - What we know: Spotify documented support for video via RSS was mentioned in a January 2026 announcement for the Partner Program, but is limited to partner hosting platforms. Standard RSS only supports audio.
-   - What's unclear: Whether a self-hosted RSS feed with video enclosures is accepted by Spotify for non-partner accounts.
-   - Recommendation: Implement Spotify upload as audio-only RSS for now. For video podcast distribution to Spotify, defer to the YouTube upload (which Spotify also indexes via YouTube partnership) or wait for Spotify's video RSS spec to be publicly documented.
-
-5. **google-api-python-client vs Direct HTTPS for YouTube**
-   - What we know: The `google-api-python-client` library adds ~15MB to the bundle and pulls in several transitive dependencies. Direct HTTPS with `httpx` is technically possible using the raw resumable upload protocol.
-   - What's unclear: Whether the maintenance burden of implementing exponential backoff, chunk retry, and 308-resume-incomplete handling manually is worth the reduced dependency footprint.
-   - Recommendation: Use `google-api-python-client` + `google-auth-oauthlib`. The library handles all edge cases that are painful to implement correctly (chunk retry, 308 resume, exponential backoff). The added dependency weight is acceptable for a tool that is dev/optional anyway.
-
----
-
-## Sources (MCP Tools)
-
-### Primary (HIGH confidence)
-
-- [FFmpeg crop filter commands](https://ayosec.github.io/ffmpeg-filters-docs/8.0/Filters/Video/crop.html) - `x`, `y`, `w`, `h` sendcmd support confirmed in FFmpeg 8.0 docs
-- [FFmpeg sendcmd filter](https://ayosec.github.io/ffmpeg-filters-docs/7.0/Filters/Multimedia/sendcmd.html) - time interval format, TARGET COMMAND ARG syntax
-- [OpenCV DNN Face Detection Tutorial](https://docs.opencv.org/4.x/d0/dd4/tutorial_dnn_face.html) - FaceDetectorYN API, bounding box format [x, y, w, h, landmarks...]
-- [YouTube Data API v3 Uploading a Video](https://developers.google.com/youtube/v3/guides/uploading_a_video) - videos.insert, MediaFileUpload, OAuth2 scope
-- [YouTube Data API v3 Resumable Upload](https://developers.google.com/youtube/v3/guides/using_resumable_upload_protocol) - endpoint, headers, chunk requirements, response codes
-- [TikTok Content Posting API Overview](https://developers.tiktok.com/products/content-posting-api/) - official API existence and capabilities
-- [TikTok Content Posting API Get Started](https://developers.tiktok.com/doc/content-posting-api-get-started) - video.publish scope, audit requirements, SELF_ONLY restriction
-- [TikTok Content Posting API Upload Video](https://developers.tiktok.com/doc/content-posting-api-reference-upload-video) - init endpoint, upload_url, chunk parameters, 1-hour expiry
-- [google-auth-oauthlib InstalledAppFlow](https://googleapis.github.io/google-api-python-client/docs/oauth-installed.html) - from_client_secrets_file, run_local_server, credential persistence
-- Installed package verification: `opencv-python-headless 4.13.0` — `FaceDetectorYN`, `TrackerMIL_create`, `TrackerDaSiamRPN`, `TrackerNano`, `TrackerVit` confirmed present via direct Python import inspection
-
-### Secondary (MEDIUM confidence)
-
-- [Transloadit YuNet Real-time face detection tutorial](https://transloadit.com/devtips/real-time-face-detection-with-opencv-s-yunet/) - FaceDetectorYN.create() code pattern, face bounding box extraction, score threshold defaults
-- [FFmpeg overlay filter B-roll timing](https://dev.to/oskarahl/ffmpeg-overlay-a-video-on-a-video-after-x-seconds-4fc9) - `setpts=PTS-STARTPTS+N/TB` pattern for B-roll delay, `enable='between(t,start,end)'`
-- [Spotify developer community - no upload API](https://community.spotify.com/t5/Spotify-for-Developers/Request-for-Access-to-Upload-Podcasts-to-Spotify-from-External/td-p/7044523) - confirmed Spotify has no public upload API (multiple threads, consistent)
-- [feedgen PyPI](https://pypi.org/project/feedgen/) - podcast RSS generation, Spotify delivery spec tags
-- [motion-tracking-video-crop GitHub](https://github.com/raspi/motion-tracking-video-crop) - smoothing algorithm pattern (deadzone, EMA), sendcmd generation approach
-- [YuNet performance benchmarks](https://www.researchgate.net/publication/370122920_YuNet_A_Tiny_Millisecond-level_Face_Detector) - 1.6ms at 320x320, 75k parameters, CPU performance data
-
-### Tertiary (LOW confidence - needs validation)
-
-- YuNet 30-50 FPS CPU performance claim for 1080p — sourced from multiple community articles but not benchmarked on this project's specific hardware (WSL2 + i7). Actual throughput should be measured during implementation.
-- sendcmd file scale with hundreds of thousands of lines — no official FFmpeg documentation on performance limits. The delta-encoding mitigation is a precaution, not a confirmed requirement.
-- TikTok audit approval timeline — not documented by TikTok; based on community reports of weeks to months.
-- Spotify video RSS acceptance — January 2026 Spotify announcement was ambiguous about self-hosted RSS feeds vs. partner-only. Needs direct testing with a Spotify for Podcasters account.
-
----
-
-## Metadata (MCP Tools)
-
-**Confidence breakdown:**
-- smart_crop_subject (OpenCV + sendcmd): MEDIUM-HIGH — OpenCV API verified against installed package; sendcmd + crop filter commands verified against FFmpeg 8.0 official docs; smoothing algorithm is standard signal processing; performance estimates from published benchmarks
-- overlay_video (filter_complex): HIGH — FFmpeg overlay, setpts, amix filters are stable, well-documented; `enable='between(t,S,E)'` pattern is official FFmpeg syntax
-- upload_to_platform — YouTube: HIGH — Official Google developer documentation verified; all code patterns from official Python quickstart
-- upload_to_platform — Spotify: HIGH (for the "no API" finding) — Multiple official sources confirm no upload API exists; RSS approach is official guidance
-- upload_to_platform — TikTok: MEDIUM — Official TikTok developer documentation verified for API existence and scope; audit restrictions confirmed; full upload flow needs end-to-end testing with a registered app
-- upload_to_platform — Playwright fallback: MEDIUM — Playwright Python library existence confirmed; TikTok-specific headless detection is a known community concern; needs testing
-
-**Research date:** 2026-02-25
-**Valid until:** 2026-03-25 (FFmpeg filter syntax: stable, valid indefinitely; Platform APIs: 30 days, TikTok API changes frequently; OpenCV: stable until major version)
