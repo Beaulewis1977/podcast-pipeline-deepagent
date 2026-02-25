@@ -208,7 +208,7 @@ def test_normalize_loudness_positive_lufs_rejected() -> None:
         )
 
 
-def test_normalize_loudness_zero_lufs_rejected() -> None:
+def test_normalize_loudness_slightly_positive_lufs_rejected() -> None:
     # le=0.0 means 0.0 is the boundary; positive values like +0.1 must fail.
     with pytest.raises(ValidationError):
         NormalizeLoudnessRequest(
@@ -341,7 +341,7 @@ def test_stream_info_audio_defaults() -> None:
 
 
 # ---------------------------------------------------------------------------
-# detect_hardware_encoders — mock subprocess.run
+# detect_hardware_encoders — mock run_ffmpeg
 # ---------------------------------------------------------------------------
 
 _ENCODER_OUTPUT_NVENC = (
@@ -359,10 +359,9 @@ _ENCODER_OUTPUT_SOFTWARE_ONLY = (
 
 
 def test_detect_hardware_encoders_nvenc_detected() -> None:
-    cp = MagicMock()
-    cp.stdout = _ENCODER_OUTPUT_NVENC
+    cp = _completed(stdout=_ENCODER_OUTPUT_NVENC)
     with (
-        patch("podcast_pipeline.utils.ffmpeg_toolkit.subprocess.run", return_value=cp),
+        patch("podcast_pipeline.utils.ffmpeg_toolkit.run_ffmpeg", return_value=cp),
         patch("podcast_pipeline.utils.ffmpeg_toolkit._HW_ENCODER_CACHE", None),
     ):
         info = detect_hardware_encoders(use_cache=False)
@@ -375,10 +374,9 @@ def test_detect_hardware_encoders_nvenc_detected() -> None:
 
 
 def test_detect_hardware_encoders_software_only() -> None:
-    cp = MagicMock()
-    cp.stdout = _ENCODER_OUTPUT_SOFTWARE_ONLY
+    cp = _completed(stdout=_ENCODER_OUTPUT_SOFTWARE_ONLY)
     with (
-        patch("podcast_pipeline.utils.ffmpeg_toolkit.subprocess.run", return_value=cp),
+        patch("podcast_pipeline.utils.ffmpeg_toolkit.run_ffmpeg", return_value=cp),
         patch("podcast_pipeline.utils.ffmpeg_toolkit._HW_ENCODER_CACHE", None),
     ):
         info = detect_hardware_encoders(use_cache=False)
@@ -393,8 +391,8 @@ def test_detect_hardware_encoders_software_only() -> None:
 def test_detect_hardware_encoders_ffmpeg_not_found_returns_defaults() -> None:
     with (
         patch(
-            "podcast_pipeline.utils.ffmpeg_toolkit.subprocess.run",
-            side_effect=FileNotFoundError,
+            "podcast_pipeline.utils.ffmpeg_toolkit.run_ffmpeg",
+            side_effect=FFmpegError("FFmpeg not found"),
         ),
         patch("podcast_pipeline.utils.ffmpeg_toolkit._HW_ENCODER_CACHE", None),
     ):
@@ -407,8 +405,8 @@ def test_detect_hardware_encoders_ffmpeg_not_found_returns_defaults() -> None:
 def test_detect_hardware_encoders_timeout_returns_defaults() -> None:
     with (
         patch(
-            "podcast_pipeline.utils.ffmpeg_toolkit.subprocess.run",
-            side_effect=subprocess.TimeoutExpired(cmd="ffmpeg", timeout=15),
+            "podcast_pipeline.utils.ffmpeg_toolkit.run_ffmpeg",
+            side_effect=FFmpegError("FFmpeg timed out"),
         ),
         patch("podcast_pipeline.utils.ffmpeg_toolkit._HW_ENCODER_CACHE", None),
     ):

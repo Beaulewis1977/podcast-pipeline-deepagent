@@ -18,8 +18,8 @@ from __future__ import annotations
 
 import contextlib
 import re
-import subprocess
 from enum import Enum
+from fractions import Fraction
 from pathlib import Path
 
 from pydantic import BaseModel, Field, field_validator
@@ -195,13 +195,6 @@ class ExtractFrameRequest(BaseModel):
     timestamp_s: float = Field(ge=0.0)
     output_path: Path
 
-    @field_validator("timestamp_s")
-    @classmethod
-    def timestamp_must_be_non_negative(cls, v: float) -> float:
-        if v < 0:
-            raise ValueError("timestamp_s must be >= 0")
-        return v
-
 
 class ExtractFrameResult(BaseModel):
     """Output of extract_frame."""
@@ -376,12 +369,6 @@ class TrimSegmentRequest(BaseModel):
     end_s: float | None = None
     copy_codec: bool = True
 
-    @field_validator("end_s")
-    @classmethod
-    def end_must_be_after_start(cls, v: float | None) -> float | None:
-        # Cross-field validation handled in the operation; model stores value
-        return v
-
 
 class TrimSegmentResult(BaseModel):
     """Output of trim_segment."""
@@ -399,13 +386,6 @@ class ConcatSegmentsRequest(BaseModel):
     transition: TransitionType = TransitionType.NONE
     transition_duration_s: float = Field(default=0.5, ge=0.0)
     timeout: int = Field(default=3600, ge=1)
-
-    @field_validator("segments")
-    @classmethod
-    def segments_must_not_be_empty(cls, v: list[Path]) -> list[Path]:
-        if not v:
-            raise ValueError("segments list must not be empty")
-        return v
 
 
 class ConcatSegmentsResult(BaseModel):
@@ -477,13 +457,6 @@ class PackageHlsRequest(BaseModel):
     variants: list[HlsVariant] = Field(min_length=1)
     timeout: int = Field(default=7200, ge=1)
 
-    @field_validator("variants")
-    @classmethod
-    def variants_must_not_be_empty(cls, v: list[HlsVariant]) -> list[HlsVariant]:
-        if not v:
-            raise ValueError("variants must not be empty")
-        return v
-
 
 class PackageHlsResult(BaseModel):
     """Output of package_hls."""
@@ -503,15 +476,9 @@ _HW_ENCODER_CACHE: HardwareEncoderInfo | None = None
 def _probe_encoders() -> list[str]:
     """Return list of available ffmpeg encoder names."""
     try:
-        result = subprocess.run(
-            ["ffmpeg", "-hide_banner", "-encoders"],  # noqa: S607
-            capture_output=True,
-            text=True,
-            timeout=15,
-            check=False,
-        )
+        result = run_ffmpeg(["-encoders"], timeout=15, check=False)
         return result.stdout.splitlines()
-    except (FileNotFoundError, subprocess.TimeoutExpired):
+    except FFmpegError:
         return []
 
 
@@ -632,8 +599,6 @@ def probe_media(path: Path) -> ProbeMediaResult:
         # FPS from r_frame_rate
         if s.get("codec_type") == "video" and s.get("r_frame_rate"):
             try:
-                from fractions import Fraction
-
                 stream.fps = float(Fraction(s["r_frame_rate"]))
             except (ValueError, ZeroDivisionError):
                 stream.fps = None
@@ -813,9 +778,18 @@ def normalize_loudness(request: NormalizeLoudnessRequest) -> NormalizeLoudnessRe
     ]
     try:
         result = run_ffmpeg(measure_args, timeout=request.timeout, check=False)
-        stderr_text = result.stderr
     except FFmpegError as exc:
         raise _wrap_ffmpeg_error(exc, operation, measure_args) from exc
+
+    if result.returncode != 0:
+        _pass1_err = FFmpegError(
+            f"FFmpeg pass-1 (loudnorm measure) failed with return code {result.returncode}",
+            stderr=result.stderr,
+            returncode=result.returncode,
+        )
+        raise _wrap_ffmpeg_error(_pass1_err, operation, measure_args) from _pass1_err
+
+    stderr_text = result.stderr
 
     # Parse measured_I from loudnorm JSON in stderr
     input_lufs = 0.0
@@ -891,9 +865,19 @@ def burn_captions(request: BurnCaptionsRequest) -> BurnCaptionsResult:
     ass_path_str = str(request.ass_path).replace("\\", "/").replace(":", "\\:")
     vf = f"ass={ass_path_str!r}"
     if request.force_style:
-        # Inject as force_style parameter — sanitize by stripping single-quotes
-        sanitized_style = request.force_style.replace("'", "")
-        vf = f"ass={ass_path_str!r}:force_style={sanitized_style!r}"
+        # Validate force_style: only permit comma-separated Key=Value pairs
+        # with safe characters to prevent filtergraph injection
+        _FORCE_STYLE_RE = re.compile(
+            r"^[A-Za-z0-9_.-]+=[ A-Za-z0-9.:_#-]+"
+            r"(?:,[A-Za-z0-9_.-]+=[ A-Za-z0-9.:_#-]+)*$"
+        )
+        if not _FORCE_STYLE_RE.match(request.force_style):
+            raise FFmpegToolkitError(
+                "force_style contains invalid characters; "
+                "expected comma-separated Key=Value pairs with safe characters",
+                operation=operation,
+            )
+        vf = f"ass={ass_path_str!r}:force_style={request.force_style!r}"
 
     args = [
         "-i",
@@ -1167,7 +1151,13 @@ def _concat_xfade(request: ConcatSegmentsRequest) -> None:
         input_args.extend(["-i", str(seg)])
 
     offsets = _compute_xfade_offsets(request.segments, d)
-    filters = _build_xfade_filters(n, d, offsets)
+    # Map TransitionType enum to xfade transition name
+    _TRANSITION_MAP: dict[TransitionType, str] = {
+        TransitionType.CROSSFADE: "fade",
+        TransitionType.DISSOLVE: "dissolve",
+    }
+    xfade_name = _TRANSITION_MAP.get(request.transition, "fade")
+    filters = _build_xfade_filters(n, d, offsets, transition=xfade_name)
     filter_complex = ";".join(filters)
     args = [
         *input_args,
@@ -1200,14 +1190,16 @@ def _compute_xfade_offsets(segments: list[Path], transition_d: float) -> list[fl
     return offsets
 
 
-def _build_xfade_filters(n: int, d: float, offsets: list[float]) -> list[str]:
+def _build_xfade_filters(
+    n: int, d: float, offsets: list[float], transition: str = "fade"
+) -> list[str]:
     """Build xfade + audio concat filter chain."""
     filters: list[str] = []
     prev_label = "[0:v]"
     for i in range(1, n):
         out_label = f"[vout{i}]" if i < n - 1 else "[voutfinal]"
         filters.append(
-            f"{prev_label}[{i}:v]xfade=transition=fade:duration={d}"
+            f"{prev_label}[{i}:v]xfade=transition={transition}:duration={d}"
             f":offset={offsets[i - 1]}{out_label}"
         )
         prev_label = out_label
@@ -1268,11 +1260,19 @@ def mix_audio(request: MixAudioRequest) -> MixAudioResult:
     fade_in = request.fade_in_s
     fade_out = request.fade_out_s
 
+    # Probe music duration for fade-out positioning
+    music_duration = 0.0
+    if fade_out > 0:
+        with contextlib.suppress(FFmpegError):
+            music_probe = run_ffprobe(request.music_path)
+            music_duration = float(music_probe.get("format", {}).get("duration", 0))
+
     music_chain = f"[1:a]volume={vol_db}dB"
     if fade_in > 0:
         music_chain += f",afade=t=in:st=0:d={fade_in}"
     if fade_out > 0:
-        music_chain += f",afade=t=out:st=0:d={fade_out}"
+        fade_start = max(0.0, music_duration - fade_out)
+        music_chain += f",afade=t=out:st={fade_start}:d={fade_out}"
 
     if request.duck_enabled:
         # sidechaincompress: speech drives the gain reduction on music
@@ -1427,7 +1427,7 @@ def _correlate_audio(ref_wav: Path, ext_wav: Path, sample_rate: int) -> tuple[fl
     try:
         ref_data, _ = sf.read(str(ref_wav), dtype="float32")
         ext_data, _ = sf.read(str(ext_wav), dtype="float32")
-    except Exception as exc:
+    except (OSError, sf.SoundFileError) as exc:
         raise FFmpegToolkitError(
             f"Failed to read audio for correlation: {exc}",
             operation="_correlate_audio",
@@ -1445,14 +1445,16 @@ def _correlate_audio(ref_wav: Path, ext_wav: Path, sample_rate: int) -> tuple[fl
         from scipy.signal import correlate
 
         corr = correlate(ref_norm, ext_norm, mode="full")
+        lag_ref_len = len(ext_norm)
     except ImportError:
-        # scipy not available — fall back to numpy correlate
-        corr = np.correlate(
-            ref_norm[: min(len(ref_norm), 4096)], ext_norm[: min(len(ext_norm), 4096)], mode="full"
-        )
+        # scipy not available — fall back to numpy correlate on truncated slices
+        rlen = min(len(ref_norm), 4096)
+        elen = min(len(ext_norm), 4096)
+        corr = np.correlate(ref_norm[:rlen], ext_norm[:elen], mode="full")
+        lag_ref_len = elen
 
     # argmax gives sample lag
-    lag_samples = int(np.argmax(np.abs(corr))) - (len(ext_norm) - 1)
+    lag_samples = int(np.argmax(np.abs(corr))) - (lag_ref_len - 1)
     offset_ms = (lag_samples / sample_rate) * 1000.0
 
     # Confidence: normalized peak correlation value
