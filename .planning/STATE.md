@@ -221,6 +221,8 @@ Progress: [███████████████████████
 | TAURI_OWNS_SIDECAR is static AtomicBool (not in SidecarState) | Process-global ownership flag; avoids async mutex complexity for a boolean that is meaningless per-instance | 2026-02-25 |
 | PyInstaller --onedir (not --onefile) for backend sidecar | Avoids Python stdlib extraction overhead on startup; _internal/ dir bundled via bundle.resources | 2026-02-25 |
 | TailwindCSS v4 CSS-first config (no tailwind.config.js) | v4 uses @import "tailwindcss" + @theme block in CSS; eliminates separate config file | 2026-02-25 |
+| Tauri v2 DragDropEvent types are enter/over/drop/leave (not hover/cancel) | Actual @tauri-apps/api/webview type definitions use enter/over not hover; cancel does not exist in v2 API | 2026-02-25 |
+| useDeleteJob invalidates ['jobs'] AND removes ['jobs', jobId] detail cache | Avoids stale detail cache after deletion; removeQueries prevents phantom detail panel render | 2026-02-25 |
 | shadcn/ui installed manually (no npx shadcn init) | Interactive init not suitable for automated execution; manual component files give full control | 2026-02-25 |
 | @/* path alias added to both tsconfig.json and vite.config.ts | TypeScript resolution alone insufficient; Vite needs alias for runtime module resolution | 2026-02-25 |
 | tauri.conf.json bundle.resources for _internal/**/* | Tauri externalBin only bundles single files; _internal/ Python deps silently dropped without resources entry | 2026-02-25 |
@@ -383,6 +385,7 @@ Progress: [███████████████████████
 - 2026-02-25: Completed 10-01-PLAN.md (service/cli.py PyInstaller entry point with BACKEND_READY stdout marker; CORSMiddleware with explicit Tauri/dev origins in app.py; TAURI_OWNS_SIDECAR + backend_is_healthy() coexistence check in lib.rs)
 - 2026-02-25: Completed 10-02-PLAN.md (CI: --onefile→--onedir + full directory artifact upload; Tauri window 1440x900, minWidth 1024, CSP+media permissions, externalBin directory path, bundle.resources for _internal/**; prepare-sidecars.mjs onedir detection; TailwindCSS v4, TanStack Query v5, Zustand v5, wavesurfer.js v7, shadcn/ui components; pnpm build passes)
 - 2026-02-25: Completed 10-03-PLAN.md (Zustand uiStore+sidecarStore; TanStack Query useJobs/useJobDetail/useSidecarReady/useSystemStatus replacing manual setInterval; AppShell/Sidebar/Header layout with lucide-react icons and Tailwind v4 design tokens; pnpm build passes 80 modules)
+- 2026-02-25: Completed 10-04-PLAN.md (useJobMutations TanStack Query hooks: createJob/runJob/resumeJob/deleteJob; IngestionView with Tauri v2 native drag-drop via onDragDropEvent + system readiness banner + pipeline stage progress bars; TranscriptView with filler word toggle + speaker labels + stats footer; pnpm build passes)
 - 2026-02-25: Completed 10-05-PLAN.md (AudioSyncView with wavesurfer.js v7 waveform + convertFileSrc audio loading + sync offset slider; BrandingView with brand profile/caption style + 9 export platform targets + thumbnail/sound kit settings; pnpm build passes)
 
 ## Session Continuity
