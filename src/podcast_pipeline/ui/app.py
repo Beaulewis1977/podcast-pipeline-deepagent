@@ -9,6 +9,7 @@ directory on the local machine.
 
 import contextlib
 import json
+import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from itertools import pairwise
@@ -276,6 +277,18 @@ def _safe_asset_filename(raw_name: str) -> str:
     if not safe or safe in {".", ".."}:
         raise ValueError(f"Invalid upload filename: {raw_name!r}")
     return safe
+
+
+def _unique_asset_path(assets_dir: Path, raw_name: str) -> Path:
+    """Return a non-colliding file path for an uploaded asset.
+
+    Appends a short UUID suffix to the filename stem so that repeated uploads
+    with the same name do not silently overwrite existing assets.
+    """
+    safe = _safe_asset_filename(raw_name)
+    stem = Path(safe).stem
+    suffix = Path(safe).suffix
+    return assets_dir / f"{stem}_{uuid.uuid4().hex[:8]}{suffix}"
 
 
 def _read_metadata_json(path: Path) -> dict[str, Any] | None:
@@ -2393,7 +2406,7 @@ def _render_brand_studio_create_form(branding_dir: Path) -> None:
         )
         new_logo_path_val = ""
         if new_logo_upload is not None:
-            dest = assets_dir / _safe_asset_filename(new_logo_upload.name)
+            dest = _unique_asset_path(assets_dir, new_logo_upload.name)
             dest.write_bytes(new_logo_upload.getvalue())
             new_logo_path_val = str(dest)
         new_logo_path = st.text_input(
@@ -2426,7 +2439,7 @@ def _render_brand_studio_create_form(branding_dir: Path) -> None:
         )
         new_font_path_val = ""
         if new_font_upload is not None:
-            dest = assets_dir / _safe_asset_filename(new_font_upload.name)
+            dest = _unique_asset_path(assets_dir, new_font_upload.name)
             dest.write_bytes(new_font_upload.getvalue())
             new_font_path_val = str(dest)
         new_font_path = st.text_input(
@@ -2515,7 +2528,7 @@ def _render_brand_studio_create_form(branding_dir: Path) -> None:
         )
         new_intro_val = ""
         if new_intro_upload is not None:
-            dest = assets_dir / _safe_asset_filename(new_intro_upload.name)
+            dest = _unique_asset_path(assets_dir, new_intro_upload.name)
             dest.write_bytes(new_intro_upload.getvalue())
             new_intro_val = str(dest)
         new_intro_sound = st.text_input(
@@ -2531,7 +2544,7 @@ def _render_brand_studio_create_form(branding_dir: Path) -> None:
         )
         new_trans_val = ""
         if new_trans_upload is not None:
-            dest = assets_dir / _safe_asset_filename(new_trans_upload.name)
+            dest = _unique_asset_path(assets_dir, new_trans_upload.name)
             dest.write_bytes(new_trans_upload.getvalue())
             new_trans_val = str(dest)
         new_transition_sound = st.text_input(
@@ -2547,7 +2560,7 @@ def _render_brand_studio_create_form(branding_dir: Path) -> None:
         )
         new_outro_val = ""
         if new_outro_upload is not None:
-            dest = assets_dir / _safe_asset_filename(new_outro_upload.name)
+            dest = _unique_asset_path(assets_dir, new_outro_upload.name)
             dest.write_bytes(new_outro_upload.getvalue())
             new_outro_val = str(dest)
         new_outro_sound = st.text_input(
@@ -2609,7 +2622,9 @@ def _render_brand_studio_create_form(branding_dir: Path) -> None:
 
 def _render_brand_studio_editor(profile: BrandingProfile, branding_dir: Path) -> None:
     """Render the full profile editor for an existing branding profile."""
-    st.markdown(f"#### Editing: **{profile.profile_name}**")
+    # Namespace all widget keys by profile name to prevent state leaking between profiles.
+    pk = profile.profile_name
+    st.markdown(f"#### Editing: **{pk}**")
 
     # ── Brand Voice ─────────────────────────────────────────────────────────
     with st.expander("Brand Voice", expanded=True):
@@ -2618,7 +2633,7 @@ def _render_brand_studio_editor(profile: BrandingProfile, branding_dir: Path) ->
             value=profile.brand_voice,
             height=150,
             max_chars=2000,
-            key="brand_studio_voice",
+            key=f"brand_studio_{pk}_voice",
             help="Creative persona and tone instructions injected into AI prompts.",
         )
         st.caption(f"{len(brand_voice)}/2000 characters")
@@ -2632,11 +2647,11 @@ def _render_brand_studio_editor(profile: BrandingProfile, branding_dir: Path) ->
         logo_upload = st.file_uploader(
             "Upload Logo",
             type=["png", "svg", "jpg", "jpeg"],
-            key="brand_studio_logo_upload",
+            key=f"brand_studio_{pk}_logo_upload",
             help="Upload a logo file. The path field below will update automatically.",
         )
         if logo_upload is not None:
-            dest = assets_dir / _safe_asset_filename(logo_upload.name)
+            dest = _unique_asset_path(assets_dir, logo_upload.name)
             dest.write_bytes(logo_upload.getvalue())
             logo_path_default = str(dest)
         else:
@@ -2645,7 +2660,7 @@ def _render_brand_studio_editor(profile: BrandingProfile, branding_dir: Path) ->
         logo_path = st.text_input(
             "Logo Path",
             value=logo_path_default,
-            key="brand_studio_logo",
+            key=f"brand_studio_{pk}_logo",
             help="Path to logo image file (PNG/SVG). Leave empty for no logo.",
         )
         logo_placement = st.selectbox(
@@ -2657,7 +2672,7 @@ def _render_brand_studio_editor(profile: BrandingProfile, branding_dir: Path) ->
                 in {"top_left", "top_right", "bottom_left", "bottom_right", "center"}
                 else "top_right"
             ),
-            key="brand_studio_logo_placement",
+            key=f"brand_studio_{pk}_logo_placement",
         )
         logo_opacity = st.slider(
             "Logo Opacity",
@@ -2665,17 +2680,17 @@ def _render_brand_studio_editor(profile: BrandingProfile, branding_dir: Path) ->
             max_value=1.0,
             value=profile.logo_opacity,
             step=0.05,
-            key="brand_studio_logo_opacity",
+            key=f"brand_studio_{pk}_logo_opacity",
         )
 
         font_upload = st.file_uploader(
             "Upload Font",
             type=["ttf", "otf", "woff", "woff2"],
-            key="brand_studio_font_upload",
+            key=f"brand_studio_{pk}_font_upload",
             help="Upload a font file for captions. The path field below will update automatically.",
         )
         if font_upload is not None:
-            dest = assets_dir / _safe_asset_filename(font_upload.name)
+            dest = _unique_asset_path(assets_dir, font_upload.name)
             dest.write_bytes(font_upload.getvalue())
             font_path_default = str(dest)
         else:
@@ -2684,7 +2699,7 @@ def _render_brand_studio_editor(profile: BrandingProfile, branding_dir: Path) ->
         font_path = st.text_input(
             "Font Path",
             value=font_path_default,
-            key="brand_studio_font",
+            key=f"brand_studio_{pk}_font",
             help="Path to custom font file (TTF/OTF). Leave empty for default.",
         )
 
@@ -2695,14 +2710,14 @@ def _render_brand_studio_editor(profile: BrandingProfile, branding_dir: Path) ->
             caption_color = st.color_picker(
                 "Caption Color",
                 value=_hex_to_6digit(profile.caption_style.color),
-                key="brand_studio_caption_color",
+                key=f"brand_studio_{pk}_caption_color",
                 help="Pick caption text color.",
             )
         with cap_col2:
             highlight_color = st.color_picker(
                 "Highlight Color",
                 value=_hex_to_6digit(profile.highlight_color),
-                key="brand_studio_highlight_color",
+                key=f"brand_studio_{pk}_highlight_color",
                 help="Accent color for highlighted words.",
             )
         caption_size = st.slider(
@@ -2710,31 +2725,31 @@ def _render_brand_studio_editor(profile: BrandingProfile, branding_dir: Path) ->
             min_value=8,
             max_value=256,
             value=profile.caption_style.size,
-            key="brand_studio_caption_size",
+            key=f"brand_studio_{pk}_caption_size",
         )
         style_col1, style_col2, style_col3 = st.columns(3)
         with style_col1:
             caption_shadow = st.checkbox(
                 "Shadow",
                 value=profile.caption_style.shadow,
-                key="brand_studio_caption_shadow",
+                key=f"brand_studio_{pk}_caption_shadow",
             )
         with style_col2:
             caption_bold = st.checkbox(
                 "Bold",
                 value=profile.caption_style.bold,
-                key="brand_studio_caption_bold",
+                key=f"brand_studio_{pk}_caption_bold",
             )
         with style_col3:
             caption_italic = st.checkbox(
                 "Italic",
                 value=profile.caption_style.italic,
-                key="brand_studio_caption_italic",
+                key=f"brand_studio_{pk}_caption_italic",
             )
         caption_font = st.text_input(
             "Caption Font Family",
             value=profile.caption_style.font,
-            key="brand_studio_caption_font",
+            key=f"brand_studio_{pk}_caption_font",
             help="Font family name for captions (uses uploaded font when set). Leave empty for default.",
         )
         # Preview swatch
@@ -2755,7 +2770,7 @@ def _render_brand_studio_editor(profile: BrandingProfile, branding_dir: Path) ->
             thumb_border_color = st.color_picker(
                 "Border Color",
                 value=_hex_to_6digit(profile.thumbnail_border.color),
-                key="brand_studio_thumb_border_color",
+                key=f"brand_studio_{pk}_thumb_border_color",
             )
         with tb_col2:
             thumb_border_width = st.slider(
@@ -2763,13 +2778,13 @@ def _render_brand_studio_editor(profile: BrandingProfile, branding_dir: Path) ->
                 min_value=0,
                 max_value=200,
                 value=profile.thumbnail_border.width,
-                key="brand_studio_thumb_border_width",
+                key=f"brand_studio_{pk}_thumb_border_width",
             )
 
         bg_padding = st.text_input(
             "Background Padding",
             value=profile.bg_padding,
-            key="brand_studio_bg_padding",
+            key=f"brand_studio_{pk}_bg_padding",
             help="CSS-style padding for background (e.g. '5%', '20px').",
         )
 
@@ -2781,10 +2796,10 @@ def _render_brand_studio_editor(profile: BrandingProfile, branding_dir: Path) ->
         intro_upload = st.file_uploader(
             "Upload Intro Stinger",
             type=["wav", "flac", "mp3"],
-            key="brand_studio_intro_upload",
+            key=f"brand_studio_{pk}_intro_upload",
         )
         if intro_upload is not None:
-            dest = assets_dir / _safe_asset_filename(intro_upload.name)
+            dest = _unique_asset_path(assets_dir, intro_upload.name)
             dest.write_bytes(intro_upload.getvalue())
             intro_default = str(dest)
         else:
@@ -2792,7 +2807,7 @@ def _render_brand_studio_editor(profile: BrandingProfile, branding_dir: Path) ->
         intro_sound = st.text_input(
             "Intro Stinger Path",
             value=intro_default,
-            key="brand_studio_intro_sound",
+            key=f"brand_studio_{pk}_intro_sound",
             help="Path to intro audio file (WAV/FLAC/MP3).",
         )
 
@@ -2800,10 +2815,10 @@ def _render_brand_studio_editor(profile: BrandingProfile, branding_dir: Path) ->
         transition_upload = st.file_uploader(
             "Upload Transition Sound",
             type=["wav", "flac", "mp3"],
-            key="brand_studio_transition_upload",
+            key=f"brand_studio_{pk}_transition_upload",
         )
         if transition_upload is not None:
-            dest = assets_dir / _safe_asset_filename(transition_upload.name)
+            dest = _unique_asset_path(assets_dir, transition_upload.name)
             dest.write_bytes(transition_upload.getvalue())
             transition_default = str(dest)
         else:
@@ -2811,7 +2826,7 @@ def _render_brand_studio_editor(profile: BrandingProfile, branding_dir: Path) ->
         transition_sound = st.text_input(
             "Transition Sound Path",
             value=transition_default,
-            key="brand_studio_transition_sound",
+            key=f"brand_studio_{pk}_transition_sound",
             help="Path to transition whoosh audio file.",
         )
 
@@ -2819,10 +2834,10 @@ def _render_brand_studio_editor(profile: BrandingProfile, branding_dir: Path) ->
         outro_upload = st.file_uploader(
             "Upload Outro Stinger",
             type=["wav", "flac", "mp3"],
-            key="brand_studio_outro_upload",
+            key=f"brand_studio_{pk}_outro_upload",
         )
         if outro_upload is not None:
-            dest = assets_dir / _safe_asset_filename(outro_upload.name)
+            dest = _unique_asset_path(assets_dir, outro_upload.name)
             dest.write_bytes(outro_upload.getvalue())
             outro_default = str(dest)
         else:
@@ -2830,7 +2845,7 @@ def _render_brand_studio_editor(profile: BrandingProfile, branding_dir: Path) ->
         outro_sound = st.text_input(
             "Outro Stinger Path",
             value=outro_default,
-            key="brand_studio_outro_sound",
+            key=f"brand_studio_{pk}_outro_sound",
             help="Path to outro theme audio file.",
         )
 
@@ -2968,7 +2983,7 @@ def _render_brand_studio_editor(profile: BrandingProfile, branding_dir: Path) ->
     action_col1, action_col2, action_col3, _action_col4 = st.columns([1, 1, 1, 2])
 
     with action_col1:
-        if st.button("Save Profile", key="brand_studio_save"):
+        if st.button("Save Profile", key=f"brand_studio_{pk}_save"):
             try:
                 # Collect platform overrides from session_state
                 raw_overrides: dict[str, Any] = st.session_state.get(
@@ -3031,7 +3046,7 @@ def _render_brand_studio_editor(profile: BrandingProfile, branding_dir: Path) ->
                 st.error(f"Failed to save profile: {exc}")
 
     with action_col2:
-        if st.button("Delete Profile", key="brand_studio_delete"):
+        if st.button("Delete Profile", key=f"brand_studio_{pk}_delete"):
             try:
                 deleted = delete_profile(profile.profile_name, branding_dir)
                 if deleted:
@@ -3043,7 +3058,7 @@ def _render_brand_studio_editor(profile: BrandingProfile, branding_dir: Path) ->
                 st.error(f"Failed to delete profile: {exc}")
 
     with action_col3:
-        if st.button("Set as Active", key="brand_studio_activate"):
+        if st.button("Set as Active", key=f"brand_studio_{pk}_activate"):
             _set_active_branding_profile(profile.profile_name)
             st.success(f"'{profile.profile_name}' set as active branding profile.")
 

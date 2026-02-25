@@ -713,10 +713,18 @@ def transcode(request: TranscodeRequest) -> TranscodeResult:
     else:
         preset_args = ["-preset", request.quality_preset.value]
 
-    # Build AV1-specific args
+    # Build AV1-specific args — must check the resolved encoder, not request.codec,
+    # because _select_video_encoder may fall back from libsvtav1 to libx265.
     av1_args: list[str] = []
-    if request.codec == VideoCodec.AV1 and request.film_grain > 0:
-        av1_args = ["-svtav1-params", f"film-grain={request.film_grain}"]
+    if request.film_grain > 0:
+        if encoder == "libsvtav1":
+            av1_args = ["-svtav1-params", f"film-grain={request.film_grain}"]
+        else:
+            raise FFmpegToolkitError(
+                f"film_grain requires libsvtav1 encoder but resolved to {encoder} "
+                "(SVT-AV1 unavailable on this build)",
+                operation=operation,
+            )
 
     args = [
         "-i",
@@ -1529,13 +1537,13 @@ def package_hls(request: PackageHlsRequest) -> PackageHlsResult:
                 f"[vout{i}]",
                 "-map",
                 "0:a?",
-                f"-c:v:{i}",
+                "-c:v",
                 "libx264",
-                f"-b:v:{i}",
+                "-b:v",
                 f"{variant.bitrate_kbps}k",
-                f"-c:a:{i}",
+                "-c:a",
                 "aac",
-                f"-b:a:{i}",
+                "-b:a",
                 f"{variant.audio_bitrate_kbps}k",
                 "-f",
                 "hls",

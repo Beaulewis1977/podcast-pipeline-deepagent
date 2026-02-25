@@ -2019,13 +2019,14 @@ class RenderStage(Stage):
 
         # Compliance validation runs AFTER caption burn-in so it checks the
         # final deliverable (not an intermediate that _burn_captions re-encodes).
-        # When encoder fallback changed pix_fmt (e.g. p010le -> yuv420p10le),
+        # When encoder fallback changed pix_fmt or codec (e.g. AV1 -> libx265),
         # create a shallow spec copy so compliance checks the actual output format.
-        compliance_spec = (
-            spec.model_copy(update={"pix_fmt": effective_pix_fmt})
-            if effective_pix_fmt != spec.pix_fmt
-            else spec
-        )
+        compliance_update: dict[str, str] = {}
+        if effective_pix_fmt != spec.pix_fmt:
+            compliance_update["pix_fmt"] = effective_pix_fmt
+        if resolved_encoder != spec.video_codec:
+            compliance_update["video_codec"] = resolved_encoder
+        compliance_spec = spec.model_copy(update=compliance_update) if compliance_update else spec
         self._validate_video_platform_compliance(
             platform=platform,
             output_file=output_file,

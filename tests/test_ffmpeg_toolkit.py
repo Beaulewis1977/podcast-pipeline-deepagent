@@ -711,9 +711,16 @@ def test_transcode_av1_uses_libsvtav1(tmp_path: Path) -> None:
         codec=VideoCodec.AV1,
         hw_accel=HwAccel.NONE,
     )
-    with patch(
-        "podcast_pipeline.utils.ffmpeg_toolkit.run_ffmpeg", return_value=_completed()
-    ) as mock_ffmpeg:
+    hw_info = HardwareEncoderInfo(software_av1=True)
+    with (
+        patch(
+            "podcast_pipeline.utils.ffmpeg_toolkit.run_ffmpeg", return_value=_completed()
+        ) as mock_ffmpeg,
+        patch(
+            "podcast_pipeline.utils.ffmpeg_toolkit.detect_hardware_encoders",
+            return_value=hw_info,
+        ),
+    ):
         transcode(req)
 
     args_used: list[str] = mock_ffmpeg.call_args[0][0]
@@ -731,9 +738,16 @@ def test_transcode_av1_film_grain_appended(tmp_path: Path) -> None:
         hw_accel=HwAccel.NONE,
         film_grain=10,
     )
-    with patch(
-        "podcast_pipeline.utils.ffmpeg_toolkit.run_ffmpeg", return_value=_completed()
-    ) as mock_ffmpeg:
+    hw_info = HardwareEncoderInfo(software_av1=True)
+    with (
+        patch(
+            "podcast_pipeline.utils.ffmpeg_toolkit.run_ffmpeg", return_value=_completed()
+        ) as mock_ffmpeg,
+        patch(
+            "podcast_pipeline.utils.ffmpeg_toolkit.detect_hardware_encoders",
+            return_value=hw_info,
+        ),
+    ):
         transcode(req)
 
     args_used: list[str] = mock_ffmpeg.call_args[0][0]
