@@ -16,6 +16,7 @@ import { useRef, useState, useEffect, useCallback } from "react";
 import WaveSurfer from "wavesurfer.js";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { useUIStore } from "../stores/uiStore";
+import { useSidecarStore } from "../stores/sidecarStore";
 import { useJobDetail } from "../hooks/useJobDetail";
 
 // ---------------------------------------------------------------------------
@@ -76,10 +77,16 @@ export function AudioSyncView() {
   const selectedJobId = useUIStore((s) => s.selectedJobId);
   const { data: job, isLoading, isError } = useJobDetail(selectedJobId);
 
+  const { status: backendStatus } = useSidecarStore();
+  const backendConnected = backendStatus === "connected";
+
   const containerRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WaveSurfer | null>(null);
 
   const [isPlaying, setIsPlaying] = useState(false);
+  // Local preview state — tracks whether the current offsetMs has been "applied"
+  // locally. Not persisted; real persistence requires a backend mutation (TODO below).
+  const [previewApplied, setPreviewApplied] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [zoom, setZoom] = useState(50);
@@ -99,15 +106,17 @@ export function AudioSyncView() {
   // Manual offset state (initialized from auto-detected value when available)
   const [offsetMs, setOffsetMs] = useState<number>(autoOffset ?? 0);
 
-  // Sync local offset state when auto-detected value first becomes available
+  // Sync local offset state whenever the auto-detected value changes or a new job is selected.
+  // Reset to 0 when no auto-offset is available so manual offsets do not carry across jobs.
   useEffect(() => {
-    if (autoOffset !== null) {
-      setOffsetMs(autoOffset);
-    }
-  }, [autoOffset]);
+    setOffsetMs(autoOffset ?? 0);
+  }, [autoOffset, selectedJobId]);
 
-  // Wavesurfer instance lifecycle
+  // Wavesurfer instance lifecycle.
+  // Early-return until ingest completes — the container may not yet be mounted
+  // in the DOM when this effect first runs for a job still being ingested.
   useEffect(() => {
+    if (ingestStatus !== "complete") return;
     if (!containerRef.current || !audioFilePath) return;
 
     setWaveError(null);
@@ -165,7 +174,7 @@ export function AudioSyncView() {
       setCurrentTime(0);
       setDuration(0);
     };
-  }, [audioFilePath]);
+  }, [audioFilePath, ingestStatus]);
 
   // Apply zoom changes to wavesurfer instance
   useEffect(() => {
@@ -368,7 +377,7 @@ export function AudioSyncView() {
             max={5000}
             step={1}
             value={offsetMs}
-            onChange={(e) => setOffsetMs(Number(e.target.value))}
+            onChange={(e) => { setOffsetMs(Number(e.target.value)); setPreviewApplied(false); }}
             className="w-full accent-(--color-accent)"
             aria-label="Sync offset slider"
           />
@@ -379,23 +388,33 @@ export function AudioSyncView() {
           </div>
         </div>
 
-        <div className="flex gap-3">
-          <button
-            onClick={() => {
-              // Apply offset — backend mutation would go here
-              // Currently deferred: backend endpoint not yet available
-              console.info(`Applying sync offset: ${offsetMs}ms`);
-            }}
-            className="px-4 py-1.5 rounded-md bg-(--color-accent) hover:bg-(--color-accent-hover) text-white text-sm font-medium transition-colors"
-          >
-            Apply Offset
-          </button>
-          <button
-            onClick={handleResetOffset}
-            className="px-4 py-1.5 rounded-md border border-(--color-border) text-(--color-text-secondary) hover:text-(--color-text-primary) text-sm transition-colors"
-          >
-            Reset
-          </button>
+        <div className="flex flex-col gap-2">
+          <div className="flex gap-3">
+            {/*
+              TODO: wire real persist mutation once the backend endpoint is available:
+                useOffsetMutation().mutate({ jobId: selectedJobId, offsetMs })
+              Until then, "Apply" stores the preview locally only — no backend call is made.
+            */}
+            <button
+              onClick={() => setPreviewApplied(true)}
+              disabled={!backendConnected}
+              className="px-4 py-1.5 rounded-md border border-(--color-border) text-(--color-text-secondary) hover:text-(--color-text-primary) text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Apply Offset
+            </button>
+            <button
+              onClick={handleResetOffset}
+              className="px-4 py-1.5 rounded-md border border-(--color-border) text-(--color-text-secondary) hover:text-(--color-text-primary) text-sm transition-colors"
+            >
+              Reset
+            </button>
+          </div>
+          {previewApplied && (
+            <p className="text-xs text-(--color-warning)">
+              Preview only — offset is not persisted. Backend sync mutation will be
+              wired in a future update.
+            </p>
+          )}
         </div>
       </div>
 

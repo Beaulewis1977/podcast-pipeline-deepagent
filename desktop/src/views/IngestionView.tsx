@@ -409,7 +409,13 @@ export function IngestionView() {
   const [manualPath, setManualPath] = useState("");
   const [manualName, setManualName] = useState("");
 
-  // Native Tauri drag-drop via dynamic import (graceful fallback for dev browser)
+  // Native Tauri drag-drop via dynamic import (graceful fallback for dev browser).
+  //
+  // createJobMutation is intentionally omitted from the dependency array:
+  // TanStack Query's useMutation returns a stable `mutate` reference, so the
+  // onDragDropEvent callback never captures a stale closure. Cleanup of the
+  // getCurrentWebview / onDragDropEvent listener is handled via the local
+  // `unlisten` variable returned from the async setup block.
   useEffect(() => {
     let unlisten: (() => void) | null = null;
 

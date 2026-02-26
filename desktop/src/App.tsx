@@ -13,10 +13,6 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-
-// Module-level flag — survives React StrictMode double-mount (where a useRef
-// would be reset). Boot must only run once per page load.
-let _bootStarted = false;
 import { AppShell } from "./components/layout/AppShell";
 import { IngestionView } from "./views/IngestionView";
 import { AudioSyncView } from "./views/AudioSyncView";
@@ -31,6 +27,10 @@ import {
   stopSidecar,
 } from "./lib/backend";
 import { type RecoveryStatus, checkRecovery } from "./lib/recovery";
+
+// Module-level flag — survives React StrictMode double-mount (where a useRef
+// would be reset). Boot must only run once per page load.
+let _bootStarted = false;
 
 // ---------------------------------------------------------------------------
 // View router
@@ -235,7 +235,19 @@ function App() {
   // --- Stop sidecar on window unload ---
   useEffect(() => {
     const handleUnload = () => {
-      void stopSidecar().catch(() => {});
+      // navigator.sendBeacon is guaranteed to complete during page unload;
+      // async promises (like stopSidecar) may be cancelled mid-flight by the browser.
+      try {
+        navigator.sendBeacon(`http://127.0.0.1:${BACKEND_PORT}/shutdown`);
+      } catch {
+        // sendBeacon may be unavailable or blocked by Tauri's CSP — silently ignore.
+      }
+      // Also attempt Tauri sidecar stop (best-effort; may be interrupted by unload).
+      try {
+        void stopSidecar();
+      } catch (err) {
+        console.warn("stopSidecar failed during unload:", err);
+      }
     };
     window.addEventListener("beforeunload", handleUnload);
     return () => window.removeEventListener("beforeunload", handleUnload);
