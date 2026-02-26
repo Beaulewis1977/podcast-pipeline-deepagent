@@ -81,3 +81,19 @@ End users will likely download the desktop version of this application on highly
 - **Pre-Flight Hardware Check:** Implement a unified `DiagnosticsService` endpoint that systematically interrogates the machine's GPU availability (CUDA, DirectML, Metal), VRAM limits, and available system RAM *before* launching a job.
 - **Graceful Feature Degradation:** In the React UI, strictly lock or disable 4K, heavily interpolated RIFE exports, or 8-camera multi-cam tasks if local hardware doesn't meet minimum requirements. Display an alert recommending Cloud Rendering instead.
 - **Dynamic Chunking:** For transcription or localized processing, adjust batch size/chunk length based on available hardware memory (e.g., lower `faster-whisper` beam sizes and precision on constrained systems).
+
+---
+
+## 6. Branding & Assets: Advanced Text Effects and Typography
+
+### The Observation
+The Phase 14 automated publishing and Phase 11 multi-cam editing plans describe the ability to build "Branding Kits" to stylize output.
+
+### The Problem
+If the pipeline only uses basic FFmpeg text overlays or standard system fonts, the resulting videos will look amateurish compared to highly stylized, viral "Hormozi-style" shorts produced in tools like CapCut or Premiere Pro. Modern short-form content relies heavily on bold typography, specific font files, and dynamic effects (like neon glow, drop shadows, and stroke outlines).
+
+### Proposed Mitigation
+- **Google Fonts Integration:** Bundle a curated selection of 10-15 high-impact, legal-to-distribute fonts from the Google Fonts library (e.g., *Montserrat ExtraBold*, *Lilita One*, *Titan One*) into the `assets/fonts/` directory of the application.
+- **Custom Font Uploads:** Add a "Custom Upload" mechanism in the UI's Branding Kit manager, allowing agencies or creators to upload their own `.ttf`/`.otf` files (like the commercial *Burbank* font) to be used locally.
+- **Advanced FFmpeg Text Effects:** Update the FFmpeg MCP command generator to support complex text filtering layers. This includes parsing Co-Pilot requests for effects like "add a neon glow" or "Hormozi 80s style" and translating them into layered FFmpeg `subtitles` or `drawtext` filters using `box`, `boxcolor`, `shadowcolor`, and multiple blurred overlays to simulate "glow".
+- **UI Exposure:** Ensure the React UI explicitly exposes toggles for text stroke, drop shadow, and glow parameters within the Branding Kit settings.

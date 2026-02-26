@@ -80,3 +80,18 @@ While limits cap *successful* generations, they often overlook silent retries. I
 - **Strict Retry Caps:** Implement absolute limits on the number of retries for any external AI call (e.g., max 3 retries with exponential backoff).
 - **Idempotency and Deep Caching:** Ensure every AI step leverages an MD5/SHA-256 hash of the input audio/transcript as a cache key in Redis before making a call.
 - **Graceful Failure State:** Catch 5xx errors from Veo/Gemini explicitly, refund partial usage tokens/credits against the user's monthly quota, and alert the user that the upstream AI service is experiencing issues, rather than perpetually retrying in the background.
+
+---
+
+## 6. Marketing Strategy: Turnkey Hardware Bundles
+
+### The Observation
+The marketing and launch plans (`06-MARKETING-LAUNCH-PLAN.md`) focus heavily on software distribution—selling subscriptions, launching on Product Hunt, and doing affiliate marketing to creators.
+
+### The Problem
+Video processing software is inherently hardware-dependent. As noted in the technical risk analysis, many non-technical creators or podcasters possess underpowered hardware (Intel Integrated GPUs or base model laptops). Forcing these users into complicated CPU/GPU compatibility checks creates a massive point of friction and churn when they realize they can't effectively run the multi-cam AI local features.
+
+### Proposed Mitigation
+- **"Studio in a Box" High-Ticket Offer:** Add a new tier to the monetization and marketing strategy targeting agencies, production houses, and high-net-worth creators. Offer an all-in-one hardware package (e.g., a pre-configured Intel NUC with an NVIDIA RTX 4070/4080, or a high-end Apple Mac Mini M4 Pro).
+- **Pre-Loaded Environment:** Sell this hardware bundle with Opus software pre-installed, optimized, and strictly version-controlled, guaranteeing a flawless, zero-friction out-of-the-box experience.
+- **Premium Margin Opportunity:** This transforms a $29/mo SaaS sale into a $3,000+ to $5,000+ capital expenditure sale, which agencies often vastly prefer over recurring subscriptions. It completely eliminates technical support tickets relating to "missing CUDA drivers" or "out of memory" errors for your highest-paying customers.
