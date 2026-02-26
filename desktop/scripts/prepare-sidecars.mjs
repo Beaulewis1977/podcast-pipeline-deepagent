@@ -115,11 +115,35 @@ function resolveBinarySource(envVar, binaryName) {
 
 /**
  * Detect whether a binary was produced by PyInstaller --onedir mode.
- * Looks for an _internal/ directory as a sibling of the binary.
+ *
+ * Requires all three conditions to avoid false positives:
+ *   1. The binary file itself exists at binaryPath.
+ *   2. A sibling _internal/ directory exists.
+ *   3. _internal/ contains at least one core Python runtime file
+ *      (python3*.dll / libpython*.so / libpython*.dylib), confirming
+ *      this is a real PyInstaller bundle rather than an unrelated
+ *      directory that happens to be named _internal.
  */
 function isOnedirBinary(binaryPath) {
-  const parentDir = dirname(binaryPath);
-  return existsSync(join(parentDir, "_internal"));
+  const resolved = resolve(binaryPath);
+  if (!existsSync(resolved)) return false;
+
+  const internalDir = join(dirname(resolved), "_internal");
+  if (!existsSync(internalDir)) return false;
+
+  try {
+    const entries = readdirSync(internalDir);
+    return entries.some((entry) => {
+      const name = entry.toLowerCase();
+      return (
+        (name.startsWith("python3") &&
+          (name.endsWith(".dll") || name.endsWith(".so") || name.endsWith(".dylib"))) ||
+        name.startsWith("libpython")
+      );
+    });
+  } catch {
+    return false;
+  }
 }
 
 // ---------------------------------------------------------------------------

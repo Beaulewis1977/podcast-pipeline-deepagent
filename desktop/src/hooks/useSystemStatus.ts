@@ -39,6 +39,10 @@ export function useSystemStatus(): UseQueryResult<SystemStatus> {
   return useQuery<SystemStatus>({
     queryKey: ["system-status"],
     queryFn: fetchSystemStatus,
-    refetchInterval: 10000,
+    // Binary/model availability changes rarely — poll every 30 s and keep
+    // data fresh for 25 s to avoid unnecessary backend requests.
+    refetchInterval: 30000,
+    staleTime: 25000,
+    retry: 1,
   });
 }

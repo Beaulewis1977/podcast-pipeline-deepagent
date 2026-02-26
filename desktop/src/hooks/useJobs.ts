@@ -13,5 +13,9 @@ export function useJobs(): UseQueryResult<JobSummary[]> {
     queryKey: ["jobs"],
     queryFn: listJobs,
     refetchInterval: 5000,
+    // Consider data fresh for 4 s so rapid component remounts don't fire
+    // duplicate requests within the same polling window.
+    staleTime: 4000,
+    retry: 2,
   });
 }

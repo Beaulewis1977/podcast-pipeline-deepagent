@@ -15,5 +15,7 @@ export function useJobDetail(jobId: string | null): UseQueryResult<JobDetail> {
     queryFn: () => getJob(jobId!),
     enabled: jobId !== null,
     refetchInterval: 5000,
+    staleTime: 4000,
+    retry: 2,
   });
 }

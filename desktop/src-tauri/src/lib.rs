@@ -18,6 +18,13 @@ use tauri_plugin_shell::ShellExt;
 /// sidecar is terminated.
 static TAURI_OWNS_SIDECAR: AtomicBool = AtomicBool::new(false);
 
+/// Timeout for the pre-spawn backend health check.
+///
+/// 3 seconds gives enough headroom for a loaded machine while still being
+/// fast enough that a cold-start doesn't feel stuck.  Adjust here if
+/// CI or slow hardware produces false negatives.
+const HEALTH_CHECK_TIMEOUT_SECS: u64 = 3;
+
 /// Sidecar process state shared across commands.
 #[derive(Default)]
 pub struct SidecarState {
@@ -48,7 +55,7 @@ const BACKEND_PORT: u16 = 8787;
 /// check, not a hard failure path.
 async fn backend_is_healthy() -> bool {
     let client = match reqwest::ClientBuilder::new()
-        .timeout(std::time::Duration::from_secs(2))
+        .timeout(std::time::Duration::from_secs(HEALTH_CHECK_TIMEOUT_SECS))
         .build()
     {
         Ok(c) => c,

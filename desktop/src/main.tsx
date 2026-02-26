@@ -4,11 +4,13 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import App from "./App";
 import "./styles.css";
 
+// No global staleTime or refetchInterval — each hook configures its own
+// polling strategy so static data (system status) isn't over-fetched
+// alongside live data (job list, health).
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      staleTime: 5000,
-      refetchInterval: 5000,
+      retry: 1,
     },
   },
 });

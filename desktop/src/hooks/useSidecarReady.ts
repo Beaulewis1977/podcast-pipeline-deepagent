@@ -15,5 +15,8 @@ export function useSidecarReady(): UseQueryResult<HealthResponse | null> {
     queryKey: ["health"],
     queryFn: checkHealth,
     refetchInterval: 5000,
+    staleTime: 4000,
+    // Don't retry health checks — a failed probe is itself useful signal.
+    retry: 0,
   });
 }
