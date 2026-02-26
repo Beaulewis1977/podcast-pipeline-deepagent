@@ -56,13 +56,13 @@ function ViewRouter({ activeView }: { activeView: string }) {
 
 function BootScreen({ message }: { message: string }) {
   return (
-    <div className="flex h-screen items-center justify-center bg-[var(--color-bg-primary)]">
-      <div className="flex flex-col items-center gap-4 p-8 rounded-xl bg-[var(--color-bg-card)] border border-[var(--color-border)] shadow-lg max-w-sm w-full text-center">
-        <div className="w-8 h-8 rounded-full border-2 border-[var(--color-accent)] border-t-transparent animate-spin" />
-        <p className="text-sm text-[var(--color-text-primary)] font-medium">
+    <div className="flex h-screen items-center justify-center bg-(--color-bg-primary)">
+      <div className="flex flex-col items-center gap-4 p-8 rounded-xl bg-(--color-bg-card) border border-(--color-border) shadow-lg max-w-sm w-full text-center">
+        <div className="w-8 h-8 rounded-full border-2 border-(--color-accent) border-t-transparent animate-spin" />
+        <p className="text-sm text-(--color-text-primary) font-medium">
           {message}
         </p>
-        <p className="text-xs text-[var(--color-text-secondary)]">
+        <p className="text-xs text-(--color-text-secondary)">
           Starting backend sidecar&hellip;
         </p>
       </div>
@@ -81,27 +81,27 @@ interface ConnectionErrorProps {
 
 function ConnectionError({ errorMessage, onRetry }: ConnectionErrorProps) {
   return (
-    <div className="flex h-screen items-center justify-center bg-[var(--color-bg-primary)]">
-      <div className="flex flex-col gap-4 p-8 rounded-xl bg-[var(--color-bg-card)] border border-[var(--color-error)]/40 shadow-lg max-w-sm w-full">
+    <div className="flex h-screen items-center justify-center bg-(--color-bg-primary)">
+      <div className="flex flex-col gap-4 p-8 rounded-xl bg-(--color-bg-card) border border-(--color-error)/40 shadow-lg max-w-sm w-full">
         <div className="flex items-center gap-2">
-          <span className="w-2.5 h-2.5 rounded-full bg-[var(--color-error)] shrink-0" />
-          <h2 className="text-sm font-semibold text-[var(--color-text-primary)]">
+          <span className="w-2.5 h-2.5 rounded-full bg-(--color-error) shrink-0" />
+          <h2 className="text-sm font-semibold text-(--color-text-primary)">
             Backend unreachable
           </h2>
         </div>
         {errorMessage && (
-          <p className="text-xs text-[var(--color-error)] leading-relaxed">
+          <p className="text-xs text-(--color-error) leading-relaxed">
             {errorMessage}
           </p>
         )}
-        <p className="text-xs text-[var(--color-text-secondary)]">
+        <p className="text-xs text-(--color-text-secondary)">
           Expected at{" "}
           <code className="font-mono">http://127.0.0.1:{BACKEND_PORT}</code>
         </p>
-        <p className="text-xs text-[var(--color-text-secondary)] leading-relaxed border-t border-[var(--color-border)] pt-3 mt-1">
+        <p className="text-xs text-(--color-text-secondary) leading-relaxed border-t border-(--color-border) pt-3 mt-1">
           Start the backend in a separate terminal:
           <br />
-          <code className="font-mono text-[var(--color-accent)] select-all">
+          <code className="font-mono text-(--color-accent) select-all">
             uv run python src/podcast_pipeline/service/cli.py
           </code>
           <br />
@@ -112,7 +112,7 @@ function ConnectionError({ errorMessage, onRetry }: ConnectionErrorProps) {
           onClick={onRetry}
           className="
             mt-1 px-4 py-2 text-xs font-medium rounded-lg
-            bg-[var(--color-accent)] text-white
+            bg-(--color-accent) text-white
             hover:opacity-90 transition-opacity
           "
         >
@@ -136,11 +136,11 @@ function RecoveryBanner({ recovery, onDismiss }: RecoveryBannerProps) {
   const { resumable_jobs, corrected } = recovery;
 
   return (
-    <div className="mx-6 mt-4 p-4 rounded-lg bg-[var(--color-warning)]/10 border border-[var(--color-warning)]/30">
+    <div className="mx-6 mt-4 p-4 rounded-lg bg-(--color-warning)/10 border border-(--color-warning)/30">
       <div className="flex items-start justify-between gap-2 mb-2">
         <div className="flex items-center gap-2">
-          <span className="w-2 h-2 rounded-full bg-[var(--color-warning)] animate-pulse shrink-0 mt-0.5" />
-          <p className="text-xs font-semibold text-[var(--color-warning)]">
+          <span className="w-2 h-2 rounded-full bg-(--color-warning) animate-pulse shrink-0 mt-0.5" />
+          <p className="text-xs font-semibold text-(--color-warning)">
             {resumable_jobs.length} interrupted{" "}
             {resumable_jobs.length === 1 ? "job" : "jobs"} available for resume
             {corrected > 0 && ` (${corrected} stale entries corrected)`}
@@ -149,15 +149,15 @@ function RecoveryBanner({ recovery, onDismiss }: RecoveryBannerProps) {
         <button
           type="button"
           onClick={onDismiss}
-          className="text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors shrink-0"
+          className="text-xs text-(--color-text-secondary) hover:text-(--color-text-primary) transition-colors shrink-0"
         >
           Dismiss
         </button>
       </div>
       <ul className="space-y-1 ml-4">
         {resumable_jobs.map((job) => (
-          <li key={job.job_id} className="text-xs text-[var(--color-text-secondary)]">
-            <span className="font-mono text-[var(--color-accent)]">{job.job_id}</span>
+          <li key={job.job_id} className="text-xs text-(--color-text-secondary)">
+            <span className="font-mono text-(--color-accent)">{job.job_id}</span>
             {" — "}
             resume from <span className="font-medium">{job.resume_stage}</span>
             {job.interrupted && " (interrupted runtime detected)"}

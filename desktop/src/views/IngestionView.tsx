@@ -73,10 +73,10 @@ function statusLabel(status: JobStatus): string {
 type StageStatus = "complete" | "running" | "failed" | "pending" | string;
 
 function stageColor(stageStatus: StageStatus): string {
-  if (stageStatus === "complete") return "bg-[var(--color-success)]";
-  if (stageStatus === "running") return "bg-[var(--color-warning)] animate-pulse";
-  if (stageStatus === "failed") return "bg-[var(--color-error)]";
-  return "bg-[var(--color-border)]";
+  if (stageStatus === "complete") return "bg-(--color-success)";
+  if (stageStatus === "running") return "bg-(--color-warning) animate-pulse";
+  if (stageStatus === "failed") return "bg-(--color-error)";
+  return "bg-(--color-border)";
 }
 
 // ---------------------------------------------------------------------------
@@ -92,10 +92,10 @@ function SystemReadinessBanner() {
 
   if (data.ready) {
     return (
-      <div className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[var(--color-success)]/10 border border-[var(--color-success)]/30 text-sm">
-        <span className="w-2 h-2 rounded-full bg-[var(--color-success)] shrink-0" />
-        <span className="text-[var(--color-success)] font-medium">All systems ready</span>
-        <span className="text-[var(--color-text-secondary)] ml-2">
+      <div className="flex items-center gap-2 px-4 py-2 rounded-lg bg-(--color-success)/10 border border-(--color-success)/30 text-sm">
+        <span className="w-2 h-2 rounded-full bg-(--color-success) shrink-0" />
+        <span className="text-(--color-success) font-medium">All systems ready</span>
+        <span className="text-(--color-text-secondary) ml-2">
           {Object.entries(data.binaries)
             .map(([name]) => name)
             .join(", ")}
@@ -105,10 +105,10 @@ function SystemReadinessBanner() {
   }
 
   return (
-    <div className="px-4 py-3 rounded-lg bg-[var(--color-warning)]/10 border border-[var(--color-warning)]/30">
+    <div className="px-4 py-3 rounded-lg bg-(--color-warning)/10 border border-(--color-warning)/30">
       <div className="flex items-center gap-2 mb-2">
-        <span className="w-2 h-2 rounded-full bg-[var(--color-warning)] shrink-0 animate-pulse" />
-        <span className="text-[var(--color-warning)] font-medium text-sm">
+        <span className="w-2 h-2 rounded-full bg-(--color-warning) shrink-0 animate-pulse" />
+        <span className="text-(--color-warning) font-medium text-sm">
           System not ready
         </span>
       </div>
@@ -118,14 +118,14 @@ function SystemReadinessBanner() {
             <span
               className={`w-1.5 h-1.5 rounded-full shrink-0 ${
                 info.status === "ok"
-                  ? "bg-[var(--color-success)]"
-                  : "bg-[var(--color-error)]"
+                  ? "bg-(--color-success)"
+                  : "bg-(--color-error)"
               }`}
             />
-            <span className="text-[var(--color-text-secondary)]">
+            <span className="text-(--color-text-secondary)">
               {name}
               {info.path && (
-                <span className="text-[var(--color-text-secondary)]/60 ml-1">
+                <span className="text-(--color-text-secondary)/60 ml-1">
                   ({info.path})
                 </span>
               )}
@@ -136,17 +136,17 @@ function SystemReadinessBanner() {
           <span
             className={`w-1.5 h-1.5 rounded-full shrink-0 ${
               data.model.status === "ready"
-                ? "bg-[var(--color-success)]"
-                : "bg-[var(--color-warning)]"
+                ? "bg-(--color-success)"
+                : "bg-(--color-warning)"
             }`}
           />
-          <span className="text-[var(--color-text-secondary)]">
+          <span className="text-(--color-text-secondary)">
             whisper model: {data.model.name} ({data.model.status})
           </span>
         </div>
       </div>
       {data.issues.length > 0 && (
-        <ul className="mt-2 ml-4 text-xs text-[var(--color-warning)] space-y-0.5">
+        <ul className="mt-2 ml-4 text-xs text-(--color-warning) space-y-0.5">
           {data.issues.map((issue) => (
             <li key={issue}>• {issue}</li>
           ))}
@@ -174,7 +174,7 @@ function PipelineStageBar({ stages }: { stages: Record<string, string> }) {
             <div
               className={`h-1.5 rounded-full ${stageColor(stageStatus)}`}
             />
-            <span className="text-[9px] text-[var(--color-text-secondary)] text-center truncate">
+            <span className="text-[9px] text-(--color-text-secondary) text-center truncate">
               {stageName.slice(0, 5)}
             </span>
           </div>
@@ -237,13 +237,13 @@ function JobCard({ job, isSelected, onSelect }: JobCardProps) {
     <div
       onClick={() => onSelect(job.job_id)}
       className={`
-        bg-[var(--color-bg-card)] rounded-lg p-4 border border-[var(--color-border)]
-        cursor-pointer transition-all duration-150 hover:border-[var(--color-accent)]/50
-        ${isSelected ? "ring-2 ring-[var(--color-accent)]" : ""}
+        bg-(--color-bg-card) rounded-lg p-4 border border-(--color-border)
+        cursor-pointer transition-all duration-150 hover:border-(--color-accent)/50
+        ${isSelected ? "ring-2 ring-(--color-accent)" : ""}
       `}
     >
       <div className="flex items-center justify-between gap-2 mb-1">
-        <span className="font-mono text-xs text-[var(--color-accent)] truncate">
+        <span className="font-mono text-xs text-(--color-accent) truncate">
           {job.job_id}
         </span>
         <Badge variant={statusVariant(job.status)} className="shrink-0 text-xs">
@@ -251,7 +251,7 @@ function JobCard({ job, isSelected, onSelect }: JobCardProps) {
         </Badge>
       </div>
 
-      <div className="text-xs text-[var(--color-text-secondary)] mb-2">
+      <div className="text-xs text-(--color-text-secondary) mb-2">
         {relativeTime(job.created)}
       </div>
 
@@ -303,20 +303,20 @@ function JobDetailPanel({ jobId }: { jobId: string }) {
 
   if (isLoading || !data) {
     return (
-      <div className="bg-[var(--color-bg-card)] rounded-lg p-4 border border-[var(--color-border)]">
+      <div className="bg-(--color-bg-card) rounded-lg p-4 border border-(--color-border)">
         <div className="animate-pulse space-y-2">
-          <div className="h-4 bg-[var(--color-border)] rounded w-1/3" />
-          <div className="h-3 bg-[var(--color-border)] rounded w-2/3" />
-          <div className="h-3 bg-[var(--color-border)] rounded w-1/2" />
+          <div className="h-4 bg-(--color-border) rounded w-1/3" />
+          <div className="h-3 bg-(--color-border) rounded w-2/3" />
+          <div className="h-3 bg-(--color-border) rounded w-1/2" />
         </div>
       </div>
     );
   }
 
   return (
-    <div className="bg-[var(--color-bg-card)] rounded-lg p-4 border border-[var(--color-border)] space-y-3">
+    <div className="bg-(--color-bg-card) rounded-lg p-4 border border-(--color-border) space-y-3">
       <div className="flex items-center justify-between">
-        <h3 className="font-semibold text-sm text-[var(--color-text-primary)]">
+        <h3 className="font-semibold text-sm text-(--color-text-primary)">
           Job Detail
         </h3>
         <Button
@@ -331,31 +331,31 @@ function JobDetailPanel({ jobId }: { jobId: string }) {
 
       <div className="space-y-1.5 text-xs">
         <div className="flex gap-2">
-          <span className="text-[var(--color-text-secondary)] w-20 shrink-0">Job ID</span>
-          <span className="font-mono text-[var(--color-accent)] truncate">{data.job_id}</span>
+          <span className="text-(--color-text-secondary) w-20 shrink-0">Job ID</span>
+          <span className="font-mono text-(--color-accent) truncate">{data.job_id}</span>
         </div>
         <div className="flex gap-2">
-          <span className="text-[var(--color-text-secondary)] w-20 shrink-0">Input file</span>
-          <span className="truncate text-[var(--color-text-primary)]">{data.input_file}</span>
+          <span className="text-(--color-text-secondary) w-20 shrink-0">Input file</span>
+          <span className="truncate text-(--color-text-primary)">{data.input_file}</span>
         </div>
         <div className="flex gap-2">
-          <span className="text-[var(--color-text-secondary)] w-20 shrink-0">Status</span>
+          <span className="text-(--color-text-secondary) w-20 shrink-0">Status</span>
           <Badge variant={statusVariant(data.status)} className="text-[10px] h-4">
             {data.status}
           </Badge>
         </div>
         <div className="flex gap-2">
-          <span className="text-[var(--color-text-secondary)] w-20 shrink-0">Created</span>
-          <span className="text-[var(--color-text-primary)]">{relativeTime(data.created_at)}</span>
+          <span className="text-(--color-text-secondary) w-20 shrink-0">Created</span>
+          <span className="text-(--color-text-primary)">{relativeTime(data.created_at)}</span>
         </div>
         <div className="flex gap-2">
-          <span className="text-[var(--color-text-secondary)] w-20 shrink-0">Updated</span>
-          <span className="text-[var(--color-text-primary)]">{relativeTime(data.updated_at)}</span>
+          <span className="text-(--color-text-secondary) w-20 shrink-0">Updated</span>
+          <span className="text-(--color-text-primary)">{relativeTime(data.updated_at)}</span>
         </div>
       </div>
 
-      <div className="border-t border-[var(--color-border)] pt-2 space-y-1.5">
-        <p className="text-xs text-[var(--color-text-secondary)] font-medium mb-1">
+      <div className="border-t border-(--color-border) pt-2 space-y-1.5">
+        <p className="text-xs text-(--color-text-secondary) font-medium mb-1">
           Stages
         </p>
         {STAGE_ORDER.map((stageName) => {
@@ -366,23 +366,23 @@ function JobDetailPanel({ jobId }: { jobId: string }) {
               <span
                 className={`w-1.5 h-1.5 rounded-full mt-0.5 shrink-0 ${stageColor(st)}`}
               />
-              <span className="text-[var(--color-text-secondary)] w-20 shrink-0">
+              <span className="text-(--color-text-secondary) w-20 shrink-0">
                 {stageName}
               </span>
               <div className="flex-1 min-w-0">
-                <span className="text-[var(--color-text-primary)]">{st}</span>
+                <span className="text-(--color-text-primary)">{st}</span>
                 {stage?.progress_percent != null && (
-                  <span className="text-[var(--color-text-secondary)] ml-1">
+                  <span className="text-(--color-text-secondary) ml-1">
                     ({stage.progress_percent}%)
                   </span>
                 )}
                 {stage?.progress_message && (
-                  <span className="text-[var(--color-text-secondary)] ml-1 truncate block">
+                  <span className="text-(--color-text-secondary) ml-1 truncate block">
                     {stage.progress_message}
                   </span>
                 )}
                 {stage?.error && (
-                  <span className="text-[var(--color-error)] block truncate">
+                  <span className="text-(--color-error) block truncate">
                     {stage.error}
                   </span>
                 )}
@@ -475,29 +475,29 @@ export function IngestionView() {
           border-2 border-dashed transition-all duration-150 p-6 gap-3
           ${
             dragOver
-              ? "border-[var(--color-accent)] bg-[var(--color-accent)]/5"
-              : "border-[var(--color-border)] bg-[var(--color-bg-secondary)]/40"
+              ? "border-(--color-accent) bg-(--color-accent)/5"
+              : "border-(--color-border) bg-(--color-bg-secondary)/40"
           }
         `}
       >
         <div className="text-center">
-          <p className="text-[var(--color-text-primary)] text-sm font-medium">
+          <p className="text-(--color-text-primary) text-sm font-medium">
             Drop video files here to create jobs
           </p>
-          <p className="text-[var(--color-text-secondary)] text-xs mt-1">
+          <p className="text-(--color-text-secondary) text-xs mt-1">
             Supports .mp4, .mov, .mkv, .webm
           </p>
         </div>
 
         {createJobMutation.isPending && (
-          <div className="flex items-center gap-2 text-xs text-[var(--color-warning)]">
-            <span className="animate-spin inline-block w-3 h-3 border border-t-transparent border-[var(--color-warning)] rounded-full" />
+          <div className="flex items-center gap-2 text-xs text-(--color-warning)">
+            <span className="animate-spin inline-block w-3 h-3 border border-t-transparent border-(--color-warning) rounded-full" />
             Creating job...
           </div>
         )}
 
         {createJobMutation.isError && (
-          <p className="text-xs text-[var(--color-error)]">
+          <p className="text-xs text-(--color-error)">
             {createJobMutation.error.message}
           </p>
         )}
@@ -506,7 +506,7 @@ export function IngestionView() {
           <button
             type="button"
             onClick={() => setShowManualInput(true)}
-            className="text-xs text-[var(--color-text-secondary)] underline underline-offset-2 hover:text-[var(--color-accent)] transition-colors"
+            className="text-xs text-(--color-text-secondary) underline underline-offset-2 hover:text-(--color-accent) transition-colors"
           >
             or enter path manually
           </button>
@@ -515,8 +515,8 @@ export function IngestionView() {
 
       {/* Manual input — always visible once shown */}
       {showManualInput && (
-        <div className="flex flex-col gap-2 p-3 rounded-lg bg-[var(--color-bg-secondary)]/60 border border-[var(--color-border)]">
-          <p className="text-xs text-[var(--color-text-secondary)] font-medium">
+        <div className="flex flex-col gap-2 p-3 rounded-lg bg-(--color-bg-secondary)/60 border border-(--color-border)">
+          <p className="text-xs text-(--color-text-secondary) font-medium">
             Manual job creation
           </p>
           <input
@@ -527,9 +527,9 @@ export function IngestionView() {
             placeholder="/absolute/path/to/video.mp4"
             className="
               w-full px-3 py-1.5 text-xs rounded-md
-              bg-[var(--color-bg-card)] border border-[var(--color-border)]
-              text-[var(--color-text-primary)] placeholder:text-[var(--color-text-secondary)]/50
-              focus:outline-none focus:border-[var(--color-accent)]/60
+              bg-(--color-bg-card) border border-(--color-border)
+              text-(--color-text-primary) placeholder:text-(--color-text-secondary)/50
+              focus:outline-none focus:border-(--color-accent)/60
             "
           />
           <input
@@ -539,9 +539,9 @@ export function IngestionView() {
             placeholder="Job name (optional)"
             className="
               w-full px-3 py-1.5 text-xs rounded-md
-              bg-[var(--color-bg-card)] border border-[var(--color-border)]
-              text-[var(--color-text-primary)] placeholder:text-[var(--color-text-secondary)]/50
-              focus:outline-none focus:border-[var(--color-accent)]/60
+              bg-(--color-bg-card) border border-(--color-border)
+              text-(--color-text-primary) placeholder:text-(--color-text-secondary)/50
+              focus:outline-none focus:border-(--color-accent)/60
             "
           />
           <Button
@@ -558,10 +558,10 @@ export function IngestionView() {
 
       {/* Job list */}
       <div className="flex flex-col gap-2">
-        <h2 className="text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider px-0.5">
+        <h2 className="text-xs font-semibold text-(--color-text-secondary) uppercase tracking-wider px-0.5">
           Jobs
           {jobs && jobs.length > 0 && (
-            <span className="ml-2 text-[var(--color-accent)]">{jobs.length}</span>
+            <span className="ml-2 text-(--color-accent)">{jobs.length}</span>
           )}
         </h2>
 
@@ -570,20 +570,20 @@ export function IngestionView() {
             {[1, 2, 3].map((i) => (
               <div
                 key={i}
-                className="h-24 rounded-lg bg-[var(--color-bg-card)] border border-[var(--color-border)] animate-pulse"
+                className="h-24 rounded-lg bg-(--color-bg-card) border border-(--color-border) animate-pulse"
               />
             ))}
           </div>
         )}
 
         {isError && (
-          <div className="px-4 py-3 rounded-lg bg-[var(--color-error)]/10 border border-[var(--color-error)]/30 text-xs text-[var(--color-error)]">
+          <div className="px-4 py-3 rounded-lg bg-(--color-error)/10 border border-(--color-error)/30 text-xs text-(--color-error)">
             Failed to load jobs. Backend may be unavailable.
           </div>
         )}
 
         {!isLoading && !isError && jobs?.length === 0 && (
-          <div className="py-8 text-center text-xs text-[var(--color-text-secondary)]">
+          <div className="py-8 text-center text-xs text-(--color-text-secondary)">
             No jobs yet. Drop a video file above to get started.
           </div>
         )}

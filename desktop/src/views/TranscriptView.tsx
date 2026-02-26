@@ -96,7 +96,7 @@ function isStageComplete(stageStatus: string | undefined): boolean {
 function EmptyState({ message }: { message: string }) {
   return (
     <div className="flex-1 flex items-center justify-center p-8 text-center">
-      <p className="text-sm text-[var(--color-text-secondary)]">{message}</p>
+      <p className="text-sm text-(--color-text-secondary)">{message}</p>
     </div>
   );
 }
@@ -137,7 +137,7 @@ function TranscriptSegmentRow({
         return (
           <span
             key={i}
-            className="bg-[var(--color-warning)]/20 text-[var(--color-warning)] rounded px-1 mx-0.5"
+            className="bg-(--color-warning)/20 text-(--color-warning) rounded px-1 mx-0.5"
           >
             {word.word}
           </span>
@@ -153,9 +153,9 @@ function TranscriptSegmentRow({
   }, [words, segment.text, showFillers, fillerFilter]);
 
   return (
-    <div className="flex gap-4 py-2 border-b border-[var(--color-border)]/30">
+    <div className="flex gap-4 py-2 border-b border-(--color-border)/30">
       {/* Timestamp */}
-      <div className="w-12 shrink-0 text-[10px] text-[var(--color-text-secondary)] font-mono pt-0.5">
+      <div className="w-12 shrink-0 text-[10px] text-(--color-text-secondary) font-mono pt-0.5">
         {formatTime(segment.start)}
       </div>
       {/* Content */}
@@ -169,7 +169,7 @@ function TranscriptSegmentRow({
             </span>
           </div>
         )}
-        <p className="text-sm text-[var(--color-text-primary)] leading-relaxed">
+        <p className="text-sm text-(--color-text-primary) leading-relaxed">
           {renderWords}
         </p>
       </div>
@@ -229,7 +229,7 @@ function TranscriptStats({
   }, [segments, fillerFilter]);
 
   return (
-    <div className="flex flex-wrap gap-4 px-4 py-2 border-t border-[var(--color-border)] text-xs text-[var(--color-text-secondary)]">
+    <div className="flex flex-wrap gap-4 px-4 py-2 border-t border-(--color-border) text-xs text-(--color-text-secondary)">
       <span>Duration: {stats.duration}</span>
       <span>Words: {stats.wordCount.toLocaleString()}</span>
       {stats.speakerCount > 0 && (
@@ -349,8 +349,8 @@ export function TranscriptView() {
     return (
       <div className="flex h-full flex-col p-4">
         <div className="animate-pulse space-y-3">
-          <div className="h-4 bg-[var(--color-border)] rounded w-1/2" />
-          <div className="h-3 bg-[var(--color-border)] rounded w-1/3" />
+          <div className="h-4 bg-(--color-border) rounded w-1/2" />
+          <div className="h-3 bg-(--color-border) rounded w-1/3" />
         </div>
       </div>
     );
@@ -378,18 +378,18 @@ export function TranscriptView() {
     return (
       <div className="flex h-full flex-col p-4 gap-4">
         <div>
-          <h2 className="text-sm font-semibold text-[var(--color-text-primary)] mb-1">
+          <h2 className="text-sm font-semibold text-(--color-text-primary) mb-1">
             Transcript
           </h2>
-          <p className="text-xs text-[var(--color-text-secondary)]">
-            Job: <span className="font-mono text-[var(--color-accent)]">{selectedJobId}</span>
+          <p className="text-xs text-(--color-text-secondary)">
+            Job: <span className="font-mono text-(--color-accent)">{selectedJobId}</span>
           </p>
         </div>
 
-        <div className="px-4 py-3 rounded-lg bg-[var(--color-warning)]/10 border border-[var(--color-warning)]/30 space-y-2">
+        <div className="px-4 py-3 rounded-lg bg-(--color-warning)/10 border border-(--color-warning)/30 space-y-2">
           <div className="flex items-center gap-2 text-xs">
-            <span className="w-2 h-2 rounded-full bg-[var(--color-warning)] animate-pulse shrink-0" />
-            <span className="text-[var(--color-warning)] font-medium">
+            <span className="w-2 h-2 rounded-full bg-(--color-warning) animate-pulse shrink-0" />
+            <span className="text-(--color-warning) font-medium">
               Transcription{" "}
               {stageStatus === "running" ? "in progress" : `(${stageStatus})`}
             </span>
@@ -398,7 +398,7 @@ export function TranscriptView() {
             <Progress value={progress} className="h-1.5" />
           )}
           {transcribeStage?.progress_message && (
-            <p className="text-xs text-[var(--color-text-secondary)]">
+            <p className="text-xs text-(--color-text-secondary)">
               {transcribeStage.progress_message}
             </p>
           )}
@@ -413,16 +413,16 @@ export function TranscriptView() {
                 <span
                   className={`w-1.5 h-1.5 rounded-full shrink-0 ${
                     st === "complete"
-                      ? "bg-[var(--color-success)]"
+                      ? "bg-(--color-success)"
                       : st === "running"
-                        ? "bg-[var(--color-warning)] animate-pulse"
+                        ? "bg-(--color-warning) animate-pulse"
                         : st === "failed"
-                          ? "bg-[var(--color-error)]"
-                          : "bg-[var(--color-border)]"
+                          ? "bg-(--color-error)"
+                          : "bg-(--color-border)"
                   }`}
                 />
-                <span className="text-[var(--color-text-secondary)] w-20">{stageName}</span>
-                <span className="text-[var(--color-text-primary)]">{st}</span>
+                <span className="text-(--color-text-secondary) w-20">{stageName}</span>
+                <span className="text-(--color-text-primary)">{st}</span>
               </div>
             );
           })}
@@ -439,9 +439,9 @@ export function TranscriptView() {
     return (
       <div className="flex h-full flex-col p-4">
         <div className="animate-pulse space-y-3">
-          <div className="h-4 bg-[var(--color-border)] rounded w-2/3" />
-          <div className="h-3 bg-[var(--color-border)] rounded w-full" />
-          <div className="h-3 bg-[var(--color-border)] rounded w-4/5" />
+          <div className="h-4 bg-(--color-border) rounded w-2/3" />
+          <div className="h-3 bg-(--color-border) rounded w-full" />
+          <div className="h-3 bg-(--color-border) rounded w-4/5" />
         </div>
       </div>
     );
@@ -457,13 +457,13 @@ export function TranscriptView() {
     return (
       <div className="flex h-full flex-col p-4 gap-4">
         <div>
-          <h2 className="text-sm font-semibold text-[var(--color-text-primary)] mb-1">
+          <h2 className="text-sm font-semibold text-(--color-text-primary) mb-1">
             Transcript
           </h2>
           <div className="flex items-center gap-2">
-            <p className="text-xs text-[var(--color-text-secondary)]">
+            <p className="text-xs text-(--color-text-secondary)">
               Job:{" "}
-              <span className="font-mono text-[var(--color-accent)]">
+              <span className="font-mono text-(--color-accent)">
                 {selectedJobId}
               </span>
             </p>
@@ -478,12 +478,12 @@ export function TranscriptView() {
           </div>
         </div>
 
-        <div className="px-4 py-3 rounded-lg bg-[var(--color-bg-secondary)]/60 border border-[var(--color-border)] space-y-2">
-          <p className="text-xs text-[var(--color-text-secondary)] font-medium">
+        <div className="px-4 py-3 rounded-lg bg-(--color-bg-secondary)/60 border border-(--color-border) space-y-2">
+          <p className="text-xs text-(--color-text-secondary) font-medium">
             Transcript outputs
           </p>
           {outputs.length === 0 ? (
-            <p className="text-xs text-[var(--color-text-secondary)]">
+            <p className="text-xs text-(--color-text-secondary)">
               No output files listed for transcribe stage.
             </p>
           ) : (
@@ -491,7 +491,7 @@ export function TranscriptView() {
               {outputs.map((output) => (
                 <li
                   key={output}
-                  className="text-xs font-mono text-[var(--color-text-primary)] truncate"
+                  className="text-xs font-mono text-(--color-text-primary) truncate"
                 >
                   {output}
                 </li>
@@ -500,7 +500,7 @@ export function TranscriptView() {
           )}
         </div>
 
-        <p className="text-xs text-[var(--color-text-secondary)]">
+        <p className="text-xs text-(--color-text-secondary)">
           Transcript content is available in the output files listed above.
           Live preview will be available when the backend exposes a transcript
           serve endpoint.
@@ -518,17 +518,17 @@ export function TranscriptView() {
       {/* Header */}
       <div className="px-4 pt-4 pb-2 shrink-0 space-y-1">
         <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-[var(--color-text-primary)]">
+          <h2 className="text-sm font-semibold text-(--color-text-primary)">
             Transcript
           </h2>
-          <p className="text-xs text-[var(--color-text-secondary)] font-mono">
+          <p className="text-xs text-(--color-text-secondary) font-mono">
             {selectedJobId}
           </p>
         </div>
       </div>
 
       {/* Filler control bar */}
-      <div className="px-4 py-2 shrink-0 flex flex-wrap items-center gap-3 border-b border-[var(--color-border)] bg-[var(--color-bg-secondary)]/40">
+      <div className="px-4 py-2 shrink-0 flex flex-wrap items-center gap-3 border-b border-(--color-border) bg-(--color-bg-secondary)/40">
         <div className="flex items-center gap-2">
           <button
             type="button"
@@ -537,7 +537,7 @@ export function TranscriptView() {
             onClick={handleToggleFillers}
             className={`
               relative w-8 h-4 rounded-full transition-colors duration-150
-              ${showFillers ? "bg-[var(--color-accent)]" : "bg-[var(--color-border)]"}
+              ${showFillers ? "bg-(--color-accent)" : "bg-(--color-border)"}
             `}
           >
             <span
@@ -547,7 +547,7 @@ export function TranscriptView() {
               `}
             />
           </button>
-          <span className="text-xs text-[var(--color-text-secondary)]">
+          <span className="text-xs text-(--color-text-secondary)">
             Show Filler Words
           </span>
           {fillerCount > 0 && (
@@ -559,16 +559,16 @@ export function TranscriptView() {
 
         {fillerCategories.length > 0 && (
           <div className="flex items-center gap-1.5">
-            <span className="text-xs text-[var(--color-text-secondary)]">
+            <span className="text-xs text-(--color-text-secondary)">
               Category:
             </span>
             <select
               value={fillerFilter}
               onChange={(e) => setFillerFilter(e.target.value)}
               className="
-                text-xs px-2 py-0.5 rounded-md bg-[var(--color-bg-card)]
-                border border-[var(--color-border)] text-[var(--color-text-primary)]
-                focus:outline-none focus:border-[var(--color-accent)]/60
+                text-xs px-2 py-0.5 rounded-md bg-(--color-bg-card)
+                border border-(--color-border) text-(--color-text-primary)
+                focus:outline-none focus:border-(--color-accent)/60
               "
             >
               <option value="all">All</option>
@@ -594,7 +594,7 @@ export function TranscriptView() {
         className="flex-1 overflow-y-auto px-4 py-2"
       >
         {transcriptData.length === 0 ? (
-          <p className="text-xs text-[var(--color-text-secondary)] py-4 text-center">
+          <p className="text-xs text-(--color-text-secondary) py-4 text-center">
             No transcript segments found.
           </p>
         ) : (
@@ -619,7 +619,7 @@ export function TranscriptView() {
         <Button
           size="sm"
           variant="ghost"
-          className="text-xs h-6 text-[var(--color-text-secondary)]"
+          className="text-xs h-6 text-(--color-text-secondary)"
           onClick={() =>
             scrollRef.current?.scrollTo({ top: 0, behavior: "smooth" })
           }

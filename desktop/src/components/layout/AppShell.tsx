@@ -21,11 +21,11 @@ interface AppShellProps {
 
 export function AppShell({ children }: AppShellProps) {
   return (
-    <div className="flex flex-col h-screen overflow-hidden bg-[var(--color-bg-primary)]">
+    <div className="flex flex-col h-screen overflow-hidden bg-(--color-bg-primary)">
       <Header />
       <div className="flex flex-1 overflow-hidden">
         <Sidebar />
-        <main className="flex-1 overflow-auto p-6 text-[var(--color-text-primary)]">
+        <main className="flex-1 overflow-auto p-6 text-(--color-text-primary)">
           {children}
         </main>
       </div>

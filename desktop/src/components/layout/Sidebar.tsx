@@ -43,7 +43,7 @@ export function Sidebar() {
 
   return (
     <aside
-      className={`${sidebarWidth} flex flex-col shrink-0 border-r border-[var(--color-border)] bg-[var(--color-bg-secondary)] transition-all duration-200`}
+      className={`${sidebarWidth} flex flex-col shrink-0 border-r border-(--color-border) bg-(--color-bg-secondary) transition-all duration-200`}
     >
       {/* Navigation items */}
       <nav className="flex flex-col gap-1 p-2 flex-1">
@@ -55,8 +55,8 @@ export function Sidebar() {
               variant="ghost"
               className={`w-full justify-start gap-3 px-3 ${
                 isActive
-                  ? "bg-[var(--color-accent)] text-white hover:bg-[var(--color-accent-hover)] hover:text-white"
-                  : "text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-card)] hover:text-[var(--color-text-primary)]"
+                  ? "bg-(--color-accent) text-white hover:bg-(--color-accent-hover) hover:text-white"
+                  : "text-(--color-text-secondary) hover:bg-(--color-bg-card) hover:text-(--color-text-primary)"
               } ${sidebarCollapsed ? "px-0 justify-center" : ""}`}
               onClick={() => setActiveView(view)}
               title={sidebarCollapsed ? label : undefined}
@@ -71,19 +71,19 @@ export function Sidebar() {
       </nav>
 
       {/* Job count badge at the bottom */}
-      <div className="p-3 border-t border-[var(--color-border)]">
+      <div className="p-3 border-t border-(--color-border)">
         {sidebarCollapsed ? (
           <div
             className="flex items-center justify-center"
             title={`${jobCount} job${jobCount !== 1 ? "s" : ""}`}
           >
-            <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-[var(--color-bg-card)] text-[var(--color-text-secondary)] text-xs">
+            <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-(--color-bg-card) text-(--color-text-secondary) text-xs">
               {jobCount}
             </span>
           </div>
         ) : (
           <div className="flex items-center gap-2 px-1">
-            <span className="text-xs text-[var(--color-text-secondary)]">
+            <span className="text-xs text-(--color-text-secondary)">
               {jobCount} job{jobCount !== 1 ? "s" : ""}
             </span>
           </div>

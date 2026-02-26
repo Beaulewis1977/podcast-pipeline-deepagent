@@ -191,10 +191,10 @@ export function AudioSyncView() {
       <div className="flex items-center justify-center h-full min-h-[400px]">
         <div className="text-center space-y-3">
           <div className="text-4xl opacity-30">~</div>
-          <p className="text-[var(--color-text-secondary)] text-lg">
+          <p className="text-(--color-text-secondary) text-lg">
             Select a job from the Ingestion view
           </p>
-          <p className="text-[var(--color-text-secondary)] text-sm opacity-60">
+          <p className="text-(--color-text-secondary) text-sm opacity-60">
             Audio waveform and sync controls appear here
           </p>
         </div>
@@ -209,7 +209,7 @@ export function AudioSyncView() {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-full min-h-[400px]">
-        <p className="text-[var(--color-text-secondary)] animate-pulse">
+        <p className="text-(--color-text-secondary) animate-pulse">
           Loading job details...
         </p>
       </div>
@@ -223,7 +223,7 @@ export function AudioSyncView() {
   if (isError || !job) {
     return (
       <div className="flex items-center justify-center h-full min-h-[400px]">
-        <p className="text-[var(--color-error)]">
+        <p className="text-(--color-error)">
           Failed to load job details for {selectedJobId}
         </p>
       </div>
@@ -241,23 +241,23 @@ export function AudioSyncView() {
       {/* Header */}
       <div className="flex items-baseline justify-between">
         <div>
-          <h2 className="text-xl font-semibold text-[var(--color-text-primary)]">
+          <h2 className="text-xl font-semibold text-(--color-text-primary)">
             Audio Sync Editor
           </h2>
-          <p className="text-sm text-[var(--color-text-secondary)] mt-0.5">
+          <p className="text-sm text-(--color-text-secondary) mt-0.5">
             Job:{" "}
-            <span className="font-mono text-xs text-[var(--color-accent)]">
+            <span className="font-mono text-xs text-(--color-accent)">
               {selectedJobId}
             </span>
           </p>
         </div>
-        <div className="text-sm text-[var(--color-text-secondary)]">
+        <div className="text-sm text-(--color-text-secondary)">
           Ingest:{" "}
           <span
             className={
               ingestDone
-                ? "text-[var(--color-success)]"
-                : "text-[var(--color-warning)]"
+                ? "text-(--color-success)"
+                : "text-(--color-warning)"
             }
           >
             {ingestStatus ?? "pending"}
@@ -266,33 +266,33 @@ export function AudioSyncView() {
       </div>
 
       {/* Waveform Display Area */}
-      <div className="bg-[var(--color-bg-card)] rounded-lg p-4 border border-[var(--color-border)]">
+      <div className="bg-(--color-bg-card) rounded-lg p-4 border border-(--color-border)">
         {!ingestDone ? (
           <div className="flex flex-col items-center justify-center h-32 space-y-2">
-            <p className="text-[var(--color-text-secondary)] text-sm">
+            <p className="text-(--color-text-secondary) text-sm">
               Audio available after ingest stage completes
             </p>
             {ingestStatus === "running" && (
-              <p className="text-[var(--color-warning)] text-xs animate-pulse">
+              <p className="text-(--color-warning) text-xs animate-pulse">
                 Ingest in progress...
               </p>
             )}
           </div>
         ) : waveError ? (
           <div className="flex flex-col items-center justify-center h-32 space-y-2">
-            <p className="text-[var(--color-error)] text-sm">{waveError}</p>
+            <p className="text-(--color-error) text-sm">{waveError}</p>
             {audioFilePath && (
-              <p className="text-[var(--color-text-secondary)] text-xs font-mono break-all">
+              <p className="text-(--color-text-secondary) text-xs font-mono break-all">
                 {audioFilePath}
               </p>
             )}
           </div>
         ) : !audioFilePath ? (
           <div className="flex flex-col items-center justify-center h-32 space-y-2">
-            <p className="text-[var(--color-text-secondary)] text-sm">
+            <p className="text-(--color-text-secondary) text-sm">
               No audio file found in ingest outputs
             </p>
-            <p className="text-[var(--color-text-secondary)] text-xs opacity-60">
+            <p className="text-(--color-text-secondary) text-xs opacity-60">
               Audio waveform preview will appear here when available
             </p>
           </div>
@@ -307,18 +307,18 @@ export function AudioSyncView() {
 
       {/* Playback Controls (only when audio is available) */}
       {ingestDone && audioFilePath && !waveError && (
-        <div className="bg-[var(--color-bg-card)] rounded-lg px-4 py-3 border border-[var(--color-border)] flex items-center gap-4">
+        <div className="bg-(--color-bg-card) rounded-lg px-4 py-3 border border-(--color-border) flex items-center gap-4">
           <button
             onClick={handlePlayPause}
-            className="px-4 py-1.5 rounded-md bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-white text-sm font-medium transition-colors"
+            className="px-4 py-1.5 rounded-md bg-(--color-accent) hover:bg-(--color-accent-hover) text-white text-sm font-medium transition-colors"
           >
             {isPlaying ? "Pause" : "Play"}
           </button>
-          <span className="text-sm text-[var(--color-text-secondary)] font-mono tabular-nums">
+          <span className="text-sm text-(--color-text-secondary) font-mono tabular-nums">
             {formatDuration(currentTime)} / {formatDuration(duration)}
           </span>
           <div className="flex items-center gap-2 ml-auto">
-            <label className="text-xs text-[var(--color-text-secondary)]">
+            <label className="text-xs text-(--color-text-secondary)">
               Zoom
             </label>
             <input
@@ -328,10 +328,10 @@ export function AudioSyncView() {
               step={1}
               value={zoom}
               onChange={(e) => setZoom(Number(e.target.value))}
-              className="w-24 accent-[var(--color-accent)]"
+              className="w-24 accent-(--color-accent)"
               aria-label="Waveform zoom"
             />
-            <span className="text-xs text-[var(--color-text-secondary)] w-8 tabular-nums">
+            <span className="text-xs text-(--color-text-secondary) w-8 tabular-nums">
               {zoom}x
             </span>
           </div>
@@ -339,15 +339,15 @@ export function AudioSyncView() {
       )}
 
       {/* Sync Controls */}
-      <div className="bg-[var(--color-bg-card)] rounded-lg p-4 border border-[var(--color-border)] space-y-4">
-        <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">
+      <div className="bg-(--color-bg-card) rounded-lg p-4 border border-(--color-border) space-y-4">
+        <h3 className="text-sm font-semibold text-(--color-text-primary)">
           Audio Sync Offset
         </h3>
 
         {autoOffset !== null && (
-          <div className="text-sm text-[var(--color-text-secondary)] bg-[var(--color-bg-secondary)] rounded px-3 py-2">
+          <div className="text-sm text-(--color-text-secondary) bg-(--color-bg-secondary) rounded px-3 py-2">
             Auto-detected offset:{" "}
-            <span className="font-mono text-[var(--color-accent)]">
+            <span className="font-mono text-(--color-accent)">
               {formatMs(autoOffset)}
             </span>
           </div>
@@ -355,10 +355,10 @@ export function AudioSyncView() {
 
         <div className="space-y-2">
           <div className="flex items-center justify-between">
-            <label className="text-sm text-[var(--color-text-secondary)]">
+            <label className="text-sm text-(--color-text-secondary)">
               Manual offset
             </label>
-            <span className="text-sm font-mono font-semibold text-[var(--color-text-primary)] tabular-nums">
+            <span className="text-sm font-mono font-semibold text-(--color-text-primary) tabular-nums">
               {formatMs(offsetMs)}
             </span>
           </div>
@@ -369,10 +369,10 @@ export function AudioSyncView() {
             step={1}
             value={offsetMs}
             onChange={(e) => setOffsetMs(Number(e.target.value))}
-            className="w-full accent-[var(--color-accent)]"
+            className="w-full accent-(--color-accent)"
             aria-label="Sync offset slider"
           />
-          <div className="flex justify-between text-xs text-[var(--color-text-secondary)] opacity-60">
+          <div className="flex justify-between text-xs text-(--color-text-secondary) opacity-60">
             <span>-5000ms</span>
             <span>0ms</span>
             <span>+5000ms</span>
@@ -386,13 +386,13 @@ export function AudioSyncView() {
               // Currently deferred: backend endpoint not yet available
               console.info(`Applying sync offset: ${offsetMs}ms`);
             }}
-            className="px-4 py-1.5 rounded-md bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-white text-sm font-medium transition-colors"
+            className="px-4 py-1.5 rounded-md bg-(--color-accent) hover:bg-(--color-accent-hover) text-white text-sm font-medium transition-colors"
           >
             Apply Offset
           </button>
           <button
             onClick={handleResetOffset}
-            className="px-4 py-1.5 rounded-md border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] text-sm transition-colors"
+            className="px-4 py-1.5 rounded-md border border-(--color-border) text-(--color-text-secondary) hover:text-(--color-text-primary) text-sm transition-colors"
           >
             Reset
           </button>
@@ -400,52 +400,52 @@ export function AudioSyncView() {
       </div>
 
       {/* Track Info Panel */}
-      <div className="bg-[var(--color-bg-card)] rounded-lg p-4 border border-[var(--color-border)]">
-        <h3 className="text-sm font-semibold text-[var(--color-text-primary)] mb-3">
+      <div className="bg-(--color-bg-card) rounded-lg p-4 border border-(--color-border)">
+        <h3 className="text-sm font-semibold text-(--color-text-primary) mb-3">
           Track Info
         </h3>
         <div className="grid grid-cols-2 gap-x-8 gap-y-2 text-sm">
           <div>
-            <span className="text-[var(--color-text-secondary)]">
+            <span className="text-(--color-text-secondary)">
               Input file
             </span>
-            <p className="font-mono text-xs text-[var(--color-text-primary)] break-all mt-0.5">
+            <p className="font-mono text-xs text-(--color-text-primary) break-all mt-0.5">
               {job.input_file}
             </p>
           </div>
           <div>
-            <span className="text-[var(--color-text-secondary)]">
+            <span className="text-(--color-text-secondary)">
               Job status
             </span>
-            <p className="text-[var(--color-text-primary)] mt-0.5">
+            <p className="text-(--color-text-primary) mt-0.5">
               {job.status}
             </p>
           </div>
           {duration > 0 && (
             <div>
-              <span className="text-[var(--color-text-secondary)]">
+              <span className="text-(--color-text-secondary)">
                 Duration
               </span>
-              <p className="text-[var(--color-text-primary)] mt-0.5">
+              <p className="text-(--color-text-primary) mt-0.5">
                 {formatDuration(duration)}
               </p>
             </div>
           )}
           {audioFilePath && (
             <div>
-              <span className="text-[var(--color-text-secondary)]">
+              <span className="text-(--color-text-secondary)">
                 Audio file
               </span>
-              <p className="font-mono text-xs text-[var(--color-text-primary)] break-all mt-0.5">
+              <p className="font-mono text-xs text-(--color-text-primary) break-all mt-0.5">
                 {audioFilePath}
               </p>
             </div>
           )}
           <div>
-            <span className="text-[var(--color-text-secondary)]">
+            <span className="text-(--color-text-secondary)">
               Ingest outputs
             </span>
-            <p className="text-[var(--color-text-primary)] mt-0.5">
+            <p className="text-(--color-text-primary) mt-0.5">
               {ingestOutputs.length} file{ingestOutputs.length !== 1 ? "s" : ""}
             </p>
           </div>

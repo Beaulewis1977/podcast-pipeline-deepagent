@@ -23,17 +23,17 @@ function getStatusConfig(
     case "connected":
       return {
         label: "Connected",
-        dotClass: "bg-[var(--color-success)]",
+        dotClass: "bg-(--color-success)",
       };
     case "connecting":
       return {
         label: "Connecting…",
-        dotClass: "bg-[var(--color-warning)] animate-pulse",
+        dotClass: "bg-(--color-warning) animate-pulse",
       };
     case "disconnected":
       return {
         label: "Disconnected",
-        dotClass: "bg-[var(--color-error)]",
+        dotClass: "bg-(--color-error)",
       };
   }
 }
@@ -43,8 +43,8 @@ export function Header() {
   const config = getStatusConfig(status);
 
   return (
-    <header className="flex items-center justify-between px-6 h-14 border-b border-[var(--color-border)] bg-[var(--color-bg-secondary)] shrink-0">
-      <span className="text-lg font-semibold text-[var(--color-text-primary)]">
+    <header className="flex items-center justify-between px-6 h-14 border-b border-(--color-border) bg-(--color-bg-secondary) shrink-0">
+      <span className="text-lg font-semibold text-(--color-text-primary)">
         Podcast Pipeline
       </span>
 
@@ -53,7 +53,7 @@ export function Header() {
           className={`inline-block w-2.5 h-2.5 rounded-full ${config.dotClass}`}
           aria-hidden="true"
         />
-        <span className="text-sm text-[var(--color-text-secondary)]">
+        <span className="text-sm text-(--color-text-secondary)">
           {config.label}
         </span>
       </div>

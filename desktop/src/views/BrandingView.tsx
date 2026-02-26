@@ -126,7 +126,7 @@ function FormLabel({ children, htmlFor }: FormLabelProps) {
   return (
     <label
       htmlFor={htmlFor}
-      className="block text-sm text-[var(--color-text-secondary)] mb-1"
+      className="block text-sm text-(--color-text-secondary) mb-1"
     >
       {children}
     </label>
@@ -149,7 +149,7 @@ function TextInput({ id, value, onChange, placeholder, className }: TextInputPro
       value={value}
       onChange={(e) => onChange(e.target.value)}
       placeholder={placeholder}
-      className={`w-full bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-md px-3 py-2 text-[var(--color-text-primary)] text-sm focus:outline-none focus:border-[var(--color-accent)] transition-colors ${className ?? ""}`}
+      className={`w-full bg-(--color-bg-primary) border border-(--color-border) rounded-md px-3 py-2 text-(--color-text-primary) text-sm focus:outline-none focus:border-(--color-accent) transition-colors ${className ?? ""}`}
     />
   );
 }
@@ -161,8 +161,8 @@ interface SectionCardProps {
 
 function SectionCard({ title, children }: SectionCardProps) {
   return (
-    <div className="bg-[var(--color-bg-card)] rounded-lg p-5 border border-[var(--color-border)]">
-      <h3 className="text-lg font-semibold mb-4 text-[var(--color-text-primary)]">
+    <div className="bg-(--color-bg-card) rounded-lg p-5 border border-(--color-border)">
+      <h3 className="text-lg font-semibold mb-4 text-(--color-text-primary)">
         {title}
       </h3>
       {children}
@@ -194,8 +194,8 @@ function Toggle({ id, checked, onChange, label }: ToggleProps) {
         <div
           className={`w-10 h-5 rounded-full transition-colors ${
             checked
-              ? "bg-[var(--color-accent)]"
-              : "bg-[var(--color-border)]"
+              ? "bg-(--color-accent)"
+              : "bg-(--color-border)"
           }`}
         />
         <div
@@ -204,7 +204,7 @@ function Toggle({ id, checked, onChange, label }: ToggleProps) {
           }`}
         />
       </div>
-      <span className="text-sm text-[var(--color-text-primary)]">{label}</span>
+      <span className="text-sm text-(--color-text-primary)">{label}</span>
     </label>
   );
 }
@@ -297,19 +297,19 @@ export function BrandingView() {
       {/* Page header */}
       <div className="flex items-baseline justify-between">
         <div>
-          <h2 className="text-xl font-semibold text-[var(--color-text-primary)]">
+          <h2 className="text-xl font-semibold text-(--color-text-primary)">
             Branding Studio
           </h2>
           {selectedJobId ? (
-            <p className="text-sm text-[var(--color-text-secondary)] mt-0.5">
+            <p className="text-sm text-(--color-text-secondary) mt-0.5">
               Job:{" "}
-              <span className="font-mono text-xs text-[var(--color-accent)]">
+              <span className="font-mono text-xs text-(--color-accent)">
                 {selectedJobId}
               </span>
               {job ? ` — ${job.status}` : ""}
             </p>
           ) : (
-            <p className="text-sm text-[var(--color-text-secondary)] mt-0.5">
+            <p className="text-sm text-(--color-text-secondary) mt-0.5">
               No job selected — editing global brand defaults
             </p>
           )}
@@ -318,7 +318,7 @@ export function BrandingView() {
         <button
           onClick={handleSaveProfile}
           disabled={saveStatus === "saving"}
-          className="px-4 py-1.5 rounded-md bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-white text-sm font-medium transition-colors disabled:opacity-60"
+          className="px-4 py-1.5 rounded-md bg-(--color-accent) hover:bg-(--color-accent-hover) text-white text-sm font-medium transition-colors disabled:opacity-60"
         >
           {saveStatus === "saving"
             ? "Saving..."
@@ -353,9 +353,9 @@ export function BrandingView() {
                   onChange={(e) => updateProfile("brandVoice", e.target.value)}
                   rows={4}
                   placeholder="Describe your brand's tone and personality..."
-                  className="w-full bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-md px-3 py-2 text-[var(--color-text-primary)] text-sm resize-y focus:outline-none focus:border-[var(--color-accent)] transition-colors"
+                  className="w-full bg-(--color-bg-primary) border border-(--color-border) rounded-md px-3 py-2 text-(--color-text-primary) text-sm resize-y focus:outline-none focus:border-(--color-accent) transition-colors"
                 />
-                <p className="text-xs text-[var(--color-text-secondary)] mt-1 opacity-70">
+                <p className="text-xs text-(--color-text-secondary) mt-1 opacity-70">
                   This voice description is injected into AI analysis prompts
                 </p>
               </div>
@@ -375,7 +375,7 @@ export function BrandingView() {
                     placeholder="/path/to/logo.png"
                     className="flex-1"
                   />
-                  <button className="px-3 py-2 rounded-md border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] text-sm transition-colors whitespace-nowrap">
+                  <button className="px-3 py-2 rounded-md border border-(--color-border) text-(--color-text-secondary) hover:text-(--color-text-primary) text-sm transition-colors whitespace-nowrap">
                     Browse
                   </button>
                 </div>
@@ -392,7 +392,7 @@ export function BrandingView() {
                       onChange={(e) =>
                         updateProfile("primaryColor", e.target.value)
                       }
-                      className="w-10 h-9 rounded cursor-pointer border border-[var(--color-border)] bg-transparent p-0.5"
+                      className="w-10 h-9 rounded cursor-pointer border border-(--color-border) bg-transparent p-0.5"
                     />
                     <TextInput
                       value={profile.primaryColor}
@@ -415,7 +415,7 @@ export function BrandingView() {
 
               {/* Brand preview card */}
               <div
-                className="rounded-md p-4 border border-[var(--color-border)] text-center"
+                className="rounded-md p-4 border border-(--color-border) text-center"
                 style={{ backgroundColor: profile.primaryColor + "1a" }}
               >
                 <p
@@ -427,7 +427,7 @@ export function BrandingView() {
                 >
                   {profile.name || "Brand Name Preview"}
                 </p>
-                <p className="text-xs text-[var(--color-text-secondary)] mt-1">
+                <p className="text-xs text-(--color-text-secondary) mt-1">
                   Brand preview
                 </p>
               </div>
@@ -453,9 +453,9 @@ export function BrandingView() {
                         onChange={() =>
                           updateCaptionStyle("aspectRatio", ratio)
                         }
-                        className="accent-[var(--color-accent)]"
+                        className="accent-(--color-accent)"
                       />
-                      <span className="text-sm text-[var(--color-text-primary)]">
+                      <span className="text-sm text-(--color-text-primary)">
                         {ratio}
                       </span>
                     </label>
@@ -479,9 +479,9 @@ export function BrandingView() {
                         onChange={() =>
                           updateCaptionStyle("captionPosition", pos)
                         }
-                        className="accent-[var(--color-accent)]"
+                        className="accent-(--color-accent)"
                       />
-                      <span className="text-sm text-[var(--color-text-primary)] capitalize">
+                      <span className="text-sm text-(--color-text-primary) capitalize">
                         {pos}
                       </span>
                     </label>
@@ -492,7 +492,7 @@ export function BrandingView() {
               <div>
                 <div className="flex items-center justify-between mb-1">
                   <FormLabel>Font Size</FormLabel>
-                  <span className="text-sm text-[var(--color-text-primary)] font-mono tabular-nums">
+                  <span className="text-sm text-(--color-text-primary) font-mono tabular-nums">
                     {captionStyle.fontSize}px
                   </span>
                 </div>
@@ -505,7 +505,7 @@ export function BrandingView() {
                   onChange={(e) =>
                     updateCaptionStyle("fontSize", Number(e.target.value))
                   }
-                  className="w-full accent-[var(--color-accent)]"
+                  className="w-full accent-(--color-accent)"
                   aria-label="Caption font size"
                 />
               </div>
@@ -522,7 +522,7 @@ export function BrandingView() {
                     onChange={(e) =>
                       updateCaptionStyle("highlightColor", e.target.value)
                     }
-                    className="w-10 h-9 rounded cursor-pointer border border-[var(--color-border)] bg-transparent p-0.5"
+                    className="w-10 h-9 rounded cursor-pointer border border-(--color-border) bg-transparent p-0.5"
                   />
                   <TextInput
                     value={captionStyle.highlightColor}
@@ -549,13 +549,13 @@ export function BrandingView() {
                     type="checkbox"
                     checked={enabledTargets[target.id] ?? false}
                     onChange={() => toggleExportTarget(target.id)}
-                    className="mt-0.5 accent-[var(--color-accent)]"
+                    className="mt-0.5 accent-(--color-accent)"
                   />
                   <div className="min-w-0">
-                    <p className="text-sm text-[var(--color-text-primary)] font-medium leading-snug">
+                    <p className="text-sm text-(--color-text-primary) font-medium leading-snug">
                       {target.label}
                     </p>
-                    <p className="text-xs text-[var(--color-text-secondary)] opacity-70 mt-0.5">
+                    <p className="text-xs text-(--color-text-secondary) opacity-70 mt-0.5">
                       {target.description}
                     </p>
                   </div>
@@ -597,7 +597,7 @@ export function BrandingView() {
                           count: Math.max(1, Math.min(5, Number(e.target.value))),
                         }))
                       }
-                      className="w-20 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-md px-3 py-2 text-[var(--color-text-primary)] text-sm focus:outline-none focus:border-[var(--color-accent)] transition-colors"
+                      className="w-20 bg-(--color-bg-primary) border border-(--color-border) rounded-md px-3 py-2 text-(--color-text-primary) text-sm focus:outline-none focus:border-(--color-accent) transition-colors"
                     />
                   </div>
 
@@ -648,7 +648,7 @@ export function BrandingView() {
                 <div>
                   <div className="flex items-center justify-between mb-1">
                     <FormLabel>Stinger volume</FormLabel>
-                    <span className="text-sm text-[var(--color-text-primary)] font-mono tabular-nums">
+                    <span className="text-sm text-(--color-text-primary) font-mono tabular-nums">
                       {soundKitSettings.stingerVolume}%
                     </span>
                   </div>
@@ -664,7 +664,7 @@ export function BrandingView() {
                         stingerVolume: Number(e.target.value),
                       }))
                     }
-                    className="w-full accent-[var(--color-accent)]"
+                    className="w-full accent-(--color-accent)"
                     aria-label="Stinger volume"
                   />
                 </div>
