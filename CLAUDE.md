@@ -195,6 +195,41 @@ git push -u origin feat/my-feature
 - `saas ask "<query>"` - AI-powered questions via Perplexity (web search)
 - `saas docs <library> "<query>"` - Documentation lookup via Context7
 
+  ## Serena MCP (Global Plugin)
+
+  Serena is available as a global MCP plugin (`mcp__plugin_serena_serena__*`) for symbolic code navigation and editing.
+  Project config lives in `.serena/project.yml` with onboarded memories in `.serena/memories/`.
+
+  - **Session start**: Call `mcp__plugin_serena_serena__initial_instructions` at the start of each session — this loads
+  Serena's operating guidelines so you use its tools correctly
+  - **Project is auto-detected**: No need to call `activate_project` — Serena detects the project from
+  `.serena/project.yml` automatically (it's disabled in the claude-code context anyway)
+  - **Symbolic tools**: `find_symbol`, `get_symbols_overview`, `replace_symbol_body`, `find_referencing_symbols` for
+  precise code ops
+  - **Memories**: Project knowledge persists across sessions — read with `read_memory`, write with `write_memory`
+  - **Prefer symbolic edits** over file-level edits when modifying functions/classes
+  - **First-time setup**: Run `/serena-init` once per project to onboard Serena and build the memory knowledge base
+
+  This project has [Serena](https://github.com/oraios/serena) configured as an MCP plugin for semantic code
+  intelligence. Config lives in `.serena/project.yml` (languages: TypeScript, Vue).
+
+  **When to use Serena tools over standard tools:**
+
+  - `get_symbols_overview` / `find_symbol` — navigate by symbol (class, function, type) instead of grepping
+  - `find_referencing_symbols` — trace callers/usages of a symbol across the codebase
+  - `replace_symbol_body` / `insert_after_symbol` / `insert_before_symbol` — edit at the symbol level for precise
+  refactors
+  - `rename_symbol` — rename with reference updates
+
+  **When standard tools are still better:** file creation, glob/grep for string literals or config keys, reading full
+  files, and any non-symbolic edits (e.g. changing a single line inside a large function — use `replace_content` or the
+  Edit tool).
+
+  **Workflow:** Call `initial_instructions` at session start. The symbol index is pre-built (`serena project index`).
+  Re-index manually from the terminal after large structural changes (new modules, major refactors) — Claude cannot
+  trigger this.
+
+
 ## Do Not
 
 - Commit API keys or secrets (use `.env`)

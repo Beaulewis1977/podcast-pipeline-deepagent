@@ -180,6 +180,10 @@ ignore = [
     "PLC0415", # lazy imports for route registration
     "PLR0913", # many args in data classes and supervisor methods
 ]
+"src/podcast_pipeline/service/cli.py" = [
+    "T20",     # print is the Tauri sidecar protocol (BACKEND_READY marker)
+    "PLC0415", # lazy imports required — env vars must be set before imports
+]
 "src/podcast_pipeline/service/routes/*.py" = [
     "PLC0415", # lazy imports
     "PLR0913", # many args in route handlers

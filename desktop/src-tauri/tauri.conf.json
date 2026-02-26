@@ -13,14 +13,16 @@
     "windows": [
       {
         "title": "Podcast Pipeline",
-        "width": 1024,
-        "height": 768,
+        "width": 1440,
+        "height": 900,
+        "minWidth": 1024,
+        "minHeight": 700,
         "resizable": true,
         "fullscreen": false
       }
     ],
     "security": {
-      "csp": "default-src 'self'; connect-src 'self' http://127.0.0.1:8787; style-src 'self' 'unsafe-inline'"
+      "csp": "default-src 'self'; connect-src 'self' http://127.0.0.1:8787; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob: tauri://localhost"
     }
   },
   "bundle": {
@@ -34,10 +36,11 @@
       "icons/icon.ico"
     ],
     "externalBin": [
-      "binaries/podcast-backend",
+      "binaries/podcast-backend/podcast-backend",
       "binaries/ffmpeg",
       "binaries/ffprobe"
-    ]
+    ],
+    "resources": ["binaries/podcast-backend/_internal/**/*"]
   },
   "plugins": {
     "shell": {
