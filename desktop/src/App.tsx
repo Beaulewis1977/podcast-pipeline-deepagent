@@ -235,6 +235,12 @@ function App() {
   // --- Stop sidecar on window unload ---
   useEffect(() => {
     const handleUnload = () => {
+      // Only shut down if this app instance owns the sidecar process.
+      // When the backend was started externally (dev mode), sidecar.running is false
+      // and we must not kill the user's separate backend process.
+      const sidecar = useSidecarStore.getState().sidecar;
+      if (!sidecar?.running) return;
+
       // navigator.sendBeacon is guaranteed to complete during page unload;
       // async promises (like stopSidecar) may be cancelled mid-flight by the browser.
       try {
@@ -242,29 +248,47 @@ function App() {
       } catch {
         // sendBeacon may be unavailable or blocked by Tauri's CSP — silently ignore.
       }
-      // Also attempt Tauri sidecar stop (best-effort; may be interrupted by unload).
-      try {
-        void stopSidecar();
-      } catch (err) {
+      // Also attempt Tauri sidecar stop. Use .catch() because void + try/catch
+      // does not catch async promise rejections from an async function.
+      stopSidecar().catch((err) => {
         console.warn("stopSidecar failed during unload:", err);
-      }
+      });
     };
     window.addEventListener("beforeunload", handleUnload);
     return () => window.removeEventListener("beforeunload", handleUnload);
   }, []);
 
   // --- Retry handler ---
+  // Uses bootBackend() (not just checkHealth) so the retry can also spawn the
+  // sidecar if the backend process isn't running. Mirrors the initial boot logic.
   const handleRetry = useCallback(async () => {
     setStatus("connecting");
-    const healthy = await checkHealth();
-    if (healthy !== null) {
-      setStatus("connected");
-      setError(null);
-    } else {
-      setStatus("disconnected");
-      setError(`Backend unreachable at http://127.0.0.1:${BACKEND_PORT}`);
+    try {
+      const result = await bootBackend();
+      setSidecar(result.sidecar);
+      if (result.health !== null) {
+        setStatus("connected");
+        setError(null);
+      } else {
+        setStatus("disconnected");
+        setError(`Backend unreachable at http://127.0.0.1:${BACKEND_PORT}`);
+      }
+    } catch (err) {
+      // Fallback: check if backend became reachable during the attempt
+      const healthy = await checkHealth();
+      if (healthy !== null) {
+        setStatus("connected");
+        setError(null);
+      } else {
+        setStatus("disconnected");
+        setError(
+          err instanceof Error
+            ? err.message
+            : `Backend unreachable at http://127.0.0.1:${BACKEND_PORT}`,
+        );
+      }
     }
-  }, [setError, setStatus]);
+  }, [setError, setSidecar, setStatus]);
 
   // --- Loading state ---
   if (status === "connecting") {

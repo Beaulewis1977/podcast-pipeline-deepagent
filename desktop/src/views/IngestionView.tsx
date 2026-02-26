@@ -298,10 +298,10 @@ function JobCard({ job, isSelected, onSelect }: JobCardProps) {
 // ---------------------------------------------------------------------------
 
 function JobDetailPanel({ jobId }: { jobId: string }) {
-  const { data, isLoading } = useJobDetail(jobId);
+  const { data, isLoading, isError } = useJobDetail(jobId);
   const setSelectedJob = useUIStore((s) => s.setSelectedJob);
 
-  if (isLoading || !data) {
+  if (isLoading) {
     return (
       <div className="bg-(--color-bg-card) rounded-lg p-4 border border-(--color-border)">
         <div className="animate-pulse space-y-2">
@@ -309,6 +309,23 @@ function JobDetailPanel({ jobId }: { jobId: string }) {
           <div className="h-3 bg-(--color-border) rounded w-2/3" />
           <div className="h-3 bg-(--color-border) rounded w-1/2" />
         </div>
+      </div>
+    );
+  }
+
+  if (isError || !data) {
+    return (
+      <div className="bg-(--color-bg-card) rounded-lg p-4 border border-(--color-border)">
+        <p className="text-sm text-(--color-error)">
+          Failed to load job {jobId}
+        </p>
+        <button
+          type="button"
+          onClick={() => setSelectedJob(null)}
+          className="mt-2 text-xs text-(--color-text-secondary) hover:text-(--color-text-primary) underline"
+        >
+          Clear selection
+        </button>
       </div>
     );
   }
@@ -418,11 +435,13 @@ export function IngestionView() {
   // `unlisten` variable returned from the async setup block.
   useEffect(() => {
     let unlisten: (() => void) | null = null;
+    let mounted = true;
 
     void (async () => {
       try {
         const { getCurrentWebview } = await import("@tauri-apps/api/webview");
-        unlisten = await getCurrentWebview().onDragDropEvent((event) => {
+        const unlistenFn = await getCurrentWebview().onDragDropEvent((event) => {
+          if (!mounted) return;
           if (event.payload.type === "enter" || event.payload.type === "over") {
             setDragOver(true);
           } else if (event.payload.type === "drop") {
@@ -434,13 +453,21 @@ export function IngestionView() {
             setDragOver(false);
           }
         });
+        if (!mounted) {
+          // Cleanup already ran while we were awaiting — unsubscribe immediately
+          // to prevent a listener leak.
+          unlistenFn();
+          return;
+        }
+        unlisten = unlistenFn;
       } catch {
         // Not in Tauri context — show manual input as primary entry point
-        setShowManualInput(true);
+        if (mounted) setShowManualInput(true);
       }
     })();
 
     return () => {
+      mounted = false;
       unlisten?.();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
