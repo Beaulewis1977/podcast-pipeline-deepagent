@@ -1,5 +1,9 @@
 # Future MCP Tools: Platform Distribution & Upload
 
+> **Status:** Research complete — see [`11-research.md`](./11-research.md) for the
+> detailed technical research artifact (API endpoints, auth scopes, library
+> recommendations, and code samples for all target platforms).
+
 ## Objective
 Research and define the technical architecture for the `upload_to_platform` MCP server tool.
 Currently, our `podcast-pipeline` handles encoding perfectly, but stops at exporting video files to disk. The goal is to build an automated distribution layer that publishes rendered files directly to social and podcasting platforms, utilizing 100% of the platform's features (custom thumbnails, tags, scheduling, descriptions).
