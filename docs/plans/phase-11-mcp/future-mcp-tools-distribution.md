@@ -8,6 +8,16 @@ Currently, our `podcast-pipeline` handles encoding perfectly, but stops at expor
 Because platform API availability is highly fragmented, this future MCP tool MUST support a hybrid architecture:
 1. **Official OAuth APIs** — For platforms that support them.
 2. **Headless Browser Automation (Playwright)** — For restrictive or locked-down platforms.
+   **Mandatory compliance gate:** Playwright automation is **disabled by default** until a
+   documented approval checklist has been completed and recorded, covering:
+   - ToS/legal review for each target platform
+   - Credential handling policy (no plaintext secrets, session-scoped tokens only)
+   - Data minimisation (only data required for upload is transmitted)
+   - Security controls (sandboxed browser context, no persistent profile)
+   - Defined kill-switch criteria and escalation procedures
+   Playwright-based uploaders must not be activated until approval is on record.
+   See "Official OAuth APIs" vs "Headless Browser Automation (Playwright)" headings
+   below for per-platform routing decisions.
 
 ---
 
@@ -29,7 +39,16 @@ Please investigate the following distribution targets and provide a technical ar
 
 ### Priority Target 3: Instagram (Reels)
 - **Assumption:** Supported via the `Instagram Graph API` (for Instagram Professional accounts linked to Facebook Pages).
-- **Requirements:** Detail the exact Graph API endpoints needed to upload a 9:16 vertical video from a local URL/path, set the cover image (thumbnail), and apply the caption.
+- **Requirements:** The Instagram Graph API media creation flow (`POST /{ig-user-id}/media`
+  with `media_type=REELS`) requires a **publicly accessible HTTPS `video_url`** that Meta
+  fetches server-side. Local file paths are not supported. The implementation must:
+  1. Upload the rendered file to intermediate storage (e.g., S3, GCS, or a signed URL)
+     to obtain a public HTTPS URL that is reachable by Meta's servers.
+  2. Create the media container via `POST /{ig-user-id}/media` with `video_url=<https-url>`,
+     `media_type=REELS`, an optional `cover_url` for the thumbnail, and `caption`.
+  3. Publish via `POST /{ig-user-id}/media_publish` with the returned `creation_id`.
+  Note `video_url` constraints: HTTPS only, publicly reachable (no signed URLs with IP
+  restrictions), MP4/MOV container, max 1 GB, 15 s – 15 min duration for Reels.
 
 ### Priority Target 4: TikTok
 - **Assumption:** The official `TikTok Content Posting API` is notoriously difficult to get production approval for without an enterprise partnership.

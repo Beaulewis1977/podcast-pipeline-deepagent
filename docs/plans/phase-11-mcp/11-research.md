@@ -77,7 +77,7 @@ uv run playwright install chromium
 **Output crop dimensions for 9:16:** Input is 16:9 (e.g., 1920x1080). Output crop width = `1080 * 9/16 = 607px`. Output height = `1080px`. The crop window slides horizontally only (y is fixed at 0 for podcast use case where speakers are at full height).
 
 **sendcmd file format** (verified against FFmpeg filter docs):
-```
+```text
 # Generated sendcmd file — one entry per second or per keyframe
 # Format: START[-END] [enter] FILTER_NAME COMMAND VALUE;
 0.000 crop@cam x 656;
@@ -218,7 +218,7 @@ For platforms with no upload API or where API access is not feasible, use `playw
 **Architecture for upload_to_platform MCP tool:**
 
 The tool accepts a `platform` parameter and dispatches to the appropriate uploader class. Each uploader is a separate module under `src/podcast_pipeline/uploaders/`:
-```
+```text
 src/podcast_pipeline/uploaders/
 ├── __init__.py
 ├── base.py          # PlatformUploader protocol
@@ -466,14 +466,17 @@ def build_broll_overlay_args(
     if audio_mode == "main_only":
         args += ["-map", "0:a", "-c:a", "copy"]
     elif audio_mode == "mixed":
-        # Modify filter_graph to include amix — requires rebuilding
-        # (simplified here; actual impl amends filter_graph string)
-        args += ["-filter_complex",
-                 filter_graph.rstrip("'") + (
-                     f";[0:a][1:a]amix=inputs=2:"
-                     f"weights=1 {secondary_audio_volume}[a_out]"
-                 ),
-                 "-map", "[a_out]"]
+        # Build one combined filtergraph — replace the existing -filter_complex entry
+        # rather than appending a second one (FFmpeg rejects two -filter_complex flags).
+        # Extend filter_graph with an amix clause referencing secondary_audio_volume,
+        # then overwrite the -filter_complex value already present in args.
+        combined_graph = (
+            filter_graph
+            + f";[0:a][1:a]amix=inputs=2:weights=1 {secondary_audio_volume}[a_out]"
+        )
+        fc_idx = args.index("-filter_complex")
+        args[fc_idx + 1] = combined_graph
+        args += ["-map", "[a_out]"]
     elif audio_mode == "replace":
         args += ["-map", "1:a", "-c:a", "aac"]
 
@@ -587,12 +590,13 @@ def upload_to_youtube(
         },
     }
 
-    # chunksize=-1 sends the entire file in one request (simpler for local files)
-    # Use a positive chunksize (multiple of 256KB) for very large files or slow networks
+    # CHUNK_SIZE must be a multiple of 256 KiB per the Google API client requirement.
+    # 4 MiB (16 × 256 KiB) is a reasonable default; increase for faster networks.
+    CHUNK_SIZE = 256 * 1024 * 16  # 4 MiB — configurable for large files / slow networks
     insert_request = youtube.videos().insert(
         part=",".join(body.keys()),
         body=body,
-        media_body=MediaFileUpload(str(video_path), chunksize=-1, resumable=True),
+        media_body=MediaFileUpload(str(video_path), chunksize=CHUNK_SIZE, resumable=True),
     )
 
     response = None
