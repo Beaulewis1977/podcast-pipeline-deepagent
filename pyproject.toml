@@ -19,7 +19,7 @@ classifiers = [
 
 dependencies = [
     # Core audio/video processing
-    "faster-whisper>=1.1.0",
+    "faster-whisper>=1.2.1",
     "pyloudnorm>=0.1.1",
     "pydub>=0.25.1",
 
